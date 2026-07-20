@@ -27,11 +27,13 @@ CORS(app, origins=[frontend_url], supports_credentials=True)
 from api.auth import auth_bp
 from api.calls import calls_bp
 from api.swml import swml_bp
+from api.sip_credentials import sip_credentials_bp
 
 # Register blueprints
 app.register_blueprint(auth_bp, url_prefix='/api/auth')
 app.register_blueprint(calls_bp, url_prefix='/api/calls')
 app.register_blueprint(swml_bp, url_prefix='/api/swml')
+app.register_blueprint(sip_credentials_bp, url_prefix='/api/sip')
 
 
 @app.route('/')

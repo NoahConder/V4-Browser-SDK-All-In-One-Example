@@ -149,6 +149,20 @@ class SignalWireClient:
         """
         return self._get_all_pages(f"{self.api_base}/resources/swml_scripts/{script_id}/addresses")
 
+    def list_sip_credentials(self) -> list:
+        """
+        List SIP credentials (sip_endpoints resources) in this space.
+        https://signalwire.com/docs/apis/rest/sip-credentials/list-sip-credentials
+        """
+        return self._get_all_pages(f"{self.api_base}/resources/sip_endpoints")
+
+    def list_sip_credential_addresses(self, credential_id: str) -> list:
+        """
+        List the dialable addresses for a given SIP credential.
+        https://signalwire.com/docs/apis/rest/sip-credentials/list-sip-credential-addresses
+        """
+        return self._get_all_pages(f"{self.api_base}/resources/sip_endpoints/{credential_id}/addresses")
+
     @staticmethod
     def is_dial_address(destination: str) -> bool:
         """

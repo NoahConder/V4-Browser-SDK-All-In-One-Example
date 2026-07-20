@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { TokenData, CallData, SwmlScript } from '../types';
+import type { TokenData, CallData, SwmlScript, SipCredential } from '../types';
 
 const API_BASE = '/api';
 
@@ -101,6 +101,39 @@ export const swmlAPI = {
     }
     return {
       scripts: response.data.data,
+      total: response.data.total,
+      offset: response.data.offset,
+      limit: response.data.limit,
+      hasMore: response.data.has_more,
+    };
+  },
+};
+
+export interface SipCredentialsPage {
+  credentials: SipCredential[];
+  total: number;
+  offset: number;
+  limit: number;
+  hasMore: boolean;
+}
+
+export const sipAPI = {
+  async listCredentials(offset = 0, limit = 10): Promise<SipCredentialsPage> {
+    const response = await api.get<{
+      success: boolean;
+      data: SipCredential[];
+      total: number;
+      offset: number;
+      limit: number;
+      has_more: boolean;
+    }>('/sip/credentials', {
+      params: { offset, limit },
+    });
+    if (!response.data.success) {
+      throw new Error('Failed to get SIP credentials');
+    }
+    return {
+      credentials: response.data.data,
       total: response.data.total,
       offset: response.data.offset,
       limit: response.data.limit,

@@ -3,7 +3,7 @@ import { AtSign, List, Phone, Slash, Video, VideoOff, X } from 'lucide-react';
 import DialPad from './DialPad';
 import CallScreen from './CallScreen';
 import IncomingCall from './IncomingCall';
-import SwmlScriptsPanel from './SwmlScriptsPanel';
+import DialableResourcesPanel from './DialableResourcesPanel';
 import { useCallStore } from '../hooks/useCallStore';
 import { useSignalWire } from '../hooks/useSignalWire';
 
@@ -27,12 +27,27 @@ const DIAL_ADDRESS_META: Record<DialAddressType, { icon: typeof Phone; label: st
   fabric: { icon: Slash, label: 'Fabric address', badgeClass: 'bg-purple-500/15 text-purple-400' },
 };
 
+// iOS-style auto-shrink: the dial-pad input starts at its normal large size for
+// a phone number, then steps down as the value grows past that -- SWML/SIP
+// resource addresses (full URLs with a `?channel=...` query string) run far
+// longer than any phone number.
+const ADDRESS_INPUT_SIZE_STEPS: Array<{ maxLength: number; className: string }> = [
+  { maxLength: 18, className: 'text-xl sm:text-2xl' },
+  { maxLength: 28, className: 'text-lg sm:text-xl' },
+  { maxLength: 40, className: 'text-base sm:text-lg' },
+  { maxLength: 60, className: 'text-sm sm:text-base' },
+];
+const SMALLEST_ADDRESS_INPUT_SIZE = 'text-xs sm:text-sm';
+
+const getAddressInputSizeClass = (value: string): string =>
+  ADDRESS_INPUT_SIZE_STEPS.find((step) => value.length <= step.maxLength)?.className ?? SMALLEST_ADDRESS_INPUT_SIZE;
+
 const Dialer: React.FC = () => {
   const [phoneNumber, setPhoneNumber] = useState('');
   const [isCallingInProgress, setIsCallingInProgress] = useState(false);
   const [isAddressInputFocused, setIsAddressInputFocused] = useState(false);
   const [wantsVideo, setWantsVideo] = useState(false);
-  const [isScriptsPanelOpen, setIsScriptsPanelOpen] = useState(false);
+  const [isResourcesPanelOpen, setIsResourcesPanelOpen] = useState(false);
   const [lastDialedNumber, setLastDialedNumber] = useState(() => {
     // Load last dialed number from localStorage
     return localStorage.getItem('lastDialedNumber') || '';
@@ -249,6 +264,7 @@ const Dialer: React.FC = () => {
   const addressType = getDialAddressType(phoneNumber);
   const addressMeta = DIAL_ADDRESS_META[addressType];
   const AddressIcon = addressMeta.icon;
+  const addressInputValue = isAddressInputFocused ? phoneNumber : formatPhoneNumber(phoneNumber);
 
   // Show dialer
   return (
@@ -260,11 +276,11 @@ const Dialer: React.FC = () => {
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={() => setIsScriptsPanelOpen((prev) => !prev)}
-            aria-label="SWML Scripts"
-            aria-pressed={isScriptsPanelOpen}
+            onClick={() => setIsResourcesPanelOpen((prev) => !prev)}
+            aria-label="Dialable Resources"
+            aria-pressed={isResourcesPanelOpen}
             className={`rounded-full p-1 transition-colors hover:bg-white/10 hover:text-white ${
-              isScriptsPanelOpen ? 'text-white' : 'text-gray-400'
+              isResourcesPanelOpen ? 'text-white' : 'text-gray-400'
             }`}
           >
             <List size={16} />
@@ -273,12 +289,13 @@ const Dialer: React.FC = () => {
         </div>
       </div>
 
-      <SwmlScriptsPanel
-        isOpen={isScriptsPanelOpen}
-        onClose={() => setIsScriptsPanelOpen(false)}
-        onSelectAddress={(path) => {
+      <DialableResourcesPanel
+        isOpen={isResourcesPanelOpen}
+        onClose={() => setIsResourcesPanelOpen(false)}
+        onSelectAddress={(path, video) => {
           setPhoneNumber(path);
-          setIsScriptsPanelOpen(false);
+          setWantsVideo(video);
+          setIsResourcesPanelOpen(false);
         }}
       />
 
@@ -303,13 +320,13 @@ const Dialer: React.FC = () => {
               autoCapitalize="none"
               spellCheck={false}
               autoFocus
-              value={isAddressInputFocused ? phoneNumber : formatPhoneNumber(phoneNumber)}
+              value={addressInputValue}
               onChange={(e) => setPhoneNumber(e.target.value.slice(0, 128))}
               onFocus={() => setIsAddressInputFocused(true)}
               onBlur={() => setIsAddressInputFocused(false)}
               disabled={isInCall || isCallingInProgress}
               placeholder="Number or address"
-              className="w-full min-w-0 bg-transparent text-xl sm:text-2xl font-light text-white outline-none border-none placeholder:text-gray-500 disabled:opacity-50"
+              className={`w-full min-w-0 bg-transparent font-light text-white outline-none border-none placeholder:text-gray-500 disabled:opacity-50 ${getAddressInputSizeClass(addressInputValue)}`}
             />
 
             {phoneNumber && !isInCall && !isCallingInProgress && (

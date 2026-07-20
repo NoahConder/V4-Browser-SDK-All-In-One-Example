@@ -39,7 +39,7 @@ export interface DialPadKey {
   special?: boolean;
 }
 
-export interface SwmlScriptAddress {
+export interface DialableAddress {
   id: string;
   name: string;
   display_name: string;
@@ -50,5 +50,14 @@ export interface SwmlScript {
   id: string;
   script_type?: string;
   version?: string;
-  addresses: SwmlScriptAddress[];
+  addresses: DialableAddress[];
+}
+
+export interface SipCredential {
+  id: string;
+  display_name: string;
+  sip_endpoint: {
+    username: string;
+  };
+  addresses: DialableAddress[];
 }
