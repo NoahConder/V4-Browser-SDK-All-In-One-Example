@@ -1,5 +1,5 @@
 import os
-from flask import Flask, jsonify, request, send_from_directory, abort
+from flask import Flask, jsonify, request
 from flask_cors import CORS
 from dotenv import load_dotenv
 import logging
@@ -8,13 +8,6 @@ from datetime import datetime
 # Load environment variables
 load_dotenv()
 
-# Where the built React frontend lives (populated by the Docker build). When
-# present, this single service serves the SPA at "/" and the API under "/api".
-FRONTEND_DIST = os.getenv(
-    "FRONTEND_DIST",
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend_dist"),
-)
-
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -22,10 +15,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Create Flask app. static_folder=None — we serve the SPA via an explicit
-# catch-all below so it can fall back to index.html for client-side routes.
-app = Flask(__name__, static_folder=None)
-app.config['SECRET_KEY'] = os.getenv('SECRET_KEY') or os.urandom(32).hex()
+# Create Flask app
+app = Flask(__name__)
+app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
 
 # Configure CORS
 frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:5173')
@@ -34,29 +26,17 @@ CORS(app, origins=[frontend_url], supports_credentials=True)
 # Import blueprints
 from api.auth import auth_bp
 from api.calls import calls_bp
+from api.swml import swml_bp
 
 # Register blueprints
 app.register_blueprint(auth_bp, url_prefix='/api/auth')
 app.register_blueprint(calls_bp, url_prefix='/api/calls')
+app.register_blueprint(swml_bp, url_prefix='/api/swml')
 
 
-@app.route('/', defaults={'path': ''})
-@app.route('/<path:path>')
-def serve_frontend(path):
-    """Serve the built React SPA; fall back to index.html for client routes.
-
-    API paths are handled by the blueprints (more specific rules win); guard
-    anyway so a stray /api/* never gets the SPA shell.
-    """
-    if path.startswith('api/'):
-        abort(404)
-    candidate = os.path.join(FRONTEND_DIST, path)
-    if path and os.path.isfile(candidate):
-        return send_from_directory(FRONTEND_DIST, path)
-    index_html = os.path.join(FRONTEND_DIST, 'index.html')
-    if os.path.isfile(index_html):
-        return send_from_directory(FRONTEND_DIST, 'index.html')
-    # No build present (e.g. backend-only dev) — report status as JSON.
+@app.route('/')
+def index():
+    """Health check endpoint"""
     return jsonify({
         "status": "online",
         "service": "SignalWire Dialer Backend",

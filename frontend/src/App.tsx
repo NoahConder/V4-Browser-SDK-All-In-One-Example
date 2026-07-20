@@ -73,8 +73,8 @@ function App() {
 
   if (!permissionsGranted) {
     return (
-      <div className="flex flex-col h-screen bg-black items-center justify-center p-8">
-        <div className="text-center">
+      <div className="app-shell flex flex-col h-screen items-center justify-center p-8">
+        <div className="glass-panel w-full max-w-sm rounded-2xl p-8 text-center">
           <h1 className="text-2xl font-semibold mb-4">Microphone Permission Required</h1>
           <p className="text-gray-400 mb-8">
             Please allow microphone access to make and receive calls
@@ -89,7 +89,7 @@ function App() {
                 alert('Microphone permission is required to use this app');
               }
             }}
-            className="px-6 py-3 bg-ios-green text-white rounded-lg"
+            className="w-full rounded-xl bg-gradient-to-b from-emerald-400 to-ios-green px-6 py-3 font-medium text-white shadow-[0_4px_16px_rgba(52,199,89,0.35)] transition-all hover:brightness-110 active:scale-[0.98]"
           >
             Grant Permission
           </button>
@@ -100,7 +100,7 @@ function App() {
 
   if (!isInitialized) {
     return (
-      <div className="flex flex-col h-screen bg-black items-center justify-center">
+      <div className="app-shell flex flex-col h-screen items-center justify-center">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-ios-green mb-4 mx-auto"></div>
           <p className="text-gray-400">Connecting to SignalWire...</p>
@@ -111,13 +111,13 @@ function App() {
 
   if (error) {
     return (
-      <div className="flex flex-col h-screen bg-black items-center justify-center p-8">
-        <div className="text-center">
-          <h1 className="text-2xl font-semibold mb-4 text-red-500">Connection Error</h1>
+      <div className="app-shell flex flex-col h-screen items-center justify-center p-8">
+        <div className="glass-panel w-full max-w-sm rounded-2xl p-8 text-center">
+          <h1 className="text-2xl font-semibold mb-4 text-red-400">Connection Error</h1>
           <p className="text-gray-400 mb-8">{error}</p>
           <button
             onClick={() => window.location.reload()}
-            className="px-6 py-3 bg-ios-gray-700 text-white rounded-lg"
+            className="w-full rounded-xl border border-white/10 bg-white/[0.06] px-6 py-3 font-medium text-white backdrop-blur-md transition-all hover:bg-white/10 active:scale-[0.98]"
           >
             Retry
           </button>

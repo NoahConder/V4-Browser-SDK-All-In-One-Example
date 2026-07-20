@@ -8,6 +8,9 @@ export interface CallState {
   remoteNumber: string;
   callDirection: 'inbound' | 'outbound' | null;
   callStatus: 'idle' | 'connecting' | 'dialing' | 'ringing' | 'connected' | 'ended';
+  isVideoCall: boolean;
+  isCameraOn: boolean;
+  remoteHasVideo: boolean;
 }
 
 export interface TokenData {
@@ -34,4 +37,18 @@ export interface DialPadKey {
   number: string;
   letters?: string;
   special?: boolean;
+}
+
+export interface SwmlScriptAddress {
+  id: string;
+  name: string;
+  display_name: string;
+  channels: Record<string, string>;
+}
+
+export interface SwmlScript {
+  id: string;
+  script_type?: string;
+  version?: string;
+  addresses: SwmlScriptAddress[];
 }

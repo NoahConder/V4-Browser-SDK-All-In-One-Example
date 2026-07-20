@@ -18,19 +18,29 @@ class SignalWireService {
   private incomingCallSub: Subscription | null = null;
   private callStatusSub: Subscription | null = null;
   private remoteStreamSub: Subscription | null = null;
+  private localStreamSub: Subscription | null = null;
   private errorSub: Subscription | null = null;
   private warningSub: Subscription | null = null;
   private remoteAudioCheckInterval: ReturnType<typeof setInterval> | null = null;
 
+  // Video elements attached by CallScreen; may be set before or after streams arrive.
+  private localVideoEl: HTMLVideoElement | null = null;
+  private remoteVideoEl: HTMLVideoElement | null = null;
+  // True once the remote stream's audio is being played out through remoteVideoEl,
+  // so the fallback <audio> sink knows not to also play it (avoids doubled audio).
+  private remoteAudioRoutedToVideo: boolean = false;
+
   // Callbacks
-  private onIncomingCall: ((remoteNumber: string) => void) | null = null;
+  private onIncomingCall: ((remoteNumber: string, hasVideo: boolean) => void) | null = null;
   private onCallEnded: ((wasIncoming: boolean) => void) | null = null;
   private onCallConnected: (() => void) | null = null;
+  private onRemoteVideoChange: ((hasVideo: boolean) => void) | null = null;
 
   async initialize(
-    onIncomingCall?: (remoteNumber: string) => void,
+    onIncomingCall?: (remoteNumber: string, hasVideo: boolean) => void,
     onCallEnded?: (wasIncoming: boolean) => void,
-    onCallConnected?: () => void
+    onCallConnected?: () => void,
+    onRemoteVideoChange?: (hasVideo: boolean) => void
   ) {
     if (this.isInitializing || this.isInitialized) {
       console.log('SignalWire initialization already in progress or completed, skipping...');
@@ -47,6 +57,7 @@ class SignalWireService {
       this.onIncomingCall = onIncomingCall || null;
       this.onCallEnded = onCallEnded || null;
       this.onCallConnected = onCallConnected || null;
+      this.onRemoteVideoChange = onRemoteVideoChange || null;
 
       // Create credential provider with automatic refresh
       const credentialProvider = {
@@ -118,8 +129,15 @@ class SignalWireService {
         const callerId = (rawName && rawName !== '_undef_') ? rawName : ringingCall.from || 'Unknown';
         console.log('Incoming call from:', callerId);
 
+        // Best-effort: mediaDirections reflects the inbound SDP offer, so a
+        // video-enabled offer should show as something other than 'inactive'
+        // even before we answer. Defaults to false if the SDK hasn't parsed
+        // the offer yet -- worst case we just don't show the video badge.
+        const hasVideo = ringingCall.mediaDirections?.video != null
+          && ringingCall.mediaDirections.video !== 'inactive';
+
         toneService.playIncomingCallTone();
-        if (this.onIncomingCall) this.onIncomingCall(callerId);
+        if (this.onIncomingCall) this.onIncomingCall(callerId, hasVideo);
 
         // Watch for the caller hanging up before we answer
         const cleanupCanceled = () => {
@@ -178,11 +196,18 @@ class SignalWireService {
       }
     });
 
-    // Subscribe to remote stream for audio playback
+    // Subscribe to remote stream for audio/video playback
     this.remoteStreamSub = call.remoteStream$.subscribe((stream) => {
       if (stream) {
         console.log('remoteStream$ emitted stream:', stream.id);
-        this.playRemoteStream(stream);
+        this.handleRemoteMedia(stream);
+      }
+    });
+
+    // Subscribe to local stream so the self-view <video> (if attached) shows the camera
+    this.localStreamSub = call.localStream$.subscribe((stream) => {
+      if (stream && this.localVideoEl) {
+        this.localVideoEl.srcObject = stream;
       }
     });
   }
@@ -192,10 +217,52 @@ class SignalWireService {
     this.callStatusSub = null;
     this.remoteStreamSub?.unsubscribe();
     this.remoteStreamSub = null;
+    this.localStreamSub?.unsubscribe();
+    this.localStreamSub = null;
     if (this.remoteAudioCheckInterval) {
       clearInterval(this.remoteAudioCheckInterval);
       this.remoteAudioCheckInterval = null;
     }
+  }
+
+  // CallScreen calls these with its <video> refs on mount/unmount. If a stream
+  // already exists (e.g. attaching after the call already connected), it's
+  // applied immediately; otherwise it's picked up by the subscriptions above.
+  setLocalVideoElement(el: HTMLVideoElement | null) {
+    this.localVideoEl = el;
+    if (el && this.currentCall?.localStream) {
+      el.srcObject = this.currentCall.localStream;
+    }
+  }
+
+  setRemoteVideoElement(el: HTMLVideoElement | null) {
+    this.remoteVideoEl = el;
+    if (el && this.currentCall?.remoteStream) {
+      el.srcObject = this.currentCall.remoteStream;
+    }
+  }
+
+  // Single entry point for remote media, whether it came from remoteStream$ or
+  // the RTCPeerConnection fallback below. Routes to the <video> element when the
+  // stream carries a video track (and stops the <audio> sink so audio isn't
+  // played out of both elements at once), otherwise falls back to audio-only.
+  private handleRemoteMedia(stream: MediaStream) {
+    const hasVideo = stream.getVideoTracks().length > 0;
+
+    if (hasVideo && this.remoteVideoEl) {
+      this.remoteVideoEl.srcObject = stream;
+      this.remoteAudioRoutedToVideo = true;
+      this.clearAudioSink();
+    } else if (!this.remoteAudioRoutedToVideo) {
+      this.playRemoteStream(stream);
+    }
+
+    if (this.onRemoteVideoChange) this.onRemoteVideoChange(hasVideo);
+  }
+
+  private clearAudioSink() {
+    const audioEl = document.getElementById('sw-remote-audio') as HTMLAudioElement | null;
+    if (audioEl) audioEl.srcObject = null;
   }
 
   // Fallback: directly access RTCPeerConnection receivers when remoteStream$ doesn't emit
@@ -234,9 +301,9 @@ class SignalWireService {
     // Listen for track events (addEventListener doesn't overwrite the SDK's ontrack handler)
     pc.addEventListener('track', (event) => {
       console.log('PC track event:', event.track.kind, 'streams:', event.streams.length);
-      if (event.track.kind === 'audio') {
+      if (event.track.kind === 'audio' || event.track.kind === 'video') {
         const stream = event.streams[0] || new MediaStream([event.track]);
-        this.playRemoteStream(stream);
+        this.handleRemoteMedia(stream);
       }
     });
 
@@ -270,15 +337,15 @@ class SignalWireService {
 
   private checkReceivers(pc: RTCPeerConnection) {
     const receivers = pc.getReceivers();
-    const audioReceiver = receivers.find(r => r.track?.kind === 'audio');
-    if (audioReceiver?.track) {
-      console.log('Audio receiver found, track state:', audioReceiver.track.readyState, 'enabled:', audioReceiver.track.enabled, 'muted:', audioReceiver.track.muted);
-      if (audioReceiver.track.readyState === 'live') {
-        const stream = new MediaStream([audioReceiver.track]);
-        this.playRemoteStream(stream);
-      }
+    const liveTracks = receivers
+      .map(r => r.track)
+      .filter((t): t is MediaStreamTrack => !!t && t.readyState === 'live');
+
+    if (liveTracks.length > 0) {
+      console.log('Live receiver tracks found:', liveTracks.map(t => t.kind).join(', '));
+      this.handleRemoteMedia(new MediaStream(liveTracks));
     } else {
-      console.log('No audio receiver found, receivers:', receivers.length);
+      console.log('No live receivers found, receivers:', receivers.length);
     }
   }
 
@@ -298,15 +365,24 @@ class SignalWireService {
     });
   }
 
-  async makeCall(phoneNumber: string): Promise<Call> {
+  async makeCall(phoneNumber: string, video: boolean = false): Promise<Call> {
     if (!this.client) {
       throw new Error('SignalWire client not initialized');
     }
 
     try {
-      // Format phone number
+      // SIP URIs (sip:user@domain) and Fabric addresses (/public/room-name)
+      // are dialed as-is. Only bare phone numbers get E.164 normalization.
+      // Keep this check in sync with is_dial_address() in backend/utils/signalwire.py.
+      const isDialAddress =
+        /^sip:/i.test(phoneNumber.trim()) ||
+        phoneNumber.trim().startsWith('/') ||
+        phoneNumber.includes('@');
+
       let formattedNumber = phoneNumber;
-      if (!formattedNumber.startsWith('+')) {
+      if (isDialAddress) {
+        formattedNumber = phoneNumber.trim();
+      } else if (!formattedNumber.startsWith('+')) {
         if (formattedNumber.length === 10) {
           formattedNumber = '+1' + formattedNumber;
         } else if (formattedNumber.length === 11 && formattedNumber.startsWith('1')) {
@@ -319,7 +395,7 @@ class SignalWireService {
 
       const call = await this.client.dial(formattedNumber, {
         audio: true,
-        video: false,
+        video,
       });
 
       this.currentCall = call;
@@ -353,7 +429,7 @@ class SignalWireService {
     }
   }
 
-  async answerCall() {
+  async answerCall(video: boolean = false) {
     if (!this.pendingCall) {
       throw new Error('No incoming call to answer');
     }
@@ -372,7 +448,7 @@ class SignalWireService {
       this.currentCall = call;
       this.wasIncomingCall = true;
 
-      call.answer();
+      call.answer({ audio: true, video });
       this.setupCallSubscriptions(call);
       this.setupRemoteAudioFallback(call);
 
@@ -425,6 +501,37 @@ class SignalWireService {
     }
   }
 
+  // Works whether the call started as audio-only or with video: if there's no
+  // local video track yet, addVideoInputDevice() acquires the camera and
+  // renegotiates; otherwise it's a plain mute/unmute of the existing track.
+  async toggleCamera(cameraOn: boolean) {
+    if (!this.currentCall) {
+      console.warn('No active call to toggle camera');
+      return;
+    }
+
+    try {
+      const self = this.currentCall.self;
+      if (!self) {
+        console.warn('Self participant not available yet');
+        return;
+      }
+
+      const hasLocalVideoTrack = !!this.currentCall.localStream?.getVideoTracks().length;
+
+      if (cameraOn && !hasLocalVideoTrack) {
+        await self.addVideoInputDevice();
+      } else if (cameraOn) {
+        await self.unmuteVideo();
+      } else {
+        await self.muteVideo();
+      }
+      console.log(`Camera ${cameraOn ? 'enabled' : 'disabled'}`);
+    } catch (error) {
+      console.error('Error toggling camera:', error);
+    }
+  }
+
   async toggleSpeaker(speakerOn: boolean) {
     console.log('Speaker toggle:', speakerOn);
   }
@@ -444,11 +551,11 @@ class SignalWireService {
     this.pendingCall = null;
     this.wasIncomingCall = false;
 
-    // Clean up audio element
-    const audioEl = document.getElementById('sw-remote-audio') as HTMLAudioElement;
-    if (audioEl) {
-      audioEl.srcObject = null;
-    }
+    // Clean up audio/video sinks
+    this.clearAudioSink();
+    if (this.localVideoEl) this.localVideoEl.srcObject = null;
+    if (this.remoteVideoEl) this.remoteVideoEl.srcObject = null;
+    this.remoteAudioRoutedToVideo = false;
 
     if (this.onCallEnded) {
       console.log('Notifying UI of call end, wasIncoming:', wasIncoming);

@@ -150,7 +150,7 @@ const DialPad: React.FC<DialPadProps> = ({
             {row.map((key) => (
               <button
                 key={key.number}
-                className="dial-button bg-ios-gray-700 hover:bg-ios-gray-600"
+                className="dial-button bg-white/[0.06] border border-white/10 backdrop-blur-md hover:bg-white/10 disabled:opacity-40 disabled:active:scale-100"
                 onClick={() => handleKeyPress(key.number)}
                 disabled={disabled}
               >
@@ -182,7 +182,7 @@ const DialPad: React.FC<DialPadProps> = ({
         <button
           onClick={onCall}
           disabled={disabled}
-          className="dial-button bg-ios-green hover:bg-green-600"
+          className="dial-button bg-gradient-to-b from-emerald-400 to-ios-green shadow-[0_4px_16px_rgba(52,199,89,0.35)] hover:brightness-110 disabled:opacity-40 disabled:active:scale-100"
         >
           {callButtonText ? (
             <span className="text-lg font-normal">{callButtonText}</span>
@@ -200,7 +200,11 @@ const DialPad: React.FC<DialPadProps> = ({
             onTouchStart={handleDeleteMouseDown}
             onTouchEnd={handleDeleteMouseUp}
             onTouchCancel={handleDeleteMouseLeave}
-            className={`dial-button hover:bg-ios-gray-600 ${isLongPressing ? 'bg-red-600' : ''}`}
+            className={`dial-button border transition-colors ${
+              isLongPressing
+                ? 'bg-red-500/80 border-red-400/50'
+                : 'bg-white/[0.06] border-white/10 backdrop-blur-md hover:bg-white/10'
+            }`}
           >
             {hideText ? (
               <span className="text-sm text-gray-300">{hideText}</span>

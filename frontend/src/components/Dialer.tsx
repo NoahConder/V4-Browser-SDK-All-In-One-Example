@@ -1,13 +1,38 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
+import { AtSign, List, Phone, Slash, Video, VideoOff, X } from 'lucide-react';
 import DialPad from './DialPad';
 import CallScreen from './CallScreen';
 import IncomingCall from './IncomingCall';
+import SwmlScriptsPanel from './SwmlScriptsPanel';
 import { useCallStore } from '../hooks/useCallStore';
 import { useSignalWire } from '../hooks/useSignalWire';
+
+type DialAddressType = 'phone' | 'sip' | 'fabric';
+
+// SIP URIs (sip:user@domain) and Fabric addresses (/public/room-name) are
+// dialed as-is instead of being formatted/validated like a phone number.
+// Keep in sync with signalwire.ts's makeCall and backend's is_dial_address().
+const getDialAddressType = (value: string): DialAddressType => {
+  const trimmed = value.trim();
+  if (/^sip:/i.test(trimmed) || trimmed.includes('@')) return 'sip';
+  if (trimmed.startsWith('/')) return 'fabric';
+  return 'phone';
+};
+
+const isDialAddress = (value: string): boolean => getDialAddressType(value) !== 'phone';
+
+const DIAL_ADDRESS_META: Record<DialAddressType, { icon: typeof Phone; label: string; badgeClass: string }> = {
+  phone: { icon: Phone, label: 'Phone number', badgeClass: 'bg-white/10 text-gray-300' },
+  sip: { icon: AtSign, label: 'SIP address', badgeClass: 'bg-blue-500/15 text-blue-400' },
+  fabric: { icon: Slash, label: 'Fabric address', badgeClass: 'bg-purple-500/15 text-purple-400' },
+};
 
 const Dialer: React.FC = () => {
   const [phoneNumber, setPhoneNumber] = useState('');
   const [isCallingInProgress, setIsCallingInProgress] = useState(false);
+  const [isAddressInputFocused, setIsAddressInputFocused] = useState(false);
+  const [wantsVideo, setWantsVideo] = useState(false);
+  const [isScriptsPanelOpen, setIsScriptsPanelOpen] = useState(false);
   const [lastDialedNumber, setLastDialedNumber] = useState(() => {
     // Load last dialed number from localStorage
     return localStorage.getItem('lastDialedNumber') || '';
@@ -19,11 +44,14 @@ const Dialer: React.FC = () => {
     remoteNumber,
     isMuted,
     isSpeakerOn,
+    isVideoCall,
+    isCameraOn,
+    remoteHasVideo,
     setCallState,
     resetCallState,
   } = useCallStore();
 
-  const { makeCall, endCall, answerCall, rejectCall, toggleMute, toggleSpeaker } = useSignalWire();
+  const { makeCall, endCall, answerCall, rejectCall, toggleMute, toggleCamera, toggleSpeaker } = useSignalWire();
 
   // Save last dialed number to localStorage whenever it changes
   useEffect(() => {
@@ -33,7 +61,7 @@ const Dialer: React.FC = () => {
   }, [lastDialedNumber]);
 
   const handleKeyInput = (key: string) => {
-    if (phoneNumber.length < 20) {  // Increased to support international numbers
+    if (phoneNumber.length < 128) {  // Long enough for SIP URIs / Fabric addresses
       setPhoneNumber((prev) => prev + key);
     }
   };
@@ -64,8 +92,10 @@ const Dialer: React.FC = () => {
       return; // Don't dial, just populate
     }
 
-    // If a number is entered, dial it
-    if (phoneNumber && phoneNumber.length >= 7) {
+    // If a number is entered, dial it. SIP URIs and Fabric addresses can be
+    // shorter than a phone number, so only phone-number-looking input needs
+    // the length-7 sanity check.
+    if (phoneNumber && (isDialAddress(phoneNumber) || phoneNumber.length >= 7)) {
       console.log('📞 Dialing:', phoneNumber);
       setLastDialedNumber(phoneNumber);
       setIsCallingInProgress(true);
@@ -80,10 +110,12 @@ const Dialer: React.FC = () => {
         callStatus: 'connecting',
         isMuted: false,
         isSpeakerOn: false,
+        isVideoCall: wantsVideo,
+        isCameraOn: wantsVideo,
       });
 
       try {
-        await makeCall(phoneNumber);
+        await makeCall(phoneNumber, wantsVideo);
         console.log('✅ makeCall completed');
       } catch (error) {
         console.error('❌ makeCall failed:', error);
@@ -129,39 +161,33 @@ const Dialer: React.FC = () => {
     return () => window.removeEventListener('clearDialedNumber', handleClearNumber);
   }, []);
 
-  // Handle keyboard input
+  // Enter-to-call, from anywhere on the idle dialer screen (including while
+  // the address input is focused, since 'keydown' bubbles up to window).
+  // Typing itself is handled by the address input's native onChange, and by
+  // DialPad's onKeyPress -- not here, to avoid double-inserting characters.
   useEffect(() => {
     const handleKeyboardInput = (e: KeyboardEvent) => {
-      // Don't handle keyboard input if in a call
       if (isInCall || isIncoming) return;
 
-      // Handle number keys (0-9)
-      if (e.key >= '0' && e.key <= '9') {
-        handleKeyInput(e.key);
-      }
-      // Handle special characters
-      else if (e.key === '*' || e.key === '#' || e.key === '+') {
-        handleKeyInput(e.key);
-      }
-      // Handle backspace/delete
-      else if (e.key === 'Backspace' || e.key === 'Delete') {
-        handleDelete();
-      }
-      // Handle Enter to make a call (or redial if no number entered)
-      else if (e.key === 'Enter') {
+      if (e.key === 'Enter') {
         handleCall();
       }
     };
 
     window.addEventListener('keydown', handleKeyboardInput);
     return () => window.removeEventListener('keydown', handleKeyboardInput);
-    // Re-bind only when the values the handlers gate on change. handleCall/
-    // handleKeyInput are recreated every render, so listing them would re-attach
-    // the listener on every render with no behavioral benefit.
+    // Re-bind only when the values the handler gates on change. handleCall is
+    // recreated every render, so listing it would re-attach the listener on
+    // every render with no behavioral benefit.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phoneNumber, isInCall, isIncoming]);
 
   const formatPhoneNumber = (number: string): string => {
+    // SIP URIs and Fabric addresses aren't phone numbers -- display as typed.
+    if (isDialAddress(number)) {
+      return number;
+    }
+
     // If number starts with +, keep it as international
     if (number.startsWith('+')) {
       return number;
@@ -192,6 +218,7 @@ const Dialer: React.FC = () => {
     return (
       <IncomingCall
         phoneNumber={remoteNumber}
+        isVideoCall={isVideoCall}
         onAnswer={answerCall}
         onReject={rejectCall}
       />
@@ -207,37 +234,117 @@ const Dialer: React.FC = () => {
         onEndCall={handleEndCall}
         isMuted={isMuted}
         isSpeakerOn={isSpeakerOn}
+        isVideoCall={isVideoCall}
+        isCameraOn={isCameraOn}
+        remoteHasVideo={remoteHasVideo}
         onToggleMute={toggleMute}
         onToggleSpeaker={toggleSpeaker}
+        onToggleCamera={toggleCamera}
       />
     );
   }
 
   console.log('📱 Showing main Dialer');
 
+  const addressType = getDialAddressType(phoneNumber);
+  const addressMeta = DIAL_ADDRESS_META[addressType];
+  const AddressIcon = addressMeta.icon;
+
   // Show dialer
   return (
-    <div className="flex flex-col h-screen bg-black">
+    <div className="app-shell flex flex-col h-screen">
       {/* Status Bar */}
-      <div className="relative flex items-center justify-between px-6 py-2 text-sm">
+      <div className="glass-bar relative flex items-center justify-between px-6 py-2 text-sm">
         <span className="text-ios-green">●</span>
-        <span className="absolute left-1/2 transform -translate-x-1/2 text-gray-400">SignalWire</span>
-        <span className="text-gray-400">{new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+        <span className="absolute left-1/2 transform -translate-x-1/2 font-medium tracking-wide text-gray-400">SignalWire</span>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setIsScriptsPanelOpen((prev) => !prev)}
+            aria-label="SWML Scripts"
+            aria-pressed={isScriptsPanelOpen}
+            className={`rounded-full p-1 transition-colors hover:bg-white/10 hover:text-white ${
+              isScriptsPanelOpen ? 'text-white' : 'text-gray-400'
+            }`}
+          >
+            <List size={16} />
+          </button>
+          <span className="text-gray-400">{new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+        </div>
       </div>
+
+      <SwmlScriptsPanel
+        isOpen={isScriptsPanelOpen}
+        onClose={() => setIsScriptsPanelOpen(false)}
+        onSelectAddress={(path) => {
+          setPhoneNumber(path);
+          setIsScriptsPanelOpen(false);
+        }}
+      />
 
       {/* Main Content Container */}
       <div className="flex-1 flex flex-col min-h-0">
-        {/* Phone Number Display */}
-        <div className="flex-1 flex items-center justify-center px-4 py-4 min-h-0">
-          <div className="text-center">
-            {phoneNumber ? (
-              <div className="text-3xl sm:text-4xl font-light">
-                {formatPhoneNumber(phoneNumber)}
-              </div>
-            ) : (
-              <div className="text-xl sm:text-2xl text-gray-500">Enter a number</div>
+        {/* To Address Input -- type a number, SIP URI, or Fabric address directly */}
+        <div className="flex-1 flex flex-col items-center justify-center px-6 py-4 min-h-0">
+          <div
+            className={`glass-panel flex w-full max-w-sm items-center gap-3 rounded-2xl px-4 py-3 transition-colors ${
+              isAddressInputFocused ? 'border-white/25 bg-white/[0.07]' : ''
+            }`}
+          >
+            <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-colors ${addressMeta.badgeClass}`}>
+              <AddressIcon size={18} />
+            </span>
+
+            <input
+              type="text"
+              inputMode="text"
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="none"
+              spellCheck={false}
+              autoFocus
+              value={isAddressInputFocused ? phoneNumber : formatPhoneNumber(phoneNumber)}
+              onChange={(e) => setPhoneNumber(e.target.value.slice(0, 128))}
+              onFocus={() => setIsAddressInputFocused(true)}
+              onBlur={() => setIsAddressInputFocused(false)}
+              disabled={isInCall || isCallingInProgress}
+              placeholder="Number or address"
+              className="w-full min-w-0 bg-transparent text-xl sm:text-2xl font-light text-white outline-none border-none placeholder:text-gray-500 disabled:opacity-50"
+            />
+
+            {phoneNumber && !isInCall && !isCallingInProgress && (
+              <button
+                type="button"
+                onClick={handleClearAll}
+                aria-label="Clear"
+                className="shrink-0 rounded-full p-1.5 text-gray-400 transition-colors hover:bg-white/10 hover:text-white"
+              >
+                <X size={16} />
+              </button>
             )}
+
+            {/* Video toggle -- obeyed by handleCall when placing the next call */}
+            <button
+              type="button"
+              onClick={() => setWantsVideo((prev) => !prev)}
+              disabled={isInCall || isCallingInProgress}
+              aria-label={wantsVideo ? 'Video call on' : 'Video call off'}
+              aria-pressed={wantsVideo}
+              className={`shrink-0 flex h-9 w-9 items-center justify-center rounded-full border transition-colors disabled:opacity-50 ${
+                wantsVideo
+                  ? 'bg-white text-black border-white'
+                  : 'bg-white/[0.06] text-gray-300 border-white/10 hover:bg-white/10'
+              }`}
+            >
+              {wantsVideo ? <Video size={18} /> : <VideoOff size={18} />}
+            </button>
           </div>
+
+          {phoneNumber && (
+            <div className="mt-3 text-xs font-medium uppercase tracking-wider text-gray-500">
+              {addressMeta.label}
+            </div>
+          )}
         </div>
 
         {/* Dial Pad Container */}

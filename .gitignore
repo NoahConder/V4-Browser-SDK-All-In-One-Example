@@ -1,0 +1,19 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+
+# Node
+node_modules/
+frontend/dist/
+
+# Env / secrets
+backend/.env
+frontend/.env
+
+# Editor
+.vscode/
+*.swp
+
+# OS
+.DS_Store

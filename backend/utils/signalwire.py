@@ -102,16 +102,83 @@ class SignalWireClient:
         # In production, you might want to validate the old token first
         return self.create_subscriber_token(reference=reference, expires_in=3600)
 
+    def _get_all_pages(self, url: str) -> list:
+        """
+        GET a URL and follow pagination via a `links.next` field until
+        exhausted. Tolerates both a bare JSON array response and a
+        `{"data": [...], "links": {...}}` wrapper.
+        """
+        results = []
+        next_url = url
+        try:
+            while next_url:
+                response = requests.get(
+                    next_url,
+                    auth=self.auth,
+                    headers={"Content-Type": "application/json"}
+                )
+                response.raise_for_status()
+                payload = response.json()
+
+                if isinstance(payload, list):
+                    results.extend(payload)
+                    break
+
+                results.extend(payload.get('data', []))
+                next_url = (payload.get('links') or {}).get('next')
+
+            return results
+
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Error fetching {url}: {str(e)}")
+            if hasattr(e, 'response') and e.response is not None:
+                logger.error(f"Response: {e.response.text}")
+            raise Exception(f"Failed to fetch {url}: {str(e)}")
+
+    def list_swml_scripts(self) -> list:
+        """
+        List SWML scripts in this space.
+        https://signalwire.com/docs/apis/rest/swml-scripts/list-swml-scripts
+        """
+        return self._get_all_pages(f"{self.api_base}/resources/swml_scripts")
+
+    def list_swml_script_addresses(self, script_id: str) -> list:
+        """
+        List the dialable addresses for a given SWML script.
+        https://signalwire.com/docs/apis/rest/swml-scripts/list-swml-script-addresses
+        """
+        return self._get_all_pages(f"{self.api_base}/resources/swml_scripts/{script_id}/addresses")
+
+    @staticmethod
+    def is_dial_address(destination: str) -> bool:
+        """
+        Check whether a dial destination is a SIP URI (sip:user@domain) or a
+        Fabric address (/public/room-name) rather than a bare phone number.
+        Both are passed through untouched -- only phone numbers get E.164
+        normalization. Keep in sync with makeCall's formattedNumber logic in
+        frontend/src/services/signalwire.ts.
+        """
+        destination = destination.strip()
+        return (
+            destination.lower().startswith('sip:')
+            or destination.startswith('/')
+            or '@' in destination
+        )
+
     def validate_phone_number(self, phone_number: str) -> bool:
         """
-        Basic phone number validation
+        Basic phone number validation. SIP URIs and Fabric addresses are
+        always considered valid since they aren't digit-based.
 
         Args:
-            phone_number: Phone number to validate
+            phone_number: Phone number (or SIP/Fabric address) to validate
 
         Returns:
-            Boolean indicating if the number appears valid
+            Boolean indicating if the destination appears valid
         """
+        if self.is_dial_address(phone_number):
+            return len(phone_number.strip()) > 0
+
         # Remove common formatting characters
         cleaned = ''.join(filter(str.isdigit, phone_number))
 
@@ -127,14 +194,19 @@ class SignalWireClient:
 
     def format_phone_number(self, phone_number: str) -> str:
         """
-        Format phone number for SignalWire
+        Format phone number for SignalWire. SIP URIs and Fabric addresses
+        are returned unchanged.
 
         Args:
-            phone_number: Input phone number
+            phone_number: Input phone number (or SIP/Fabric address)
 
         Returns:
-            Formatted phone number with country code
+            Formatted phone number with country code, or the original
+            SIP/Fabric address
         """
+        if self.is_dial_address(phone_number):
+            return phone_number.strip()
+
         # Remove all non-digit characters
         cleaned = ''.join(filter(str.isdigit, phone_number))
 

@@ -25,8 +25,24 @@
 }
 
 @layer components {
+  /* Soft top-down glow over pure black -- depth without a loud gradient. */
+  .app-shell {
+    @apply bg-black;
+    background-image: radial-gradient(ellipse 120% 55% at 50% -10%, rgba(99, 99, 102, 0.18), transparent 60%);
+  }
+
+  /* Frosted status bar / divider strip used at the top of every screen. */
+  .glass-bar {
+    @apply border-b border-white/[0.06] bg-white/[0.02] backdrop-blur-xl;
+  }
+
+  /* Frosted card surface, used for the address input and info panels. */
+  .glass-panel {
+    @apply border border-white/10 bg-white/[0.04] backdrop-blur-xl;
+  }
+
   .dial-button {
-    @apply rounded-full flex flex-col items-center justify-center transition-all duration-150 active:scale-95;
+    @apply rounded-full flex flex-col items-center justify-center transition-all duration-150 ease-out active:scale-90 shadow-[0_2px_10px_rgba(0,0,0,0.35)];
     width: 70px;
     height: 70px;
     flex-shrink: 0;

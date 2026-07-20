@@ -14,13 +14,14 @@ export const useSignalWire = () => {
       try {
         await signalWireService.initialize(
           // onIncomingCall callback
-          (remoteNumber) => {
+          (remoteNumber, hasVideo) => {
             // Handle incoming call
             setCallState({
               isIncoming: true,
               remoteNumber,
               callDirection: 'inbound',
               callStatus: 'ringing',
+              isVideoCall: hasVideo,
             });
           },
           // onCallEnded callback - remote party hung up
@@ -43,6 +44,10 @@ export const useSignalWire = () => {
           () => {
             console.log('🔔 Call connected');
             setCallState({ callStatus: 'connected' });
+          },
+          // onRemoteVideoChange callback - remote stream started/stopped carrying video
+          (hasVideo: boolean) => {
+            setCallState({ remoteHasVideo: hasVideo });
           }
         );
 
@@ -70,9 +75,9 @@ export const useSignalWire = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const makeCall = async (phoneNumber: string) => {
+  const makeCall = async (phoneNumber: string, video: boolean = false) => {
     try {
-      console.log('📢 useSignalWire.makeCall() called with:', phoneNumber);
+      console.log('📢 useSignalWire.makeCall() called with:', phoneNumber, 'video:', video);
       setError(null);
 
       // Log call to backend
@@ -82,7 +87,7 @@ export const useSignalWire = () => {
 
       // Make the actual call
       console.log('📞 Making actual call via SignalWire service...');
-      const call = await signalWireService.makeCall(phoneNumber);
+      const call = await signalWireService.makeCall(phoneNumber, video);
       console.log('✅ SignalWire service returned call object:', call);
 
       // Call has been placed, waiting for remote to answer
@@ -126,11 +131,13 @@ export const useSignalWire = () => {
 
   const answerCall = async () => {
     try {
-      await signalWireService.answerCall();
+      const { isVideoCall } = useCallStore.getState();
+      await signalWireService.answerCall(isVideoCall);
       setCallState({
         isInCall: true,
         isIncoming: false,
         callStatus: 'connected',
+        isCameraOn: isVideoCall,
       });
     } catch (err) {
       console.error('Failed to answer call:', err);
@@ -171,6 +178,20 @@ export const useSignalWire = () => {
     }
   };
 
+  const toggleCamera = async () => {
+    const { isCameraOn } = useCallStore.getState();
+    const newCameraState = !isCameraOn;
+
+    // Always update the UI state optimistically
+    setCallState({ isCameraOn: newCameraState });
+
+    try {
+      await signalWireService.toggleCamera(newCameraState);
+    } catch (err) {
+      console.warn('Camera toggle warning:', err);
+    }
+  };
+
   const toggleSpeaker = async () => {
     const { isSpeakerOn } = useCallStore.getState();
     const newSpeakerState = !isSpeakerOn;
@@ -200,6 +221,7 @@ export const useSignalWire = () => {
     answerCall,
     rejectCall,
     toggleMute,
+    toggleCamera,
     toggleSpeaker,
     sendDTMF,
   };

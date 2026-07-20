@@ -1,7 +1,5 @@
-import os
 from flask import Blueprint, jsonify, request
 from utils.signalwire import SignalWireClient
-from utils.security import valid_webhook_signature
 import logging
 from datetime import datetime
 import uuid
@@ -92,13 +90,6 @@ def handle_incoming_call():
     """
     Handle incoming call webhook from SignalWire
     """
-    # Reject spoofed webhooks: require a valid SignalWire signature unless
-    # validation is explicitly disabled (e.g. local testing). Fail-closed.
-    if os.getenv("WEBHOOK_SIGNATURE_VALIDATION", "true").lower() != "false":
-        auth_token = os.getenv("AUTH_TOKEN", "")
-        if not valid_webhook_signature(request, auth_token):
-            logger.warning("Rejected /incoming webhook: invalid or missing signature")
-            return jsonify({"success": False, "error": "Invalid signature"}), 403
     try:
         # Parse webhook data
         data = request.get_json() or request.form.to_dict()

@@ -1,0 +1,47 @@
+{
+  "name": "swdialer (Python + Node)",
+  "image": "mcr.microsoft.com/devcontainers/base:bookworm",
+  "features": {
+    "ghcr.io/devcontainers/features/python:1": {
+      "version": "3.12"
+    },
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "20"
+    }
+  },
+  "forwardPorts": [5001, 5173],
+  "portsAttributes": {
+    "5001": {
+      "label": "Backend (Flask)",
+      "onAutoForward": "notify"
+    },
+    "5173": {
+      "label": "Frontend (Vite)",
+      "onAutoForward": "openBrowser"
+    }
+  },
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "shutdownAction": "stopContainer",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "bradlc.vscode-tailwindcss",
+        "Anthropic.claude-code",
+        "ms-vscode.vscode-typescript-next",
+        "unifiedjs.vscode-mdx",
+        "xyc.vscode-mdx-preview",
+        "ms-python.debugpy",
+        "ms-python.vscode-python-envs",
+        "redhat.vscode-yaml"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "${containerWorkspaceFolder}/venv/bin/python"
+      }
+    }
+  },
+  "remoteUser": "vscode"
+}

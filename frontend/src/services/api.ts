@@ -1,26 +1,21 @@
 import axios from 'axios';
-import type { TokenData, CallData } from '../types';
+import type { TokenData, CallData, SwmlScript } from '../types';
 
 const API_BASE = '/api';
-
-// Shared secret for the gated token endpoints (baked at build time). Note: in a
-// browser SPA this is discoverable by anyone who loads the page — it raises the
-// bar against direct/automated abuse of the token endpoint, not against a
-// determined user. Pair with edge auth for real protection.
-const API_KEY = import.meta.env.VITE_DIALER_API_KEY as string | undefined;
 
 const api = axios.create({
   baseURL: API_BASE,
   headers: {
     'Content-Type': 'application/json',
-    ...(API_KEY ? { 'X-API-Key': API_KEY } : {}),
   },
 });
 
 export const authAPI = {
-  async getToken(): Promise<TokenData> {
-    // reference/subscriber are fixed server-side — nothing client-controlled.
-    const response = await api.post<{ success: boolean; data: TokenData }>('/auth/token', {});
+  async getToken(subscriberId?: string): Promise<TokenData> {
+    const response = await api.post<{ success: boolean; data: TokenData }>('/auth/token', {
+      subscriber_id: subscriberId,
+      reference: 'swdialer',  // Required reference field
+    });
     if (!response.data.success) {
       throw new Error('Failed to get token');
     }
@@ -30,6 +25,7 @@ export const authAPI = {
   async refreshToken(oldToken?: string): Promise<TokenData> {
     const response = await api.post<{ success: boolean; data: TokenData }>('/auth/refresh', {
       token: oldToken,
+      reference: 'swdialer',  // Required reference field
     });
     if (!response.data.success) {
       throw new Error('Failed to refresh token');
@@ -73,5 +69,38 @@ export const callsAPI = {
       throw new Error('Failed to get call history');
     }
     return response.data.data;
+  },
+};
+
+export interface SwmlScriptsPage {
+  scripts: SwmlScript[];
+  total: number;
+  offset: number;
+  limit: number;
+  hasMore: boolean;
+}
+
+export const swmlAPI = {
+  async listScripts(offset = 0, limit = 10): Promise<SwmlScriptsPage> {
+    const response = await api.get<{
+      success: boolean;
+      data: SwmlScript[];
+      total: number;
+      offset: number;
+      limit: number;
+      has_more: boolean;
+    }>('/swml/scripts', {
+      params: { offset, limit },
+    });
+    if (!response.data.success) {
+      throw new Error('Failed to get SWML scripts');
+    }
+    return {
+      scripts: response.data.data,
+      total: response.data.total,
+      offset: response.data.offset,
+      limit: response.data.limit,
+      hasMore: response.data.has_more,
+    };
   },
 };

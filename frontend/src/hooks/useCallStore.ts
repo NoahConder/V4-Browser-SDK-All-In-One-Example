@@ -16,6 +16,9 @@ const initialState: CallState = {
   remoteNumber: '',
   callDirection: null,
   callStatus: 'idle',
+  isVideoCall: false,
+  isCameraOn: false,
+  remoteHasVideo: false,
 };
 
 export const useCallStore = create<CallStore>((set) => ({
