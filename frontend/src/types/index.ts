@@ -1,5 +1,7 @@
 export interface CallState {
   isConnected: boolean;
+  isClientReady: boolean;
+  callError: string | null;
   isInCall: boolean;
   isIncoming: boolean;
   isMuted: boolean;
@@ -11,6 +13,17 @@ export interface CallState {
   isVideoCall: boolean;
   isCameraOn: boolean;
   remoteHasVideo: boolean;
+  // Hold has no SDK truth signal (no held$/isOnHold observable) -- tracked
+  // optimistically client-side, same as isMuted/isCameraOn.
+  isOnHold: boolean;
+  canScreenShare: boolean;
+  screenShareStatus: 'none' | 'starting' | 'started' | 'stopping';
+  isEchoCancellationOn: boolean;
+  isAutoGainOn: boolean;
+  isNoiseSuppressionOn: boolean;
+  qualityLevel: 'excellent' | 'good' | 'fair' | 'poor' | 'critical' | null;
+  qualityScore: number | null;
+  networkIssueCount: number;
 }
 
 export interface TokenData {

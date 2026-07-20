@@ -1,7 +1,33 @@
 import { useEffect, useState } from 'react';
-import { signalWireService } from '../services/signalwire';
+import { MediaAccessError, CallCreateError, MediaTrackError, PreflightError } from '@signalwire/js';
+import { signalWireService, ClientNotReadyError } from '../services/signalwire';
 import { useCallStore } from './useCallStore';
 import { callsAPI } from '../services/api';
+
+// Turns an SDK error (or anything else a try/catch might catch) into a
+// message a user could actually act on, instead of a raw Error.message.
+// Exported so components with their own inline error display (e.g.
+// TransferModal) can reuse the same messages.
+export const describeCallError = (err: unknown): string => {
+  if (err instanceof ClientNotReadyError) {
+    return 'Still connecting to SignalWire — try again in a moment.';
+  }
+  if (err instanceof MediaAccessError) {
+    return err.denied
+      ? `${err.media} access was denied. Check your browser permissions.`
+      : `Couldn't access your ${err.media}.`;
+  }
+  if (err instanceof MediaTrackError) {
+    return `A problem occurred with your ${err.kind} device.`;
+  }
+  if (err instanceof CallCreateError) {
+    return "Couldn't start the call.";
+  }
+  if (err instanceof PreflightError) {
+    return `Connection test failed during the ${err.phase} phase.`;
+  }
+  return err instanceof Error ? err.message : 'Unknown error';
+};
 
 export const useSignalWire = () => {
   const [isInitialized, setIsInitialized] = useState(false);
@@ -12,9 +38,8 @@ export const useSignalWire = () => {
   useEffect(() => {
     const initializeSignalWire = async () => {
       try {
-        await signalWireService.initialize(
-          // onIncomingCall callback
-          (remoteNumber, hasVideo) => {
+        await signalWireService.initialize({
+          onIncomingCall: (remoteNumber, hasVideo) => {
             // Handle incoming call
             setCallState({
               isIncoming: true,
@@ -24,8 +49,7 @@ export const useSignalWire = () => {
               isVideoCall: hasVideo,
             });
           },
-          // onCallEnded callback - remote party hung up
-          (wasIncoming: boolean) => {
+          onCallEnded: (wasIncoming: boolean) => {
             console.log('🔔 Remote party ended call - returning to idle, wasIncoming:', wasIncoming);
 
             // Get the current call direction before resetting
@@ -40,16 +64,40 @@ export const useSignalWire = () => {
               window.dispatchEvent(new CustomEvent('clearDialedNumber'));
             }
           },
-          // onCallConnected callback - call answered/connected
-          () => {
+          onCallConnected: () => {
             console.log('🔔 Call connected');
             setCallState({ callStatus: 'connected' });
           },
-          // onRemoteVideoChange callback - remote stream started/stopped carrying video
-          (hasVideo: boolean) => {
+          onRemoteVideoChange: (hasVideo: boolean) => {
             setCallState({ remoteHasVideo: hasVideo });
-          }
-        );
+          },
+          onReadyChange: (ready: boolean) => {
+            setCallState({ isClientReady: ready });
+          },
+          onClientError: (message: string) => {
+            setCallState({ callError: message });
+          },
+          onCanScreenShareChange: (canScreenShare: boolean) => {
+            setCallState({ canScreenShare });
+          },
+          onScreenShareStatusChange: (status) => {
+            setCallState({ screenShareStatus: status });
+          },
+          onAudioProcessingChange: (state) => {
+            setCallState({
+              isEchoCancellationOn: state.echoCancellation,
+              isAutoGainOn: state.autoGain,
+              isNoiseSuppressionOn: state.noiseSuppression,
+            });
+          },
+          onQualityChange: (state) => {
+            setCallState({
+              qualityLevel: state.level,
+              qualityScore: state.score,
+              networkIssueCount: state.networkIssues.length,
+            });
+          },
+        });
 
         setIsInitialized(true);
         setCallState({ isConnected: true });
@@ -79,6 +127,7 @@ export const useSignalWire = () => {
     try {
       console.log('📢 useSignalWire.makeCall() called with:', phoneNumber, 'video:', video);
       setError(null);
+      setCallState({ callError: null });
 
       // Log call to backend
       console.log('📝 Logging call to backend...');
@@ -99,14 +148,17 @@ export const useSignalWire = () => {
       console.log('✅ Call state updated, call should be active');
       return callData;
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unknown error';
+      const message = describeCallError(err);
       console.error('❌ Failed to make call:', err);
       console.error('Error details:', {
         message,
         stack: err instanceof Error ? err.stack : undefined,
         fullError: err
       });
-      setError('Failed to make call: ' + message);
+      // callError (not the hook's full-screen `error`) -- a failed call
+      // attempt shouldn't take over the whole app UI, just explain itself on
+      // the idle dialer screen via ErrorBanner.
+      setCallState({ callError: message });
       throw err;
     }
   };
@@ -131,6 +183,7 @@ export const useSignalWire = () => {
 
   const answerCall = async () => {
     try {
+      setCallState({ callError: null });
       const { isVideoCall } = useCallStore.getState();
       await signalWireService.answerCall(isVideoCall);
       setCallState({
@@ -141,7 +194,13 @@ export const useSignalWire = () => {
       });
     } catch (err) {
       console.error('Failed to answer call:', err);
-      setError('Failed to answer call');
+      // Same as rejectCall/endCall's failure paths below: bail back to the
+      // idle dialer rather than leaving the user stuck on an unanswerable
+      // incoming-call screen. callError survives resetCallState() and
+      // explains what happened once back on the dialer.
+      const message = describeCallError(err);
+      resetCallState();
+      setCallState({ callError: message });
     }
   };
 
@@ -197,11 +256,17 @@ export const useSignalWire = () => {
     const newSpeakerState = !isSpeakerOn;
 
     try {
-      await signalWireService.toggleSpeaker(newSpeakerState);
-      setCallState({ isSpeakerOn: newSpeakerState });
+      const applied = await signalWireService.toggleSpeaker(newSpeakerState);
+      if (applied) {
+        setCallState({ isSpeakerOn: newSpeakerState, callError: null });
+      } else {
+        setCallState({
+          callError: "Switching audio output isn't supported in this browser, or no output device is selected.",
+        });
+      }
     } catch (err) {
       console.error('Failed to toggle speaker:', err);
-      setError('Failed to toggle speaker');
+      setCallState({ callError: 'Failed to toggle speaker.' });
     }
   };
 
@@ -210,6 +275,60 @@ export const useSignalWire = () => {
       await signalWireService.sendDTMF(digit);
     } catch (err) {
       console.error('Failed to send DTMF:', err);
+    }
+  };
+
+  const toggleHold = async () => {
+    const { isOnHold } = useCallStore.getState();
+    // Optimistic, like mute/camera -- but reverted on failure (unlike those),
+    // since there's no capability flag to rely on before attempting hold.
+    setCallState({ isOnHold: !isOnHold, callError: null });
+
+    try {
+      await signalWireService.toggleHold();
+    } catch (err) {
+      console.error('Failed to toggle hold:', err);
+      setCallState({ isOnHold, callError: 'Hold failed for this call.' });
+    }
+  };
+
+  // Left to throw on failure -- callers with their own inline error display
+  // (TransferModal) want the rejection, not a store-wide callError.
+  const transferCall = (destination: string) => signalWireService.transferCall(destination);
+
+  const toggleScreenShare = async () => {
+    try {
+      await signalWireService.toggleScreenShare();
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'NotAllowedError') {
+        return; // User dismissed the browser's screen-share picker -- not an error.
+      }
+      console.error('Failed to toggle screen share:', err);
+      setCallState({ callError: 'Failed to start screen sharing.' });
+    }
+  };
+
+  const toggleEchoCancellation = async () => {
+    try {
+      await signalWireService.toggleEchoCancellation();
+    } catch (err) {
+      console.warn('Echo cancellation toggle warning:', err);
+    }
+  };
+
+  const toggleAutoGain = async () => {
+    try {
+      await signalWireService.toggleAutoGain();
+    } catch (err) {
+      console.warn('Auto gain toggle warning:', err);
+    }
+  };
+
+  const toggleNoiseSuppression = async () => {
+    try {
+      await signalWireService.toggleNoiseSuppression();
+    } catch (err) {
+      console.warn('Noise suppression toggle warning:', err);
     }
   };
 
@@ -224,5 +343,11 @@ export const useSignalWire = () => {
     toggleCamera,
     toggleSpeaker,
     sendDTMF,
+    toggleHold,
+    transferCall,
+    toggleScreenShare,
+    toggleEchoCancellation,
+    toggleAutoGain,
+    toggleNoiseSuppression,
   };
 };

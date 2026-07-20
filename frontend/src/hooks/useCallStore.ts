@@ -8,6 +8,8 @@ interface CallStore extends CallState {
 
 const initialState: CallState = {
   isConnected: false,  // Keep false - connection status shouldn't change
+  isClientReady: false,  // Preserved across resets, same as isConnected -- see resetCallState
+  callError: null,
   isInCall: false,
   isIncoming: false,
   isMuted: false,
@@ -19,6 +21,15 @@ const initialState: CallState = {
   isVideoCall: false,
   isCameraOn: false,
   remoteHasVideo: false,
+  isOnHold: false,
+  canScreenShare: false,
+  screenShareStatus: 'none',
+  isEchoCancellationOn: false,
+  isAutoGainOn: false,
+  isNoiseSuppressionOn: false,
+  qualityLevel: null,
+  qualityScore: null,
+  networkIssueCount: 0,
 };
 
 export const useCallStore = create<CallStore>((set) => ({
@@ -37,6 +48,12 @@ export const useCallStore = create<CallStore>((set) => ({
       const newState = {
         ...initialState,
         isConnected: state.isConnected,  // Preserve connection status
+        isClientReady: state.isClientReady,  // Preserve live readiness across call resets
+        // Preserve callError -- a failed call attempt resets straight back to
+        // idle (see Dialer.tsx's handleCall), and the whole point of the error
+        // banner is to explain why on that idle screen. Cleared explicitly by
+        // ErrorBanner's dismiss button or the start of the next call attempt.
+        callError: state.callError,
       };
       console.log('✅ State after reset:', newState);
       return newState;

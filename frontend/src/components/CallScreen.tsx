@@ -1,6 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Phone, PhoneOff, Mic, MicOff, Volume2, VolumeX, Keyboard, Video, VideoOff } from 'lucide-react';
+import { Phone, PhoneOff, Mic, MicOff, Volume2, VolumeX, Keyboard, Video, VideoOff, MoreHorizontal } from 'lucide-react';
 import DialPad from './DialPad';
+import ErrorBanner from './ErrorBanner';
+import CallControlsSheet from './CallControlsSheet';
+import TransferModal from './TransferModal';
+import DevicePicker from './DevicePicker';
+import CallQualityBadge from './CallQualityBadge';
 import { useSignalWire } from '../hooks/useSignalWire';
 import { useCallStore } from '../hooks/useCallStore';
 import { signalWireService } from '../services/signalwire';
@@ -33,8 +38,27 @@ const CallScreen: React.FC<CallScreenProps> = ({
   const [callDuration, setCallDuration] = useState(0);
   const [showDialPad, setShowDialPad] = useState(false);
   const [dialPadInput, setDialPadInput] = useState('');
-  const { sendDTMF } = useSignalWire();
+  const [isControlsSheetOpen, setIsControlsSheetOpen] = useState(false);
+  const [isTransferModalOpen, setIsTransferModalOpen] = useState(false);
+  const [isDevicePickerOpen, setIsDevicePickerOpen] = useState(false);
+  const {
+    sendDTMF,
+    toggleHold,
+    transferCall,
+    toggleScreenShare,
+    toggleEchoCancellation,
+    toggleAutoGain,
+    toggleNoiseSuppression,
+  } = useSignalWire();
   const callStatus = useCallStore((s) => s.callStatus);
+  const callError = useCallStore((s) => s.callError);
+  const isOnHold = useCallStore((s) => s.isOnHold);
+  const canScreenShare = useCallStore((s) => s.canScreenShare);
+  const screenShareStatus = useCallStore((s) => s.screenShareStatus);
+  const isEchoCancellationOn = useCallStore((s) => s.isEchoCancellationOn);
+  const isAutoGainOn = useCallStore((s) => s.isAutoGainOn);
+  const isNoiseSuppressionOn = useCallStore((s) => s.isNoiseSuppressionOn);
+  const setCallState = useCallStore((s) => s.setCallState);
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
 
@@ -99,7 +123,10 @@ const CallScreen: React.FC<CallScreenProps> = ({
         <span className="absolute left-1/2 transform -translate-x-1/2 font-medium tracking-wide text-gray-400">
           SignalWire
         </span>
-        <span className="text-gray-400">{new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+        <span className="flex items-center gap-2 text-gray-400">
+          {callStatus === 'connected' && <CallQualityBadge />}
+          {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+        </span>
       </div>
 
       {/* Main Content Container */}
@@ -122,6 +149,10 @@ const CallScreen: React.FC<CallScreenProps> = ({
             showVideoUI && isCameraOn ? '' : 'hidden'
           }`}
         />
+
+        {callError && (
+          <ErrorBanner message={callError} onDismiss={() => setCallState({ callError: null })} />
+        )}
 
         {showDialPad ? (
           <>
@@ -169,7 +200,7 @@ const CallScreen: React.FC<CallScreenProps> = ({
                   {callStatus !== 'connected' && (
                     <span className="h-1.5 w-1.5 rounded-full bg-ios-green animate-pulse" />
                   )}
-                  {callStatus === 'connected' ? 'Connected' : 'Calling…'}
+                  {isOnHold ? 'On Hold' : callStatus === 'connected' ? 'Connected' : 'Calling…'}
                 </div>
                 <div className="text-2xl sm:text-3xl font-light mb-4">{phoneNumber}</div>
                 <div className="inline-block rounded-full bg-white/5 px-3 py-1 text-lg sm:text-xl text-gray-300 tabular-nums">
@@ -234,12 +265,51 @@ const CallScreen: React.FC<CallScreenProps> = ({
                     <PhoneOff size={32} fill="white" />
                   </button>
 
-                  <div></div>
+                  {/* More Button */}
+                  <button
+                    onClick={() => setIsControlsSheetOpen(true)}
+                    aria-label="More call controls"
+                    className="dial-button border border-white/10 bg-white/[0.06] backdrop-blur-md hover:bg-white/10"
+                  >
+                    <MoreHorizontal size={24} />
+                  </button>
                 </div>
               </div>
             </div>
           </>
         )}
+
+        <CallControlsSheet
+          isOpen={isControlsSheetOpen}
+          onClose={() => setIsControlsSheetOpen(false)}
+          isOnHold={isOnHold}
+          onToggleHold={toggleHold}
+          onOpenTransfer={() => {
+            setIsControlsSheetOpen(false);
+            setIsTransferModalOpen(true);
+          }}
+          onOpenDevicePicker={() => {
+            setIsControlsSheetOpen(false);
+            setIsDevicePickerOpen(true);
+          }}
+          canScreenShare={canScreenShare}
+          screenShareStatus={screenShareStatus}
+          onToggleScreenShare={toggleScreenShare}
+          isEchoCancellationOn={isEchoCancellationOn}
+          onToggleEchoCancellation={toggleEchoCancellation}
+          isNoiseSuppressionOn={isNoiseSuppressionOn}
+          onToggleNoiseSuppression={toggleNoiseSuppression}
+          isAutoGainOn={isAutoGainOn}
+          onToggleAutoGain={toggleAutoGain}
+        />
+
+        <TransferModal
+          isOpen={isTransferModalOpen}
+          onClose={() => setIsTransferModalOpen(false)}
+          onTransfer={transferCall}
+        />
+
+        <DevicePicker isOpen={isDevicePickerOpen} onClose={() => setIsDevicePickerOpen(false)} />
       </div>
     </div>
   );

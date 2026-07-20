@@ -1,9 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { AtSign, List, Phone, Slash, Video, VideoOff, X } from 'lucide-react';
+import { Activity, AtSign, List, Phone, Slash, SlidersHorizontal, Video, VideoOff, X } from 'lucide-react';
 import DialPad from './DialPad';
 import CallScreen from './CallScreen';
 import IncomingCall from './IncomingCall';
 import DialableResourcesPanel from './DialableResourcesPanel';
+import DevicePicker from './DevicePicker';
+import DiagnosticsPanel from './DiagnosticsPanel';
+import ErrorBanner from './ErrorBanner';
 import { useCallStore } from '../hooks/useCallStore';
 import { useSignalWire } from '../hooks/useSignalWire';
 
@@ -48,6 +51,8 @@ const Dialer: React.FC = () => {
   const [isAddressInputFocused, setIsAddressInputFocused] = useState(false);
   const [wantsVideo, setWantsVideo] = useState(false);
   const [isResourcesPanelOpen, setIsResourcesPanelOpen] = useState(false);
+  const [isDevicePickerOpen, setIsDevicePickerOpen] = useState(false);
+  const [isDiagnosticsPanelOpen, setIsDiagnosticsPanelOpen] = useState(false);
   const [lastDialedNumber, setLastDialedNumber] = useState(() => {
     // Load last dialed number from localStorage
     return localStorage.getItem('lastDialedNumber') || '';
@@ -62,6 +67,7 @@ const Dialer: React.FC = () => {
     isVideoCall,
     isCameraOn,
     remoteHasVideo,
+    callError,
     setCallState,
     resetCallState,
   } = useCallStore();
@@ -268,12 +274,34 @@ const Dialer: React.FC = () => {
 
   // Show dialer
   return (
-    <div className="app-shell flex flex-col h-screen">
+    <div className="app-shell relative flex flex-col h-screen">
       {/* Status Bar */}
       <div className="glass-bar relative flex items-center justify-between px-6 py-2 text-sm">
         <span className="text-ios-green">●</span>
         <span className="absolute left-1/2 transform -translate-x-1/2 font-medium tracking-wide text-gray-400">SignalWire</span>
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setIsDevicePickerOpen((prev) => !prev)}
+            aria-label="Audio & Video Devices"
+            aria-pressed={isDevicePickerOpen}
+            className={`rounded-full p-1 transition-colors hover:bg-white/10 hover:text-white ${
+              isDevicePickerOpen ? 'text-white' : 'text-gray-400'
+            }`}
+          >
+            <SlidersHorizontal size={16} />
+          </button>
+          <button
+            type="button"
+            onClick={() => setIsDiagnosticsPanelOpen((prev) => !prev)}
+            aria-label="Diagnostics"
+            aria-pressed={isDiagnosticsPanelOpen}
+            className={`rounded-full p-1 transition-colors hover:bg-white/10 hover:text-white ${
+              isDiagnosticsPanelOpen ? 'text-white' : 'text-gray-400'
+            }`}
+          >
+            <Activity size={16} />
+          </button>
           <button
             type="button"
             onClick={() => setIsResourcesPanelOpen((prev) => !prev)}
@@ -298,6 +326,14 @@ const Dialer: React.FC = () => {
           setIsResourcesPanelOpen(false);
         }}
       />
+
+      <DevicePicker isOpen={isDevicePickerOpen} onClose={() => setIsDevicePickerOpen(false)} />
+
+      <DiagnosticsPanel isOpen={isDiagnosticsPanelOpen} onClose={() => setIsDiagnosticsPanelOpen(false)} />
+
+      {callError && (
+        <ErrorBanner message={callError} onDismiss={() => setCallState({ callError: null })} />
+      )}
 
       {/* Main Content Container */}
       <div className="flex-1 flex flex-col min-h-0">

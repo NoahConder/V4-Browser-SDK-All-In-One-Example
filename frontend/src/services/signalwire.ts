@@ -1,9 +1,63 @@
-import { SignalWire } from '@signalwire/js';
-import type { Call } from '@signalwire/js';
-import type { Subscription } from 'rxjs';
+import { SignalWire, TokenRefreshError, InvalidCredentialsError } from '@signalwire/js';
+import type {
+  Call,
+  ScreenShareStatus,
+  PermissionResult,
+  PreflightOptions,
+  PreflightResult,
+  SessionDiagnostics,
+  QualityLevel,
+  NetworkIssue,
+} from '@signalwire/js';
+import { combineLatest, of } from 'rxjs';
+import type { Observable, Subscription } from 'rxjs';
 import type { TokenData } from '../types';
 import { authAPI } from './api';
 import { toneService } from './tones';
+
+// Thrown by makeCall()/answerCall() when client.ready$ is currently false --
+// e.g. right after a token refresh or network blip, not just at first mount
+// (by the time the app renders, initialize()'s own client.register() await
+// has already resolved once).
+export class ClientNotReadyError extends Error {
+  constructor() {
+    super('SignalWire client is still connecting');
+    this.name = 'ClientNotReadyError';
+  }
+}
+
+export interface AudioProcessingState {
+  echoCancellation: boolean;
+  autoGain: boolean;
+  noiseSuppression: boolean;
+}
+
+export interface CallQualityState {
+  level: QualityLevel;
+  score: number;
+  networkIssues: NetworkIssue[];
+}
+
+export interface SignalWireCallbacks {
+  onIncomingCall?: (remoteNumber: string, hasVideo: boolean) => void;
+  onCallEnded?: (wasIncoming: boolean) => void;
+  onCallConnected?: () => void;
+  onRemoteVideoChange?: (hasVideo: boolean) => void;
+  // Reflects client.ready$ for the lifetime of the connection, not just the
+  // one-shot mount-time init result.
+  onReadyChange?: (ready: boolean) => void;
+  // Fired for session-ending async errors/warnings arriving on client.errors$
+  // /warnings$ (token refresh failures, no-refresh-handler warnings) -- these
+  // don't happen inside any user-initiated action's try/catch, so they'd
+  // otherwise only ever reach console.error/console.warn.
+  onClientError?: (message: string) => void;
+  // Call.capabilities$ -- 'screenshare' is present/absent per call, so the UI
+  // gates the screen-share control on this rather than assuming it's always available.
+  onCanScreenShareChange?: (canScreenShare: boolean) => void;
+  onScreenShareStatusChange?: (status: ScreenShareStatus) => void;
+  onAudioProcessingChange?: (state: AudioProcessingState) => void;
+  onQualityChange?: (state: CallQualityState) => void;
+}
 
 class SignalWireService {
   private client: InstanceType<typeof SignalWire> | null = null;
@@ -13,6 +67,11 @@ class SignalWireService {
   private wasIncomingCall: boolean = false;
   private isInitialized: boolean = false;
   private isInitializing: boolean = false;
+  private isReady: boolean = false;
+  // Set via setPreferredAudioOutputDevice() (called by the device picker);
+  // toggleSpeaker() applies it to the remote media sink. Speaker toggling has
+  // no effect until a device has been explicitly selected here.
+  private preferredOutputDevice: MediaDeviceInfo | null = null;
 
   // RxJS subscriptions
   private incomingCallSub: Subscription | null = null;
@@ -21,6 +80,15 @@ class SignalWireService {
   private localStreamSub: Subscription | null = null;
   private errorSub: Subscription | null = null;
   private warningSub: Subscription | null = null;
+  private readySub: Subscription | null = null;
+  private capabilitiesSub: Subscription | null = null;
+  // self$ itself, plus the subs derived from whatever `self` it last emitted
+  // (screenShareStatus$, the combined audio-processing observables) -- torn
+  // down and re-created together whenever self$ emits, since self can be
+  // replaced wholesale on a new call.joined event.
+  private selfSub: Subscription | null = null;
+  private selfDerivedSub: Subscription | null = null;
+  private qualitySub: Subscription | null = null;
   private remoteAudioCheckInterval: ReturnType<typeof setInterval> | null = null;
 
   // Video elements attached by CallScreen; may be set before or after streams arrive.
@@ -35,13 +103,14 @@ class SignalWireService {
   private onCallEnded: ((wasIncoming: boolean) => void) | null = null;
   private onCallConnected: (() => void) | null = null;
   private onRemoteVideoChange: ((hasVideo: boolean) => void) | null = null;
+  private onReadyChange: ((ready: boolean) => void) | null = null;
+  private onClientError: ((message: string) => void) | null = null;
+  private onCanScreenShareChange: ((canScreenShare: boolean) => void) | null = null;
+  private onScreenShareStatusChange: ((status: ScreenShareStatus) => void) | null = null;
+  private onAudioProcessingChange: ((state: AudioProcessingState) => void) | null = null;
+  private onQualityChange: ((state: CallQualityState) => void) | null = null;
 
-  async initialize(
-    onIncomingCall?: (remoteNumber: string, hasVideo: boolean) => void,
-    onCallEnded?: (wasIncoming: boolean) => void,
-    onCallConnected?: () => void,
-    onRemoteVideoChange?: (hasVideo: boolean) => void
-  ) {
+  async initialize(callbacks: SignalWireCallbacks = {}) {
     if (this.isInitializing || this.isInitialized) {
       console.log('SignalWire initialization already in progress or completed, skipping...');
       while (this.isInitializing) {
@@ -54,10 +123,16 @@ class SignalWireService {
     console.log('Starting SignalWire initialization...');
 
     try {
-      this.onIncomingCall = onIncomingCall || null;
-      this.onCallEnded = onCallEnded || null;
-      this.onCallConnected = onCallConnected || null;
-      this.onRemoteVideoChange = onRemoteVideoChange || null;
+      this.onIncomingCall = callbacks.onIncomingCall || null;
+      this.onCallEnded = callbacks.onCallEnded || null;
+      this.onCallConnected = callbacks.onCallConnected || null;
+      this.onRemoteVideoChange = callbacks.onRemoteVideoChange || null;
+      this.onReadyChange = callbacks.onReadyChange || null;
+      this.onClientError = callbacks.onClientError || null;
+      this.onCanScreenShareChange = callbacks.onCanScreenShareChange || null;
+      this.onScreenShareStatusChange = callbacks.onScreenShareStatusChange || null;
+      this.onAudioProcessingChange = callbacks.onAudioProcessingChange || null;
+      this.onQualityChange = callbacks.onQualityChange || null;
 
       // Create credential provider with automatic refresh
       const credentialProvider = {
@@ -89,9 +164,15 @@ class SignalWireService {
       // these payload types are offered ahead of Opus.
       this.client.preferences.preferredAudioCodecs = ['PCMU', 'PCMA'];
 
-      // Subscribe to errors
+      // Subscribe to errors. Most errors here are transient/best-effort (e.g.
+      // the RPCTimeoutError noted in disconnect() below) and already handled
+      // where they're thrown, so only session-ending ones are escalated to
+      // the UI via onClientError — everything else stays console-only.
       this.errorSub = this.client.errors$.subscribe((error) => {
         console.error('SignalWire error:', error);
+        if (error instanceof TokenRefreshError || error instanceof InvalidCredentialsError) {
+          this.onClientError?.('Your session could not be refreshed. Please reload the page to reconnect.');
+        }
       });
 
       // Subscribe to non-fatal warnings (new in v4.0.0-rc.0). Because we drive
@@ -101,6 +182,17 @@ class SignalWireService {
       // silently die at SAT expiry.
       this.warningSub = this.client.warnings$.subscribe((warning) => {
         console.warn('SignalWire warning:', warning.code, warning.message);
+        if (warning.code === 'credential_no_refresh_handler') {
+          this.onClientError?.('Your session will expire soon and cannot auto-refresh. Reload the page before it does to stay connected.');
+        }
+      });
+
+      // Live readiness — can flip false again after this initial registration
+      // (token refresh hiccup, network blip), so callers gate call-time actions
+      // on isReady rather than only on the one-shot result of this method.
+      this.readySub = this.client.ready$.subscribe((ready) => {
+        this.isReady = ready;
+        this.onReadyChange?.(ready);
       });
 
       // Register for incoming calls
@@ -210,6 +302,49 @@ class SignalWireService {
         this.localVideoEl.srcObject = stream;
       }
     });
+
+    // 'screenshare' capability is per-call, so gate the screen-share control on it.
+    this.capabilitiesSub = call.capabilities$.subscribe((capabilities) => {
+      this.onCanScreenShareChange?.(capabilities.includes('screenshare'));
+    });
+
+    // Quality/network observables live directly on Call (not call.self), so
+    // this is simpler than the self$ tier below -- no nullable intermediate.
+    this.qualitySub = combineLatest([
+      call.qualityLevel$,
+      call.qualityScore$,
+      call.networkIssues$,
+    ]).subscribe(([level, score, networkIssues]) => {
+      this.onQualityChange?.({ level, score, networkIssues });
+    });
+
+    // call.self is replaced wholesale on each call.joined event, so the subs
+    // derived from it (screen-share status, audio-processing flags) are torn
+    // down and re-created every time self$ emits, not just once here.
+    this.selfSub = call.self$.subscribe((self) => {
+      this.selfDerivedSub?.unsubscribe();
+      this.selfDerivedSub = null;
+
+      if (!self) {
+        this.onScreenShareStatusChange?.('none');
+        this.onAudioProcessingChange?.({ echoCancellation: false, autoGain: false, noiseSuppression: false });
+        return;
+      }
+
+      this.selfDerivedSub = combineLatest([
+        self.screenShareStatus$,
+        self.echoCancellation$,
+        self.autoGain$,
+        self.noiseSuppression$,
+      ]).subscribe(([screenShareStatus, echoCancellation, autoGain, noiseSuppression]) => {
+        this.onScreenShareStatusChange?.(screenShareStatus);
+        this.onAudioProcessingChange?.({
+          echoCancellation: !!echoCancellation,
+          autoGain: !!autoGain,
+          noiseSuppression: !!noiseSuppression,
+        });
+      });
+    });
   }
 
   private cleanupCallSubscriptions() {
@@ -219,6 +354,14 @@ class SignalWireService {
     this.remoteStreamSub = null;
     this.localStreamSub?.unsubscribe();
     this.localStreamSub = null;
+    this.capabilitiesSub?.unsubscribe();
+    this.capabilitiesSub = null;
+    this.qualitySub?.unsubscribe();
+    this.qualitySub = null;
+    this.selfDerivedSub?.unsubscribe();
+    this.selfDerivedSub = null;
+    this.selfSub?.unsubscribe();
+    this.selfSub = null;
     if (this.remoteAudioCheckInterval) {
       clearInterval(this.remoteAudioCheckInterval);
       this.remoteAudioCheckInterval = null;
@@ -365,32 +508,42 @@ class SignalWireService {
     });
   }
 
+  // SIP URIs (sip:user@domain) and Fabric addresses (/public/room-name) are
+  // dialed as-is. Only bare phone numbers get E.164 normalization. Keep this
+  // check in sync with is_dial_address() in backend/utils/signalwire.py.
+  // Shared by makeCall() and transferCall() -- a transfer destination is
+  // normalized exactly like a dialed one.
+  private normalizeDestination(value: string): string {
+    const isDialAddress =
+      /^sip:/i.test(value.trim()) ||
+      value.trim().startsWith('/') ||
+      value.includes('@');
+
+    if (isDialAddress) {
+      return value.trim();
+    }
+    if (value.startsWith('+')) {
+      return value;
+    }
+    if (value.length === 10) {
+      return '+1' + value;
+    }
+    if (value.length === 11 && value.startsWith('1')) {
+      return '+' + value;
+    }
+    return '+' + value;
+  }
+
   async makeCall(phoneNumber: string, video: boolean = false): Promise<Call> {
     if (!this.client) {
       throw new Error('SignalWire client not initialized');
     }
+    if (!this.isReady) {
+      throw new ClientNotReadyError();
+    }
 
     try {
-      // SIP URIs (sip:user@domain) and Fabric addresses (/public/room-name)
-      // are dialed as-is. Only bare phone numbers get E.164 normalization.
-      // Keep this check in sync with is_dial_address() in backend/utils/signalwire.py.
-      const isDialAddress =
-        /^sip:/i.test(phoneNumber.trim()) ||
-        phoneNumber.trim().startsWith('/') ||
-        phoneNumber.includes('@');
-
-      let formattedNumber = phoneNumber;
-      if (isDialAddress) {
-        formattedNumber = phoneNumber.trim();
-      } else if (!formattedNumber.startsWith('+')) {
-        if (formattedNumber.length === 10) {
-          formattedNumber = '+1' + formattedNumber;
-        } else if (formattedNumber.length === 11 && formattedNumber.startsWith('1')) {
-          formattedNumber = '+' + formattedNumber;
-        } else {
-          formattedNumber = '+' + formattedNumber;
-        }
-      }
+      const formattedNumber = this.normalizeDestination(phoneNumber);
       console.log('Dialing:', formattedNumber);
 
       const call = await this.client.dial(formattedNumber, {
@@ -432,6 +585,9 @@ class SignalWireService {
   async answerCall(video: boolean = false) {
     if (!this.pendingCall) {
       throw new Error('No incoming call to answer');
+    }
+    if (!this.isReady) {
+      throw new ClientNotReadyError();
     }
 
     if (this.currentCall) {
@@ -532,8 +688,168 @@ class SignalWireService {
     }
   }
 
-  async toggleSpeaker(speakerOn: boolean) {
-    console.log('Speaker toggle:', speakerOn);
+  // No held$/isOnHold observable exists on Call -- the caller tracks hold
+  // state optimistically (like isMuted/isCameraOn) and reverts on failure.
+  async toggleHold() {
+    if (!this.currentCall) {
+      throw new Error('No active call to hold');
+    }
+    await this.currentCall.toggleHold();
+  }
+
+  async transferCall(destination: string) {
+    if (!this.currentCall) {
+      throw new Error('No active call to transfer');
+    }
+    await this.currentCall.transfer({ destination: this.normalizeDestination(destination) });
+  }
+
+  // start/stopScreenShare() live on call.self, gated by the caller on the
+  // canScreenShare flag fed from call.capabilities$ (onCanScreenShareChange).
+  async toggleScreenShare() {
+    const self = this.currentCall?.self;
+    if (!self) {
+      throw new Error('No active call to screen share on');
+    }
+    if (self.screenShareStatus === 'started' || self.screenShareStatus === 'starting') {
+      await self.stopScreenShare();
+    } else {
+      await self.startScreenShare();
+    }
+  }
+
+  async toggleEchoCancellation() {
+    const self = this.currentCall?.self;
+    if (!self) {
+      throw new Error('No active call');
+    }
+    await self.toggleEchoCancellation();
+  }
+
+  async toggleAutoGain() {
+    const self = this.currentCall?.self;
+    if (!self) {
+      throw new Error('No active call');
+    }
+    await self.toggleAudioInputAutoGain();
+  }
+
+  async toggleNoiseSuppression() {
+    const self = this.currentCall?.self;
+    if (!self) {
+      throw new Error('No active call');
+    }
+    await self.toggleNoiseSuppression();
+  }
+
+  // Browsers don't have a phone's earpiece/loudspeaker distinction -- this
+  // "toggle" really means "apply (or clear) the user's selected output
+  // device to whichever element remote media is currently playing through."
+  // Returns false if setSinkId is unsupported by this browser, or no output
+  // device has been selected yet (see setPreferredAudioOutputDevice, wired
+  // up by the device picker) -- callers should surface that, not silently
+  // flip the UI toggle.
+  async toggleSpeaker(speakerOn: boolean): Promise<boolean> {
+    if (!this.client) return false;
+
+    const sinkEl = this.getRemoteMediaSinkElement();
+    if (!sinkEl) {
+      console.warn('No remote media element available yet for speaker toggle');
+      return false;
+    }
+
+    this.client.selectAudioOutputDevice(speakerOn ? this.preferredOutputDevice : null);
+
+    try {
+      const applied = await this.client.applySelectedAudioOutputDevice(sinkEl);
+      console.log(`Speaker ${speakerOn ? 'on' : 'off'}, applied:`, applied);
+      return applied;
+    } catch (error) {
+      console.error('Error applying audio output device:', error);
+      return false;
+    }
+  }
+
+  // Set by the device picker when the user picks a speaker/output device.
+  setPreferredAudioOutputDevice(device: MediaDeviceInfo | null) {
+    this.preferredOutputDevice = device;
+    this.client?.selectAudioOutputDevice(device);
+  }
+
+  // Thin passthroughs for the device picker -- nothing outside this file
+  // touches `client` directly, so device enumeration/selection is exposed
+  // here rather than the picker reaching into a `client` getter itself.
+  // Devices lists are read-only outside of this service, so callers get the
+  // observable directly rather than yet another set of injected callbacks.
+  getAudioInputDevices$(): Observable<MediaDeviceInfo[]> {
+    return this.client?.audioInputDevices$ ?? of([]);
+  }
+
+  getVideoInputDevices$(): Observable<MediaDeviceInfo[]> {
+    return this.client?.videoInputDevices$ ?? of([]);
+  }
+
+  getAudioOutputDevices$(): Observable<MediaDeviceInfo[]> {
+    return this.client?.audioOutputDevices$ ?? of([]);
+  }
+
+  getSelectedAudioInputDevice$(): Observable<MediaDeviceInfo | null> {
+    return this.client?.selectedAudioInputDevice$ ?? of(null);
+  }
+
+  getSelectedVideoInputDevice$(): Observable<MediaDeviceInfo | null> {
+    return this.client?.selectedVideoInputDevice$ ?? of(null);
+  }
+
+  getSelectedAudioOutputDevice$(): Observable<MediaDeviceInfo | null> {
+    return this.client?.selectedAudioOutputDevice$ ?? of(null);
+  }
+
+  selectAudioInputDevice(device: MediaDeviceInfo | null) {
+    this.client?.selectAudioInputDevice(device);
+  }
+
+  selectVideoInputDevice(device: MediaDeviceInfo | null) {
+    this.client?.selectVideoInputDevice(device);
+  }
+
+  async refreshDevices(): Promise<void> {
+    await this.client?.enumerateDevices();
+  }
+
+  // Prompts for permission and populates device labels (empty until granted).
+  // Called by the device picker on open, not at app startup -- see
+  // App.tsx's own getUserMedia gate, which stays as the audio-only startup
+  // check since `client` doesn't exist yet at that point in the app lifecycle.
+  async requestMediaPermissions(options?: { audio?: boolean; video?: boolean }): Promise<PermissionResult> {
+    if (!this.client) {
+      return { audio: false, video: false };
+    }
+    return this.client.requestMediaPermissions(options);
+  }
+
+  // Places a real call to `destination` to test signaling/TURN/bandwidth --
+  // idle-only (see DiagnosticsPanel), never prefilled from a live dial-pad
+  // value since it's a genuine, potentially-billable call attempt.
+  async runPreflight(destination: string, options?: PreflightOptions): Promise<PreflightResult> {
+    if (!this.client) {
+      throw new Error('SignalWire client not initialized');
+    }
+    return this.client.preflight(destination, options);
+  }
+
+  exportDiagnostics(): SessionDiagnostics | null {
+    return this.client?.exportDiagnostics() ?? null;
+  }
+
+  // Whichever element is actually rendering remote media right now: the
+  // remote <video> once a video track has routed audio through it (see
+  // handleRemoteMedia), otherwise the fallback <audio> sink.
+  private getRemoteMediaSinkElement(): HTMLMediaElement | null {
+    if (this.remoteAudioRoutedToVideo && this.remoteVideoEl) {
+      return this.remoteVideoEl;
+    }
+    return document.getElementById('sw-remote-audio') as HTMLAudioElement | null;
   }
 
   async sendDTMF(digit: string) {
@@ -578,6 +894,9 @@ class SignalWireService {
     this.errorSub = null;
     this.warningSub?.unsubscribe();
     this.warningSub = null;
+    this.readySub?.unsubscribe();
+    this.readySub = null;
+    this.isReady = false;
 
     if (this.currentCall) {
       this.currentCall.hangup().catch((error) => {
