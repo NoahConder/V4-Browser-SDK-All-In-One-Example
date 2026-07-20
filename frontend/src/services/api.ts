@@ -3,19 +3,24 @@ import type { TokenData, CallData, SwmlScript } from '../types';
 
 const API_BASE = '/api';
 
+// Shared secret for the gated token endpoints (baked at build time). Note: in a
+// browser SPA this is discoverable by anyone who loads the page — it raises the
+// bar against direct/automated abuse of the token endpoint, not against a
+// determined user. Pair with edge auth for real protection.
+const API_KEY = import.meta.env.VITE_DIALER_API_KEY as string | undefined;
+
 const api = axios.create({
   baseURL: API_BASE,
   headers: {
     'Content-Type': 'application/json',
+    ...(API_KEY ? { 'X-API-Key': API_KEY } : {}),
   },
 });
 
 export const authAPI = {
-  async getToken(subscriberId?: string): Promise<TokenData> {
-    const response = await api.post<{ success: boolean; data: TokenData }>('/auth/token', {
-      subscriber_id: subscriberId,
-      reference: 'swdialer',  // Required reference field
-    });
+  async getToken(): Promise<TokenData> {
+    // reference/subscriber are fixed server-side — nothing client-controlled.
+    const response = await api.post<{ success: boolean; data: TokenData }>('/auth/token', {});
     if (!response.data.success) {
       throw new Error('Failed to get token');
     }
@@ -25,7 +30,6 @@ export const authAPI = {
   async refreshToken(oldToken?: string): Promise<TokenData> {
     const response = await api.post<{ success: boolean; data: TokenData }>('/auth/refresh', {
       token: oldToken,
-      reference: 'swdialer',  // Required reference field
     });
     if (!response.data.success) {
       throw new Error('Failed to refresh token');

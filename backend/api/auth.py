@@ -1,13 +1,37 @@
+import os
 from flask import Blueprint, jsonify, request
 from utils.signalwire import SignalWireClient
+from utils.security import api_key_ok, rate_limited, client_ip
 import logging
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
 auth_bp = Blueprint('auth', __name__)
 
+# Fixed, server-controlled subscriber reference. The client must NOT be able to
+# choose the reference/subscriber a token is minted for (was an IDOR vector
+# where a caller could request a token for an arbitrary subscriber_id).
+_TOKEN_REFERENCE = "swdialer"
+
 # Initialize SignalWire client
 sw_client = None
+
+
+def _gate():
+    """Guard for the token endpoints: API key (fail-closed) + rate limit.
+
+    Returns a Flask (response, status) tuple to abort with, or None to proceed.
+    Prevents this token-minting endpoint (which yields call-capable SignalWire
+    tokens) from being an open, abusable endpoint on the public internet.
+    """
+    if not api_key_ok(request):
+        if not os.getenv("DIALER_API_KEY"):
+            # Fail-closed: never mint tokens when the gate isn't configured.
+            return jsonify({"success": False, "error": "Token service not configured"}), 503
+        return jsonify({"success": False, "error": "Unauthorized"}), 401
+    if rate_limited(f"token:{client_ip(request)}", limit=10, window_sec=60):
+        return jsonify({"success": False, "error": "Rate limit exceeded"}), 429
+    return None
 
 
 def init_signalwire_client():
@@ -25,25 +49,22 @@ def generate_token():
     """
     Generate a new subscriber token for WebRTC access
     """
+    blocked = _gate()
+    if blocked:
+        return blocked
     try:
         if not sw_client:
             init_signalwire_client()
             if not sw_client:
                 return jsonify({"error": "SignalWire client not configured"}), 500
 
-        # Get optional subscriber ID and reference from request
-        data = request.get_json() or {}
-        subscriber_id = data.get('subscriber_id')
-        reference = data.get('reference', 'swdialer')  # Default to 'swdialer'
-
-        # Generate token with 1-hour expiry by default
+        # Reference is fixed server-side — never taken from the request body.
         token_data = sw_client.create_subscriber_token(
-            subscriber_id=subscriber_id,
-            reference=reference,
+            reference=_TOKEN_REFERENCE,
             expires_in=3600  # 1 hour
         )
 
-        logger.info(f"Token generated successfully for subscriber: {subscriber_id or 'anonymous'}")
+        logger.info("Token generated successfully")
 
         return jsonify({
             "success": True,
@@ -51,10 +72,11 @@ def generate_token():
         }), 200
 
     except Exception as e:
+        # Log details server-side; do not leak internals to the client.
         logger.error(f"Error generating token: {str(e)}")
         return jsonify({
             "success": False,
-            "error": str(e)
+            "error": "Failed to generate token"
         }), 500
 
 
@@ -63,18 +85,17 @@ def refresh_token():
     """
     Refresh an existing subscriber token
     """
+    blocked = _gate()
+    if blocked:
+        return blocked
     try:
         if not sw_client:
             init_signalwire_client()
             if not sw_client:
                 return jsonify({"error": "SignalWire client not configured"}), 500
 
-        # Get the old token from request (optional for validation)
-        data = request.get_json() or {}
-        old_token = data.get('token')
-
-        # Generate a new token
-        token_data = sw_client.refresh_token(old_token=old_token)
+        # Mint a fresh token (reference fixed server-side).
+        token_data = sw_client.refresh_token()
 
         logger.info("Token refreshed successfully")
 
@@ -87,7 +108,7 @@ def refresh_token():
         logger.error(f"Error refreshing token: {str(e)}")
         return jsonify({
             "success": False,
-            "error": str(e)
+            "error": "Failed to refresh token"
         }), 500
 
 

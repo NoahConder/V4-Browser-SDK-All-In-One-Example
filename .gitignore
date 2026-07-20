@@ -9,11 +9,17 @@ frontend/dist/
 
 # Env / secrets
 backend/.env
+backend/.env.local
 frontend/.env
+frontend/.env.local
 
 # Editor
 .vscode/
+.idea/
 *.swp
 
 # OS
 .DS_Store
+
+# Build artifacts
+*.tsbuildinfo

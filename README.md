@@ -2,6 +2,18 @@
 
 A web-based iPhone-style dialer application built with React and SignalWire SDK for making and receiving WebRTC calls.
 
+> This is a heavily modified version of [briankwest/swdialer](https://github.com/briankwest/swdialer).
+
+## Changes from Upstream
+
+This fork diverges from [briankwest/swdialer](https://github.com/briankwest/swdialer) in the ways below. This list grows as the fork continues to evolve — newest changes at the top.
+
+- **SWML Scripts browser** — a new panel (toggle button in the dialer header) lists the SignalWire space's SWML scripts and their dialable addresses, and lets you tap one to fill the dial field. Backed by a new `GET /api/swml/scripts` endpoint (`backend/api/swml.py`).
+- **Direct SIP/Fabric-address dialing** — the dial field now also accepts SIP URIs (`sip:user@domain`) and Fabric addresses (`/public/room-name`) alongside phone numbers; both skip E.164 formatting.
+- **SignalWire JS SDK** bumped to `@signalwire/js@^4.0.0-rc.2` (from an exact pin at `4.0.0-rc.0`).
+- **Dev environment** — added a `.devcontainer/` (Python 3.12 + Node 20) that bootstraps the venv and runs `npm install` automatically, with ports 5001/5173 pre-forwarded.
+- **Documentation** — expanded `CLAUDE.md` with architecture notes for the above, and credited the upstream project in this README.
+
 ## Features
 
 - ✅ iPhone-style dialer UI with dark theme
