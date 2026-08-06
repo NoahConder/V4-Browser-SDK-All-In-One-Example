@@ -50,9 +50,15 @@ const Dialer: React.FC = () => {
   const [isCallingInProgress, setIsCallingInProgress] = useState(false);
   const [isAddressInputFocused, setIsAddressInputFocused] = useState(false);
   const [wantsVideo, setWantsVideo] = useState(false);
-  const [isResourcesPanelOpen, setIsResourcesPanelOpen] = useState(false);
-  const [isDevicePickerOpen, setIsDevicePickerOpen] = useState(false);
-  const [isDiagnosticsPanelOpen, setIsDiagnosticsPanelOpen] = useState(false);
+  // Only one header panel (device picker, diagnostics, dialable resources) may be open
+  // at a time -- opening any of them covers the center dial pad, so keep them mutually
+  // exclusive instead of letting all three stack.
+  const [activeHeaderPanel, setActiveHeaderPanel] = useState<'devices' | 'diagnostics' | 'resources' | null>(null);
+  const isDevicePickerOpen = activeHeaderPanel === 'devices';
+  const isDiagnosticsPanelOpen = activeHeaderPanel === 'diagnostics';
+  const isResourcesPanelOpen = activeHeaderPanel === 'resources';
+  const toggleHeaderPanel = (panel: 'devices' | 'diagnostics' | 'resources') =>
+    setActiveHeaderPanel((prev) => (prev === panel ? null : panel));
   const [lastDialedNumber, setLastDialedNumber] = useState(() => {
     // Load last dialed number from localStorage
     return localStorage.getItem('lastDialedNumber') || '';
@@ -282,7 +288,7 @@ const Dialer: React.FC = () => {
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={() => setIsDevicePickerOpen((prev) => !prev)}
+            onClick={() => toggleHeaderPanel('devices')}
             aria-label="Audio & Video Devices"
             aria-pressed={isDevicePickerOpen}
             className={`rounded-full p-1 transition-colors hover:bg-white/10 hover:text-white ${
@@ -293,7 +299,7 @@ const Dialer: React.FC = () => {
           </button>
           <button
             type="button"
-            onClick={() => setIsDiagnosticsPanelOpen((prev) => !prev)}
+            onClick={() => toggleHeaderPanel('diagnostics')}
             aria-label="Diagnostics"
             aria-pressed={isDiagnosticsPanelOpen}
             className={`rounded-full p-1 transition-colors hover:bg-white/10 hover:text-white ${
@@ -304,7 +310,7 @@ const Dialer: React.FC = () => {
           </button>
           <button
             type="button"
-            onClick={() => setIsResourcesPanelOpen((prev) => !prev)}
+            onClick={() => toggleHeaderPanel('resources')}
             aria-label="Dialable Resources"
             aria-pressed={isResourcesPanelOpen}
             className={`rounded-full p-1 transition-colors hover:bg-white/10 hover:text-white ${
@@ -319,17 +325,17 @@ const Dialer: React.FC = () => {
 
       <DialableResourcesPanel
         isOpen={isResourcesPanelOpen}
-        onClose={() => setIsResourcesPanelOpen(false)}
+        onClose={() => setActiveHeaderPanel(null)}
         onSelectAddress={(path, video) => {
           setPhoneNumber(path);
           setWantsVideo(video);
-          setIsResourcesPanelOpen(false);
+          setActiveHeaderPanel(null);
         }}
       />
 
-      <DevicePicker isOpen={isDevicePickerOpen} onClose={() => setIsDevicePickerOpen(false)} />
+      <DevicePicker isOpen={isDevicePickerOpen} onClose={() => setActiveHeaderPanel(null)} />
 
-      <DiagnosticsPanel isOpen={isDiagnosticsPanelOpen} onClose={() => setIsDiagnosticsPanelOpen(false)} />
+      <DiagnosticsPanel isOpen={isDiagnosticsPanelOpen} onClose={() => setActiveHeaderPanel(null)} />
 
       {callError && (
         <ErrorBanner message={callError} onDismiss={() => setCallState({ callError: null })} />

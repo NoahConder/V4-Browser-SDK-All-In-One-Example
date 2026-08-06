@@ -1,8 +1,9 @@
 import os
+import time
 import requests
 from typing import Dict, Optional
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timezone
 import base64
 
 logger = logging.getLogger(__name__)
@@ -38,27 +39,20 @@ class SignalWireClient:
             # SignalWire Fabric subscriber token endpoint
             url = f"{self.api_base}/subscribers/tokens"
 
-            # Calculate expiry time
-            expires_at = datetime.utcnow() + timedelta(seconds=expires_in)
+            # expire_at is a Unix timestamp (seconds) per the documented Create
+            # Subscriber Token schema -- not expires_at/ISO, and there's no
+            # audio/video field on this endpoint.
+            expire_at = int(time.time()) + expires_in
 
-            # Prepare the request payload
             payload = {
                 "reference": reference,  # Required field for Fabric tokens
-                "expires_at": expires_at.isoformat() + "Z",
-                "audio": {
-                    "send": True,
-                    "receive": True
-                },
-                "video": {
-                    "send": True,
-                    "receive": True
-                }
+                "expire_at": expire_at,
             }
 
             if subscriber_id:
                 payload["subscriber_id"] = subscriber_id
 
-            logger.info(f"Creating subscriber token with expiry: {expires_at}")
+            logger.info(f"Creating subscriber token with expiry: {expire_at}")
 
             # Make the API request
             response = requests.post(
@@ -71,10 +65,14 @@ class SignalWireClient:
             response.raise_for_status()
             data = response.json()
 
+            # The token response doesn't echo back an expiry, so compute the
+            # ISO timestamp ourselves from what we requested.
+            expires_at_iso = datetime.fromtimestamp(expire_at, tz=timezone.utc).isoformat()
+
             # Format the response
             return {
                 "token": data.get("token"),
-                "expires_at": data.get("expires_at"),
+                "expires_at": expires_at_iso,
                 "expires_in": expires_in,
                 "subscriber_id": data.get("subscriber_id"),
                 "project_id": self.project_id,

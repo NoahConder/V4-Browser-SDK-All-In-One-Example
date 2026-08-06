@@ -1,5 +1,6 @@
 import { SignalWire, TokenRefreshError, InvalidCredentialsError } from '@signalwire/js';
 import type {
+  AuthenticateContext,
   Call,
   ScreenShareStatus,
   PermissionResult,
@@ -136,7 +137,12 @@ class SignalWireService {
 
       // Create credential provider with automatic refresh
       const credentialProvider = {
-        authenticate: async () => {
+        authenticate: async (context?: AuthenticateContext) => {
+          // Diagnostic only -- this app mints a plain SAT (no fingerprint/scope
+          // forwarded), so this just tells us whether the SDK hands us a DPoP
+          // fingerprint at all in this browser/version. See CLAUDE.md's Client
+          // Bound SAT note.
+          console.log('[SAT] authenticate() context.fingerprint:', context?.fingerprint ?? '(none)');
           const tokenData = await authAPI.getToken();
           this.currentToken = tokenData;
           return {
@@ -144,7 +150,8 @@ class SignalWireService {
             expiry_at: Date.parse(tokenData.expires_at),
           };
         },
-        refresh: async () => {
+        refresh: async (context?: AuthenticateContext) => {
+          console.log('[SAT] refresh() context.fingerprint:', context?.fingerprint ?? '(none)');
           const tokenData = await authAPI.refreshToken(this.currentToken?.token);
           this.currentToken = tokenData;
           return {
