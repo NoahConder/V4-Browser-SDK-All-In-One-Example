@@ -10,6 +10,8 @@ interface CallControlsSheetProps {
   onToggleHold: () => void;
   onOpenTransfer: () => void;
   onOpenDevicePicker: () => void;
+  canHold: boolean;
+  canTransfer: boolean;
   canScreenShare: boolean;
   screenShareStatus: 'none' | 'starting' | 'started' | 'stopping';
   onToggleScreenShare: () => void;
@@ -25,14 +27,18 @@ interface SheetRowProps {
   icon: LucideIcon;
   label: string;
   active?: boolean;
+  disabled?: boolean;
+  disabledReason?: string;
   onClick: () => void;
 }
 
-const SheetRow: React.FC<SheetRowProps> = ({ icon: Icon, label, active, onClick }) => (
+const SheetRow: React.FC<SheetRowProps> = ({ icon: Icon, label, active, disabled, disabledReason, onClick }) => (
   <button
     type="button"
     onClick={onClick}
-    className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-white/10"
+    disabled={disabled}
+    title={disabled ? disabledReason : undefined}
+    className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
   >
     <span
       className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${
@@ -41,7 +47,12 @@ const SheetRow: React.FC<SheetRowProps> = ({ icon: Icon, label, active, onClick 
     >
       <Icon size={18} />
     </span>
-    <span className="flex-1 text-sm text-white">{label}</span>
+    <span className="flex-1 min-w-0">
+      <span className="block text-sm text-white">{label}</span>
+      {disabled && disabledReason && (
+        <span className="block truncate text-xs text-gray-500">{disabledReason}</span>
+      )}
+    </span>
   </button>
 );
 
@@ -78,6 +89,8 @@ const CallControlsSheet: React.FC<CallControlsSheetProps> = ({
   onToggleHold,
   onOpenTransfer,
   onOpenDevicePicker,
+  canHold,
+  canTransfer,
   canScreenShare,
   screenShareStatus,
   onToggleScreenShare,
@@ -113,9 +126,19 @@ const CallControlsSheet: React.FC<CallControlsSheetProps> = ({
           icon={isOnHold ? Play : Pause}
           label={isOnHold ? 'Resume Call' : 'Hold Call'}
           active={isOnHold}
+          // Never lock the user into an on-hold state they can't exit: only
+          // gate the initial "Hold Call" action on the capability, not "Resume".
+          disabled={!isOnHold && !canHold}
+          disabledReason={!isOnHold && !canHold ? 'Not supported on this call' : undefined}
           onClick={onToggleHold}
         />
-        <SheetRow icon={PhoneForwarded} label="Transfer Call" onClick={onOpenTransfer} />
+        <SheetRow
+          icon={PhoneForwarded}
+          label="Transfer Call"
+          disabled={!canTransfer}
+          disabledReason={!canTransfer ? 'Not supported on this call' : undefined}
+          onClick={onOpenTransfer}
+        />
         {canScreenShare && (
           <SheetRow
             icon={isScreenSharing ? ScreenShareOff : ScreenShare}

@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { Activity, AtSign, List, Phone, Slash, SlidersHorizontal, Video, VideoOff, X } from 'lucide-react';
+import { Activity, AtSign, List, Phone, Slash, SlidersHorizontal, User, Video, VideoOff, X } from 'lucide-react';
 import DialPad from './DialPad';
 import CallScreen from './CallScreen';
 import IncomingCall from './IncomingCall';
 import DialableResourcesPanel from './DialableResourcesPanel';
 import DevicePicker from './DevicePicker';
 import DiagnosticsPanel from './DiagnosticsPanel';
+import SubscriberPicker from './SubscriberPicker';
 import ErrorBanner from './ErrorBanner';
 import { useCallStore } from '../hooks/useCallStore';
 import { useSignalWire } from '../hooks/useSignalWire';
@@ -50,33 +51,38 @@ const Dialer: React.FC = () => {
   const [isCallingInProgress, setIsCallingInProgress] = useState(false);
   const [isAddressInputFocused, setIsAddressInputFocused] = useState(false);
   const [wantsVideo, setWantsVideo] = useState(false);
-  // Only one header panel (device picker, diagnostics, dialable resources) may be open
-  // at a time -- opening any of them covers the center dial pad, so keep them mutually
-  // exclusive instead of letting all three stack.
-  const [activeHeaderPanel, setActiveHeaderPanel] = useState<'devices' | 'diagnostics' | 'resources' | null>(null);
+  // Only one header panel (device picker, diagnostics, dialable resources, subscriber
+  // picker) may be open at a time -- opening any of them covers the center dial pad,
+  // so keep them mutually exclusive instead of letting all four stack.
+  const [activeHeaderPanel, setActiveHeaderPanel] = useState<
+    'devices' | 'diagnostics' | 'resources' | 'subscriber' | null
+  >(null);
   const isDevicePickerOpen = activeHeaderPanel === 'devices';
   const isDiagnosticsPanelOpen = activeHeaderPanel === 'diagnostics';
   const isResourcesPanelOpen = activeHeaderPanel === 'resources';
-  const toggleHeaderPanel = (panel: 'devices' | 'diagnostics' | 'resources') =>
+  const isSubscriberPanelOpen = activeHeaderPanel === 'subscriber';
+  const toggleHeaderPanel = (panel: 'devices' | 'diagnostics' | 'resources' | 'subscriber') =>
     setActiveHeaderPanel((prev) => (prev === panel ? null : panel));
   const [lastDialedNumber, setLastDialedNumber] = useState(() => {
     // Load last dialed number from localStorage
     return localStorage.getItem('lastDialedNumber') || '';
   });
 
-  const {
-    isInCall,
-    isIncoming,
-    remoteNumber,
-    isMuted,
-    isSpeakerOn,
-    isVideoCall,
-    isCameraOn,
-    remoteHasVideo,
-    callError,
-    setCallState,
-    resetCallState,
-  } = useCallStore();
+  // Selector-based (not `useCallStore()`) so this component only re-renders
+  // when a field it actually reads changes -- not on every call-quality tick
+  // (qualityLevel/qualityScore/networkIssueCount update ~1/sec during a call
+  // via signalwire.ts's qualitySub). Matches CallScreen.tsx's pattern.
+  const isInCall = useCallStore((s) => s.isInCall);
+  const isIncoming = useCallStore((s) => s.isIncoming);
+  const remoteNumber = useCallStore((s) => s.remoteNumber);
+  const isMuted = useCallStore((s) => s.isMuted);
+  const isSpeakerOn = useCallStore((s) => s.isSpeakerOn);
+  const isVideoCall = useCallStore((s) => s.isVideoCall);
+  const isCameraOn = useCallStore((s) => s.isCameraOn);
+  const remoteHasVideo = useCallStore((s) => s.remoteHasVideo);
+  const callError = useCallStore((s) => s.callError);
+  const setCallState = useCallStore((s) => s.setCallState);
+  const resetCallState = useCallStore((s) => s.resetCallState);
 
   const { makeCall, endCall, answerCall, rejectCall, toggleMute, toggleCamera, toggleSpeaker } = useSignalWire();
 
@@ -236,12 +242,8 @@ const Dialer: React.FC = () => {
     return number;
   };
 
-  // Debug current state
-  console.log('🎨 Dialer render - isInCall:', isInCall, 'isIncoming:', isIncoming);
-
   // Show incoming call modal
   if (isIncoming && !isInCall) {
-    console.log('📱 Showing IncomingCall screen');
     return (
       <IncomingCall
         phoneNumber={remoteNumber}
@@ -254,7 +256,6 @@ const Dialer: React.FC = () => {
 
   // Show active call screen
   if (isInCall) {
-    console.log('📞 Showing CallScreen');
     return (
       <CallScreen
         phoneNumber={remoteNumber || phoneNumber}
@@ -270,8 +271,6 @@ const Dialer: React.FC = () => {
       />
     );
   }
-
-  console.log('📱 Showing main Dialer');
 
   const addressType = getDialAddressType(phoneNumber);
   const addressMeta = DIAL_ADDRESS_META[addressType];
@@ -319,9 +318,22 @@ const Dialer: React.FC = () => {
           >
             <List size={16} />
           </button>
+          <button
+            type="button"
+            onClick={() => toggleHeaderPanel('subscriber')}
+            aria-label="Subscriber"
+            aria-pressed={isSubscriberPanelOpen}
+            className={`rounded-full p-1 transition-colors hover:bg-white/10 hover:text-white ${
+              isSubscriberPanelOpen ? 'text-white' : 'text-gray-400'
+            }`}
+          >
+            <User size={16} />
+          </button>
           <span className="text-gray-400">{new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
         </div>
       </div>
+
+      <SubscriberPicker isOpen={isSubscriberPanelOpen} onClose={() => setActiveHeaderPanel(null)} />
 
       <DialableResourcesPanel
         isOpen={isResourcesPanelOpen}

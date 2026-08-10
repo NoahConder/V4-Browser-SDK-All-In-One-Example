@@ -1,4 +1,5 @@
 import os
+import time
 from flask import Blueprint, jsonify, request
 from utils.signalwire import SignalWireClient
 from utils.security import api_key_ok, rate_limited, client_ip
@@ -8,13 +9,64 @@ from datetime import datetime
 logger = logging.getLogger(__name__)
 auth_bp = Blueprint('auth', __name__)
 
-# Fixed, server-controlled subscriber reference. The client must NOT be able to
-# choose the reference/subscriber a token is minted for (was an IDOR vector
-# where a caller could request a token for an arbitrary subscriber_id).
+# Default reference used when the client doesn't request a specific
+# subscriber. The client can now opt into a specific subscriber (see
+# _resolve_reference below), but ONLY by id, validated against the account's
+# real subscriber list fetched with our own credentials -- never by an
+# arbitrary client-supplied reference/subscriber_id string. That distinction
+# is what keeps this from reopening the IDOR the fixed reference was
+# originally added to close (a caller minting a token for an arbitrary
+# subscriber_id they don't otherwise have any claim to).
 _TOKEN_REFERENCE = "swdialer"
 
 # Initialize SignalWire client
 sw_client = None
+
+# Separate short-lived cache from api/subscribers.py's -- self-contained per
+# the existing blueprint convention (see swml.py/sip_credentials.py). Used
+# only to validate a client-chosen subscriber id against real accounts.
+_subscribers_cache = {"data": None, "expires_at": 0}
+SUBSCRIBERS_CACHE_TTL_SECONDS = 60
+
+
+def _get_subscribers_cached() -> list:
+    if _subscribers_cache["data"] is not None and time.time() < _subscribers_cache["expires_at"]:
+        return _subscribers_cache["data"]
+
+    subscribers = sw_client.list_subscribers()
+    _subscribers_cache["data"] = subscribers
+    _subscribers_cache["expires_at"] = time.time() + SUBSCRIBERS_CACHE_TTL_SECONDS
+    return subscribers
+
+
+def _resolve_reference(subscriber_id):
+    """Turn a client-supplied subscriber id into a `reference` string safe to
+    pass to create_subscriber_token/refresh_token.
+
+    The client can only pick a subscriber that already exists in THIS
+    account's subscriber list, fetched here with our own project/auth-token
+    credentials -- the client never supplies a raw reference/subscriber_id
+    that goes straight to SignalWire unvalidated. Returns (reference, None)
+    on success or (None, error_message) if the id isn't a real subscriber.
+
+    Create Subscriber Token only accepts `reference` (not `subscriber_id`),
+    and treats it as "often an email, but can be any string" -- reusing the
+    same reference resolves to the SAME existing subscriber instead of
+    minting a new one, so we resolve the chosen subscriber's email back out
+    of the list and use that as the reference.
+    """
+    if not subscriber_id:
+        return _TOKEN_REFERENCE, None
+
+    subscribers = _get_subscribers_cached()
+    match = next((s for s in subscribers if s.get('id') == subscriber_id), None)
+    if not match:
+        return None, "Unknown subscriber"
+
+    nested = match.get('subscriber') or {}
+    # Fall back to the id itself if this subscriber has no email on file --
+    # still deterministic/reusable, just not tied to their real identity.
+    return nested.get('email') or subscriber_id, None
 
 
 def _gate():
@@ -47,7 +99,10 @@ def init_signalwire_client():
 @auth_bp.route('/token', methods=['POST'])
 def generate_token():
     """
-    Generate a new subscriber token for WebRTC access
+    Generate a new subscriber token for WebRTC access. Optionally scoped to a
+    specific subscriber, chosen by id from GET /api/subscribers -- the id is
+    revalidated here against the account's real subscriber list before use,
+    never trusted as-is (see _resolve_reference).
     """
     blocked = _gate()
     if blocked:
@@ -58,9 +113,13 @@ def generate_token():
             if not sw_client:
                 return jsonify({"error": "SignalWire client not configured"}), 500
 
-        # Reference is fixed server-side — never taken from the request body.
+        body = request.get_json(silent=True) or {}
+        reference, error = _resolve_reference(body.get('subscriber_id'))
+        if error:
+            return jsonify({"success": False, "error": error}), 400
+
         token_data = sw_client.create_subscriber_token(
-            reference=_TOKEN_REFERENCE,
+            reference=reference,
             expires_in=3600  # 1 hour
         )
 
@@ -83,7 +142,11 @@ def generate_token():
 @auth_bp.route('/refresh', methods=['POST'])
 def refresh_token():
     """
-    Refresh an existing subscriber token
+    Refresh an existing subscriber token. The frontend passes the same
+    subscriber_id it authenticated with originally, so refresh keeps re-upping
+    as the SAME subscriber instead of silently falling back to the default
+    reference mid-session -- still revalidated against the real subscriber
+    list on every call, same as /token.
     """
     blocked = _gate()
     if blocked:
@@ -94,8 +157,12 @@ def refresh_token():
             if not sw_client:
                 return jsonify({"error": "SignalWire client not configured"}), 500
 
-        # Mint a fresh token (reference fixed server-side).
-        token_data = sw_client.refresh_token()
+        body = request.get_json(silent=True) or {}
+        reference, error = _resolve_reference(body.get('subscriber_id'))
+        if error:
+            return jsonify({"success": False, "error": error}), 400
+
+        token_data = sw_client.refresh_token(reference=reference)
 
         logger.info("Token refreshed successfully")
 

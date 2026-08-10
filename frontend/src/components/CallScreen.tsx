@@ -54,6 +54,8 @@ const CallScreen: React.FC<CallScreenProps> = ({
   const callError = useCallStore((s) => s.callError);
   const isOnHold = useCallStore((s) => s.isOnHold);
   const canScreenShare = useCallStore((s) => s.canScreenShare);
+  const canTransfer = useCallStore((s) => s.canTransfer);
+  const canHold = useCallStore((s) => s.canHold);
   const screenShareStatus = useCallStore((s) => s.screenShareStatus);
   const isEchoCancellationOn = useCallStore((s) => s.isEchoCancellationOn);
   const isAutoGainOn = useCallStore((s) => s.isAutoGainOn);
@@ -292,6 +294,8 @@ const CallScreen: React.FC<CallScreenProps> = ({
             setIsControlsSheetOpen(false);
             setIsDevicePickerOpen(true);
           }}
+          canHold={canHold}
+          canTransfer={canTransfer}
           canScreenShare={canScreenShare}
           screenShareStatus={screenShareStatus}
           onToggleScreenShare={toggleScreenShare}

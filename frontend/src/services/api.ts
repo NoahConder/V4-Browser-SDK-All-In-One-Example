@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { TokenData, CallData, SwmlScript, SipCredential } from '../types';
+import type { TokenData, CallData, SwmlScript, SipCredential, Subscriber } from '../types';
 
 const API_BASE = '/api';
 
@@ -18,18 +18,24 @@ const api = axios.create({
 });
 
 export const authAPI = {
-  async getToken(): Promise<TokenData> {
-    // reference/subscriber are fixed server-side — nothing client-controlled.
-    const response = await api.post<{ success: boolean; data: TokenData }>('/auth/token', {});
+  async getToken(subscriberId?: string): Promise<TokenData> {
+    // subscriberId is only ever a value the user picked from subscribersAPI.list()
+    // (backed by GET /api/subscribers) -- the backend revalidates it against the
+    // account's real subscriber list regardless, same as it did before this was
+    // added (see auth.py's _resolve_reference).
+    const response = await api.post<{ success: boolean; data: TokenData }>('/auth/token', {
+      subscriber_id: subscriberId,
+    });
     if (!response.data.success) {
       throw new Error('Failed to get token');
     }
     return response.data.data;
   },
 
-  async refreshToken(oldToken?: string): Promise<TokenData> {
+  async refreshToken(oldToken?: string, subscriberId?: string): Promise<TokenData> {
     const response = await api.post<{ success: boolean; data: TokenData }>('/auth/refresh', {
       token: oldToken,
+      subscriber_id: subscriberId,
     });
     if (!response.data.success) {
       throw new Error('Failed to refresh token');
@@ -134,6 +140,39 @@ export const sipAPI = {
     }
     return {
       credentials: response.data.data,
+      total: response.data.total,
+      offset: response.data.offset,
+      limit: response.data.limit,
+      hasMore: response.data.has_more,
+    };
+  },
+};
+
+export interface SubscribersPage {
+  subscribers: Subscriber[];
+  total: number;
+  offset: number;
+  limit: number;
+  hasMore: boolean;
+}
+
+export const subscribersAPI = {
+  async list(offset = 0, limit = 10): Promise<SubscribersPage> {
+    const response = await api.get<{
+      success: boolean;
+      data: Subscriber[];
+      total: number;
+      offset: number;
+      limit: number;
+      has_more: boolean;
+    }>('/subscribers', {
+      params: { offset, limit },
+    });
+    if (!response.data.success) {
+      throw new Error('Failed to get subscribers');
+    }
+    return {
+      subscribers: response.data.data,
       total: response.data.total,
       offset: response.data.offset,
       limit: response.data.limit,

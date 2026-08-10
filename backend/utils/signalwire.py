@@ -161,6 +161,13 @@ class SignalWireClient:
         """
         return self._get_all_pages(f"{self.api_base}/resources/sip_endpoints/{credential_id}/addresses")
 
+    def list_subscribers(self) -> list:
+        """
+        List subscribers in this space.
+        https://signalwire.com/docs/apis/rest/subscribers/list-subscribers
+        """
+        return self._get_all_pages(f"{self.api_base}/resources/subscribers")
+
     @staticmethod
     def is_dial_address(destination: str) -> bool:
         """

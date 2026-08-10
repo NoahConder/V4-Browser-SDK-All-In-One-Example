@@ -27,6 +27,27 @@ export class ClientNotReadyError extends Error {
   }
 }
 
+// The subscriber identity is fixed for the lifetime of the SignalWire client
+// singleton (it's baked in at authenticate() time) -- there's no API to
+// re-authenticate an existing client as someone else. So switching subscriber
+// persists the choice here and reloads the page, giving the app a cold start
+// under the new identity, same as this file's existing "reload to reset the
+// SDK" rule (see CLAUDE.md / disconnect()).
+const SELECTED_SUBSCRIBER_KEY = 'dialer_selected_subscriber_id';
+
+export function getSelectedSubscriberId(): string | undefined {
+  return localStorage.getItem(SELECTED_SUBSCRIBER_KEY) || undefined;
+}
+
+export function switchSubscriber(subscriberId: string | null) {
+  if (subscriberId) {
+    localStorage.setItem(SELECTED_SUBSCRIBER_KEY, subscriberId);
+  } else {
+    localStorage.removeItem(SELECTED_SUBSCRIBER_KEY);
+  }
+  window.location.reload();
+}
+
 export interface AudioProcessingState {
   echoCancellation: boolean;
   autoGain: boolean;
@@ -55,6 +76,15 @@ export interface SignalWireCallbacks {
   // Call.capabilities$ -- 'screenshare' is present/absent per call, so the UI
   // gates the screen-share control on this rather than assuming it's always available.
   onCanScreenShareChange?: (canScreenShare: boolean) => void;
+  // Same idea for 'transfer' -- some call/resource types (e.g. dialing a
+  // fabric address that only grants member.remove/digit/end) never get this
+  // capability, in which case the server silently no-ops transfer() rather
+  // than rejecting it, so the UI must gate on this instead of assuming it works.
+  onCanTransferChange?: (canTransfer: boolean) => void;
+  // Same idea for 'hold' -- per SignalWire's docs, toggleHold() requires this
+  // capability too, and it's likewise absent from this SDK version's
+  // Capability type.
+  onCanHoldChange?: (canHold: boolean) => void;
   onScreenShareStatusChange?: (status: ScreenShareStatus) => void;
   onAudioProcessingChange?: (state: AudioProcessingState) => void;
   onQualityChange?: (state: CallQualityState) => void;
@@ -66,6 +96,12 @@ class SignalWireService {
   private pendingCall: Call | null = null;
   private currentToken: TokenData | null = null;
   private wasIncomingCall: boolean = false;
+  // Set while a transfer() request is in flight (and briefly after, until the
+  // resulting status$ change is observed), purely so the "Call status" log
+  // line can flag which disconnect/reconnect was caused by a transfer --
+  // transfer() resolving only confirms the request was sent, not that it
+  // succeeded, so this is the only way to see the real outcome in the console.
+  private pendingTransferDestination: string | null = null;
   private isInitialized: boolean = false;
   private isInitializing: boolean = false;
   private isReady: boolean = false;
@@ -107,6 +143,8 @@ class SignalWireService {
   private onReadyChange: ((ready: boolean) => void) | null = null;
   private onClientError: ((message: string) => void) | null = null;
   private onCanScreenShareChange: ((canScreenShare: boolean) => void) | null = null;
+  private onCanTransferChange: ((canTransfer: boolean) => void) | null = null;
+  private onCanHoldChange: ((canHold: boolean) => void) | null = null;
   private onScreenShareStatusChange: ((status: ScreenShareStatus) => void) | null = null;
   private onAudioProcessingChange: ((state: AudioProcessingState) => void) | null = null;
   private onQualityChange: ((state: CallQualityState) => void) | null = null;
@@ -131,6 +169,8 @@ class SignalWireService {
       this.onReadyChange = callbacks.onReadyChange || null;
       this.onClientError = callbacks.onClientError || null;
       this.onCanScreenShareChange = callbacks.onCanScreenShareChange || null;
+      this.onCanTransferChange = callbacks.onCanTransferChange || null;
+      this.onCanHoldChange = callbacks.onCanHoldChange || null;
       this.onScreenShareStatusChange = callbacks.onScreenShareStatusChange || null;
       this.onAudioProcessingChange = callbacks.onAudioProcessingChange || null;
       this.onQualityChange = callbacks.onQualityChange || null;
@@ -143,7 +183,7 @@ class SignalWireService {
           // fingerprint at all in this browser/version. See CLAUDE.md's Client
           // Bound SAT note.
           console.log('[SAT] authenticate() context.fingerprint:', context?.fingerprint ?? '(none)');
-          const tokenData = await authAPI.getToken();
+          const tokenData = await authAPI.getToken(getSelectedSubscriberId());
           this.currentToken = tokenData;
           return {
             token: tokenData.token,
@@ -152,7 +192,9 @@ class SignalWireService {
         },
         refresh: async (context?: AuthenticateContext) => {
           console.log('[SAT] refresh() context.fingerprint:', context?.fingerprint ?? '(none)');
-          const tokenData = await authAPI.refreshToken(this.currentToken?.token);
+          // Same selected id as authenticate() -- otherwise refresh would
+          // silently fall back to the default subscriber mid-session.
+          const tokenData = await authAPI.refreshToken(this.currentToken?.token, getSelectedSubscriberId());
           this.currentToken = tokenData;
           return {
             token: tokenData.token,
@@ -276,17 +318,40 @@ class SignalWireService {
     }
   }
 
+  // The subscriber id SignalWire actually resolved us to (from the token
+  // response), not just what was requested -- lets the UI confirm/highlight
+  // which subscriber this session is really authenticated as.
+  getActiveSubscriberId(): string | undefined {
+    return this.currentToken?.subscriber_id;
+  }
+
   private setupCallSubscriptions(call: Call) {
     this.cleanupCallSubscriptions();
 
+    // Reset per-call; a stale flag from a previous call must never attribute
+    // this call's status changes to a transfer that happened on another call.
+    this.pendingTransferDestination = null;
+
     // Subscribe to call status changes
     this.callStatusSub = call.status$.subscribe((status) => {
-      console.log('Call status:', status);
+      const transferSuffix = this.pendingTransferDestination
+        ? ` [transfer] after request to ${this.pendingTransferDestination}`
+        : '';
+      console.log('Call status:', status + transferSuffix);
+
       if (status === 'connected') {
+        if (this.pendingTransferDestination) {
+          console.log('[transfer] Call is still connected on this leg -- the transfer did not take the call away, so it likely failed or was not accepted by the destination');
+          this.pendingTransferDestination = null;
+        }
         if (this.onCallConnected) {
           this.onCallConnected();
         }
       } else if (status === 'disconnected' || status === 'failed') {
+        if (this.pendingTransferDestination) {
+          console.log(`[transfer] Call ended (status: ${status}) after a transfer request to ${this.pendingTransferDestination} -- this is the expected outcome of a successful blind transfer`);
+          this.pendingTransferDestination = null;
+        }
         toneService.playDisconnectTone();
         // Only clean up if this is still the active call (endCall may have already cleared it)
         if (this.currentCall === call) {
@@ -312,7 +377,21 @@ class SignalWireService {
 
     // 'screenshare' capability is per-call, so gate the screen-share control on it.
     this.capabilitiesSub = call.capabilities$.subscribe((capabilities) => {
+      // [transfer] The installed SDK's Capability union (4.0.0-rc.2) doesn't
+      // list 'transfer' at all -- logging the raw list here settles, at
+      // runtime, whether the server ever grants it for this call/destination
+      // type, rather than guessing from a type declaration that may just be
+      // behind the server. Cast past the stale union to check for it anyway.
+      const canTransfer = (capabilities as string[]).includes('transfer');
+      console.log('[transfer] capabilities$:', capabilities, '-- has transfer capability:', canTransfer);
+      // [hold] Same situation as transfer above -- 'hold' isn't in this SDK
+      // version's Capability type either, so this is the only way to confirm
+      // at runtime whether it's actually granted for this call.
+      const canHold = (capabilities as string[]).includes('hold');
+      console.log('[hold] capabilities$:', capabilities, '-- has hold capability:', canHold);
       this.onCanScreenShareChange?.(capabilities.includes('screenshare'));
+      this.onCanTransferChange?.(canTransfer);
+      this.onCanHoldChange?.(canHold);
     });
 
     // Quality/network observables live directly on Call (not call.self), so
@@ -541,6 +620,22 @@ class SignalWireService {
     return '+' + value;
   }
 
+  // Passing `{ video: true }` to dial()'s media options alone isn't enough to
+  // reliably get the video channel -- per the dialable-resources addresses
+  // (each pre-suffixed per channel by the server, see CLAUDE.md), the
+  // destination itself needs `?channel=video`. Applied here so manually
+  // dialed numbers/addresses get the same treatment as picked resources.
+  // Replaces rather than skips an existing `channel=` param, so toggling
+  // video on after picking an audio-channel resource address still works.
+  private withVideoChannel(destination: string, video: boolean): string {
+    if (!video) return destination;
+    if (/[?&]channel=/i.test(destination)) {
+      return destination.replace(/([?&])channel=[^&]*/i, '$1channel=video');
+    }
+    const separator = destination.includes('?') ? '&' : '?';
+    return `${destination}${separator}channel=video`;
+  }
+
   async makeCall(phoneNumber: string, video: boolean = false): Promise<Call> {
     if (!this.client) {
       throw new Error('SignalWire client not initialized');
@@ -550,7 +645,7 @@ class SignalWireService {
     }
 
     try {
-      const formattedNumber = this.normalizeDestination(phoneNumber);
+      const formattedNumber = this.withVideoChannel(this.normalizeDestination(phoneNumber), video);
       console.log('Dialing:', formattedNumber);
 
       const call = await this.client.dial(formattedNumber, {
@@ -698,17 +793,68 @@ class SignalWireService {
   // No held$/isOnHold observable exists on Call -- the caller tracks hold
   // state optimistically (like isMuted/isCameraOn) and reverts on failure.
   async toggleHold() {
+    console.log('[hold] Requested');
+
     if (!this.currentCall) {
+      console.error('[hold] Aborted -- no active call to hold');
       throw new Error('No active call to hold');
     }
-    await this.currentCall.toggleHold();
+
+    // Per SignalWire's docs, toggleHold() requires the 'hold' capability --
+    // check (and log) it synchronously right before the attempt, same as
+    // transferCall()'s capability check above.
+    const capabilities = this.currentCall.capabilities as string[];
+    console.log('[hold] Current call capabilities:', capabilities, '-- has hold:', capabilities.includes('hold'));
+    if (!capabilities.includes('hold')) {
+      console.error('[hold] Aborted -- this call does not have the hold capability');
+      throw new Error('This call does not support hold');
+    }
+
+    try {
+      // Unlike transfer(), the docs say this promise resolves once the
+      // server has ACKNOWLEDGED the state change -- so, unlike transfer,
+      // resolving here really does mean success.
+      await this.currentCall.toggleHold();
+      console.log('[hold] call.toggleHold() resolved -- server acknowledged the state change');
+    } catch (error) {
+      console.error('[hold] call.toggleHold() rejected:', error);
+      throw error;
+    }
   }
 
   async transferCall(destination: string) {
+    const formattedDestination = this.normalizeDestination(destination);
+    console.log('[transfer] Requested, raw input:', destination, '-> normalized:', formattedDestination);
+
     if (!this.currentCall) {
+      console.error('[transfer] Aborted -- no active call to transfer');
       throw new Error('No active call to transfer');
     }
-    await this.currentCall.transfer({ destination: this.normalizeDestination(destination) });
+
+    // Per SignalWire's docs, transfer() is rejected server-side if this call
+    // lacks the 'transfer' capability -- check (and log) it synchronously
+    // right before the attempt, since 'transfer' isn't even in this SDK
+    // version's Capability type, so this is the only way to confirm at
+    // runtime whether it's actually being granted for this call/destination.
+    const capabilities = this.currentCall.capabilities as string[];
+    console.log('[transfer] Current call capabilities:', capabilities, '-- has transfer:', capabilities.includes('transfer'));
+    if (!capabilities.includes('transfer')) {
+      console.error('[transfer] Aborted -- this call does not have the transfer capability (server would otherwise silently ignore the request)');
+      throw new Error('This call does not support transfer');
+    }
+
+    this.pendingTransferDestination = formattedDestination;
+    try {
+      await this.currentCall.transfer({ destination: formattedDestination });
+      // Resolving only means the SDK accepted and sent the request -- it does
+      // NOT mean the destination answered. Watch the "Call status" logs above
+      // for the actual outcome.
+      console.log('[transfer] call.transfer() resolved -- request sent, watch "Call status" logs for the real outcome');
+    } catch (error) {
+      console.error('[transfer] call.transfer() rejected:', error);
+      this.pendingTransferDestination = null;
+      throw error;
+    }
   }
 
   // start/stopScreenShare() live on call.self, gated by the caller on the
@@ -873,6 +1019,7 @@ class SignalWireService {
     this.currentCall = null;
     this.pendingCall = null;
     this.wasIncomingCall = false;
+    this.pendingTransferDestination = null;
 
     // Clean up audio/video sinks
     this.clearAudioSink();

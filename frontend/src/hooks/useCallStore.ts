@@ -23,6 +23,8 @@ const initialState: CallState = {
   remoteHasVideo: false,
   isOnHold: false,
   canScreenShare: false,
+  canTransfer: false,
+  canHold: false,
   screenShareStatus: 'none',
   isEchoCancellationOn: false,
   isAutoGainOn: false,

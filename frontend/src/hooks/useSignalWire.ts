@@ -33,7 +33,15 @@ export const useSignalWire = () => {
   const [isInitialized, setIsInitialized] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const { setCallState, resetCallState } = useCallStore();
+  // Selector-based, not `useCallStore()` -- this hook is called from App.tsx,
+  // Dialer.tsx, AND CallScreen.tsx, so a whole-store subscription here would
+  // force all three to re-render on every single setCallState() call anywhere
+  // in the app (mute toggles, quality ticks, capability changes, etc.),
+  // regardless of what each component actually reads from the store. Both
+  // are stable Zustand action references, so this never itself triggers a
+  // re-render.
+  const setCallState = useCallStore((s) => s.setCallState);
+  const resetCallState = useCallStore((s) => s.resetCallState);
 
   useEffect(() => {
     const initializeSignalWire = async () => {
@@ -79,6 +87,12 @@ export const useSignalWire = () => {
           },
           onCanScreenShareChange: (canScreenShare: boolean) => {
             setCallState({ canScreenShare });
+          },
+          onCanTransferChange: (canTransfer: boolean) => {
+            setCallState({ canTransfer });
+          },
+          onCanHoldChange: (canHold: boolean) => {
+            setCallState({ canHold });
           },
           onScreenShareStatusChange: (status) => {
             setCallState({ screenShareStatus: status });
@@ -280,15 +294,17 @@ export const useSignalWire = () => {
 
   const toggleHold = async () => {
     const { isOnHold } = useCallStore.getState();
-    // Optimistic, like mute/camera -- but reverted on failure (unlike those),
-    // since there's no capability flag to rely on before attempting hold.
+    // Optimistic, like mute/camera -- but reverted on failure (unlike those).
+    // The UI should already gate the hold control on canHold, but this is
+    // still reachable directly, so describeCallError surfaces the specific
+    // "this call does not support hold" message rather than a generic one.
     setCallState({ isOnHold: !isOnHold, callError: null });
 
     try {
       await signalWireService.toggleHold();
     } catch (err) {
       console.error('Failed to toggle hold:', err);
-      setCallState({ isOnHold, callError: 'Hold failed for this call.' });
+      setCallState({ isOnHold, callError: describeCallError(err) });
     }
   };
 

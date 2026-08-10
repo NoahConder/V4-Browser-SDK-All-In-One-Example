@@ -17,6 +17,8 @@ export interface CallState {
   // optimistically client-side, same as isMuted/isCameraOn.
   isOnHold: boolean;
   canScreenShare: boolean;
+  canTransfer: boolean;
+  canHold: boolean;
   screenShareStatus: 'none' | 'starting' | 'started' | 'stopping';
   isEchoCancellationOn: boolean;
   isAutoGainOn: boolean;
@@ -73,4 +75,10 @@ export interface SipCredential {
     username: string;
   };
   addresses: DialableAddress[];
+}
+
+export interface Subscriber {
+  id: string;
+  display_name: string;
+  email: string | null;
 }
