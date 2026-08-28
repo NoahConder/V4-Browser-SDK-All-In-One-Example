@@ -60,6 +60,7 @@ const CallScreen: React.FC<CallScreenProps> = ({
   const isEchoCancellationOn = useCallStore((s) => s.isEchoCancellationOn);
   const isAutoGainOn = useCallStore((s) => s.isAutoGainOn);
   const isNoiseSuppressionOn = useCallStore((s) => s.isNoiseSuppressionOn);
+  const activeSubscriberName = useCallStore((s) => s.activeSubscriberName);
   const setCallState = useCallStore((s) => s.setCallState);
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
@@ -125,10 +126,17 @@ const CallScreen: React.FC<CallScreenProps> = ({
         <span className="absolute left-1/2 transform -translate-x-1/2 font-medium tracking-wide text-gray-400">
           SignalWire
         </span>
-        <span className="flex items-center gap-2 text-gray-400">
+        <div className="flex items-center gap-2">
           {callStatus === 'connected' && <CallQualityBadge />}
-          {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-        </span>
+          <div className="flex flex-col items-end leading-tight">
+            <span className="text-gray-400">
+              {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            </span>
+            {activeSubscriberName && (
+              <span className="max-w-[6rem] truncate text-[10px] text-gray-500">{activeSubscriberName}</span>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* Main Content Container */}

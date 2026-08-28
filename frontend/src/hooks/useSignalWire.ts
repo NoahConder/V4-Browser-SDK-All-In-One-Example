@@ -115,6 +115,11 @@ export const useSignalWire = () => {
 
         setIsInitialized(true);
         setCallState({ isConnected: true });
+
+        // The backend resolves this from the reference actually used to mint
+        // the token (see auth.py's _resolve_reference) -- already present on
+        // currentToken by the time initialize() resolves, no extra request needed.
+        setCallState({ activeSubscriberName: signalWireService.getActiveSubscriberDisplayName() ?? null });
       } catch (err) {
         console.error('Failed to initialize SignalWire:', err);
         setError('Failed to connect to SignalWire');

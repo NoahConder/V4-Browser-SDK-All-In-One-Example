@@ -39,34 +39,71 @@ def _get_subscribers_cached() -> list:
     return subscribers
 
 
+def _display_name_for(subscriber: dict) -> str:
+    """Same shape as subscribers.py's _to_public_shape -- duplicated rather
+    than imported, per the existing self-contained-blueprint convention
+    (see this module's cache comment above).
+    """
+    nested = subscriber.get('subscriber') or {}
+    return (
+        subscriber.get('display_name')
+        or nested.get('display_name')
+        or f"{nested.get('first_name', '')} {nested.get('last_name', '')}".strip()
+        or nested.get('email')
+        or subscriber.get('id')
+    )
+
+
 def _resolve_reference(subscriber_id):
     """Turn a client-supplied subscriber id into a `reference` string safe to
-    pass to create_subscriber_token/refresh_token.
+    pass to create_subscriber_token/refresh_token, plus the real resource id
+    and display name to echo back to the UI.
 
     The client can only pick a subscriber that already exists in THIS
     account's subscriber list, fetched here with our own project/auth-token
     credentials -- the client never supplies a raw reference/subscriber_id
-    that goes straight to SignalWire unvalidated. Returns (reference, None)
-    on success or (None, error_message) if the id isn't a real subscriber.
+    that goes straight to SignalWire unvalidated. Returns
+    (reference, resource_id, display_name, None) on success or
+    (None, None, None, error_message) if the id isn't a real subscriber.
 
     Create Subscriber Token only accepts `reference` (not `subscriber_id`),
     and treats it as "often an email, but can be any string" -- reusing the
     same reference resolves to the SAME existing subscriber instead of
     minting a new one, so we resolve the chosen subscriber's email back out
     of the list and use that as the reference.
+
+    IMPORTANT: the `subscriber_id` SignalWire's own Create Subscriber Token
+    response echoes back is in a completely different id namespace than
+    GET /resources/subscribers' `id` -- confirmed by minting a token for a
+    known subscriber and getting back neither that id nor any id in the
+    account's subscriber list. So callers here should prefer the resource id
+    resolved below over sw_client.create_subscriber_token()'s own returned
+    subscriber_id, which is useless for cross-referencing the subscriber list.
     """
     if not subscriber_id:
-        return _TOKEN_REFERENCE, None
+        # No explicit pick -- still try to resolve the default reference
+        # against the real subscriber list (SignalWire auto-creates/reuses a
+        # resource per unique reference on first use, so one often exists),
+        # falling back to the literal reference string as the display name.
+        subscribers = _get_subscribers_cached()
+        default_match = next(
+            (s for s in subscribers if (s.get('subscriber') or {}).get('email') == _TOKEN_REFERENCE),
+            None,
+        )
+        if default_match:
+            return _TOKEN_REFERENCE, default_match.get('id'), _display_name_for(default_match), None
+        return _TOKEN_REFERENCE, None, _TOKEN_REFERENCE, None
 
     subscribers = _get_subscribers_cached()
     match = next((s for s in subscribers if s.get('id') == subscriber_id), None)
     if not match:
-        return None, "Unknown subscriber"
+        return None, None, None, "Unknown subscriber"
 
     nested = match.get('subscriber') or {}
     # Fall back to the id itself if this subscriber has no email on file --
     # still deterministic/reusable, just not tied to their real identity.
-    return nested.get('email') or subscriber_id, None
+    reference = nested.get('email') or subscriber_id
+    return reference, match.get('id'), _display_name_for(match), None
 
 
 def _gate():
@@ -114,7 +151,7 @@ def generate_token():
                 return jsonify({"error": "SignalWire client not configured"}), 500
 
         body = request.get_json(silent=True) or {}
-        reference, error = _resolve_reference(body.get('subscriber_id'))
+        reference, resource_id, display_name, error = _resolve_reference(body.get('subscriber_id'))
         if error:
             return jsonify({"success": False, "error": error}), 400
 
@@ -122,6 +159,12 @@ def generate_token():
             reference=reference,
             expires_in=3600  # 1 hour
         )
+        # Override SignalWire's own returned subscriber_id -- it's in a
+        # different id namespace than GET /resources/subscribers and can't be
+        # cross-referenced against the subscriber list (see _resolve_reference).
+        if resource_id:
+            token_data['subscriber_id'] = resource_id
+        token_data['subscriber_display_name'] = display_name
 
         logger.info("Token generated successfully")
 
@@ -158,11 +201,14 @@ def refresh_token():
                 return jsonify({"error": "SignalWire client not configured"}), 500
 
         body = request.get_json(silent=True) or {}
-        reference, error = _resolve_reference(body.get('subscriber_id'))
+        reference, resource_id, display_name, error = _resolve_reference(body.get('subscriber_id'))
         if error:
             return jsonify({"success": False, "error": error}), 400
 
         token_data = sw_client.refresh_token(reference=reference)
+        if resource_id:
+            token_data['subscriber_id'] = resource_id
+        token_data['subscriber_display_name'] = display_name
 
         logger.info("Token refreshed successfully")
 

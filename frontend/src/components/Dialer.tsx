@@ -72,6 +72,7 @@ const Dialer: React.FC = () => {
   // when a field it actually reads changes -- not on every call-quality tick
   // (qualityLevel/qualityScore/networkIssueCount update ~1/sec during a call
   // via signalwire.ts's qualitySub). Matches CallScreen.tsx's pattern.
+  const activeSubscriberName = useCallStore((s) => s.activeSubscriberName);
   const isInCall = useCallStore((s) => s.isInCall);
   const isIncoming = useCallStore((s) => s.isIncoming);
   const remoteNumber = useCallStore((s) => s.remoteNumber);
@@ -329,7 +330,12 @@ const Dialer: React.FC = () => {
           >
             <User size={16} />
           </button>
-          <span className="text-gray-400">{new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+          <div className="flex flex-col items-end leading-tight">
+            <span className="text-gray-400">{new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+            {activeSubscriberName && (
+              <span className="max-w-[6rem] truncate text-[10px] text-gray-500">{activeSubscriberName}</span>
+            )}
+          </div>
         </div>
       </div>
 

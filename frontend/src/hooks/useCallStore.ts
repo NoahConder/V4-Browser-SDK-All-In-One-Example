@@ -32,6 +32,7 @@ const initialState: CallState = {
   qualityLevel: null,
   qualityScore: null,
   networkIssueCount: 0,
+  activeSubscriberName: null,
 };
 
 export const useCallStore = create<CallStore>((set) => ({
@@ -51,6 +52,7 @@ export const useCallStore = create<CallStore>((set) => ({
         ...initialState,
         isConnected: state.isConnected,  // Preserve connection status
         isClientReady: state.isClientReady,  // Preserve live readiness across call resets
+        activeSubscriberName: state.activeSubscriberName,  // Session identity, not call state
         // Preserve callError -- a failed call attempt resets straight back to
         // idle (see Dialer.tsx's handleCall), and the whole point of the error
         // banner is to explain why on that idle screen. Cleared explicitly by

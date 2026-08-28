@@ -109,6 +109,13 @@ class SignalWireService {
   // toggleSpeaker() applies it to the remote media sink. Speaker toggling has
   // no effect until a device has been explicitly selected here.
   private preferredOutputDevice: MediaDeviceInfo | null = null;
+  // The 'screenshare' call capability is granted server-side per account/call
+  // type -- it says nothing about whether THIS browser can actually share a
+  // screen (e.g. iOS Safari has no getDisplayMedia at all). Per SignalWire's
+  // screen-sharing guide, gate the control on both so it never appears
+  // somewhere it's guaranteed to fail.
+  private readonly screenShareApiSupported: boolean =
+    typeof navigator.mediaDevices?.getDisplayMedia === 'function';
 
   // RxJS subscriptions
   private incomingCallSub: Subscription | null = null;
@@ -320,9 +327,19 @@ class SignalWireService {
 
   // The subscriber id SignalWire actually resolved us to (from the token
   // response), not just what was requested -- lets the UI confirm/highlight
-  // which subscriber this session is really authenticated as.
+  // which subscriber this session is really authenticated as. This is
+  // auth.py's resolved resources/subscribers id, NOT SignalWire's own
+  // Create Subscriber Token response field of the same name (that one lives
+  // in a different, unrelated id namespace -- see auth.py's _resolve_reference).
   getActiveSubscriberId(): string | undefined {
     return this.currentToken?.subscriber_id;
+  }
+
+  // Resolved server-side from the reference actually used to mint this
+  // token -- avoids a separate lookup round-trip for the header's
+  // permanent "who am I" indicator.
+  getActiveSubscriberDisplayName(): string | undefined {
+    return this.currentToken?.subscriber_display_name;
   }
 
   private setupCallSubscriptions(call: Call) {
@@ -389,7 +406,7 @@ class SignalWireService {
       // at runtime whether it's actually granted for this call.
       const canHold = (capabilities as string[]).includes('hold');
       console.log('[hold] capabilities$:', capabilities, '-- has hold capability:', canHold);
-      this.onCanScreenShareChange?.(capabilities.includes('screenshare'));
+      this.onCanScreenShareChange?.(this.screenShareApiSupported && capabilities.includes('screenshare'));
       this.onCanTransferChange?.(canTransfer);
       this.onCanHoldChange?.(canHold);
     });
@@ -860,6 +877,9 @@ class SignalWireService {
   // start/stopScreenShare() live on call.self, gated by the caller on the
   // canScreenShare flag fed from call.capabilities$ (onCanScreenShareChange).
   async toggleScreenShare() {
+    if (!this.screenShareApiSupported) {
+      throw new Error('Screen sharing is not supported in this browser');
+    }
     const self = this.currentCall?.self;
     if (!self) {
       throw new Error('No active call to screen share on');

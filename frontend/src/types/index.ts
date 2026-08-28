@@ -26,6 +26,10 @@ export interface CallState {
   qualityLevel: 'excellent' | 'good' | 'fair' | 'poor' | 'critical' | null;
   qualityScore: number | null;
   networkIssueCount: number;
+  // Display name of whoever this session's token was minted for -- session
+  // identity, not call state, so it's preserved across resetCallState() same
+  // as isConnected/isClientReady.
+  activeSubscriberName: string | null;
 }
 
 export interface TokenData {
@@ -33,6 +37,10 @@ export interface TokenData {
   expires_at: string;
   expires_in: number;
   subscriber_id?: string;
+  // Resolved server-side from the reference actually used to mint this
+  // token -- see auth.py's _resolve_reference for why this can't be
+  // recovered from subscriber_id alone.
+  subscriber_display_name?: string;
   project_id: string;
   space_name: string;
 }
