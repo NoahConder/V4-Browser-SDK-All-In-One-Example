@@ -4,6 +4,7 @@ import {
   InvalidCredentialsError,
   MediaAccessError,
   MediaTrackError,
+  SelfParticipant,
 } from '@signalwire/js';
 import type {
   AuthenticateContext,
@@ -17,7 +18,7 @@ import type {
   QualityLevel,
   NetworkIssue,
 } from '@signalwire/js';
-import { combineLatest, of, switchMap } from 'rxjs';
+import { combineLatest, distinctUntilChanged, of, switchMap } from 'rxjs';
 import type { Observable, Subscription } from 'rxjs';
 import type { TokenData } from '../types';
 import { authAPI } from './api';
@@ -64,16 +65,6 @@ const ENDED_CALL_STATUSES: readonly CallStatus[] = [
   'destroyed',
 ];
 
-// The slice of a call.connect event the screen-share gate reads.
-// call.signalingEvent$ emits each event's bare payload (no event_type
-// wrapper), typed only as Record<string, unknown>, and the SDK doesn't export
-// its CallConnectPayload -- so this mirrors just the fields we use, and a
-// payload is recognized as call.connect by having connect_state.
-interface CallConnectEvent {
-  connect_state?: 'connecting' | 'connected';
-  peer?: { device?: { type?: 'webrtc' | 'sip' | 'phone' } };
-}
-
 export interface AudioProcessingState {
   echoCancellation: boolean;
   autoGain: boolean;
@@ -103,18 +94,15 @@ export interface SignalWireCallbacks {
   // don't happen inside any user-initiated action's try/catch, so they'd
   // otherwise only ever reach console.error/console.warn.
   onClientError?: (message: string) => void;
-  // NOT driven by call.capabilities$. Per SignalWire engineering, capabilities
-  // are currently hardcoded server-side for non-conference calls (always just
-  // member.remove/digit/end -- private Fabric address, PSTN, and SIP all
-  // returned the identical set in testing). And as verified in the 4.0.0-rc.5
-  // SDK source, nothing enforces them: startScreenShare(), toggleHold() and
-  // transfer() never consult capabilities. So this is fired per-call from
-  // two server/browser facts instead, never from our own guess at a call's
-  // type (e.g. parsing the dialed string): browser support
-  // (screenShareApiSupported), AND no live PSTN/SIP leg reported by the
-  // server's call.connect events (see the callConnectSub subscription in
-  // setupCallSubscriptions). Hold/transfer have no equivalent gate at all:
-  // see toggleHold()/transferCall().
+  // Per the SDK's screen-sharing guide: browser support
+  // (screenShareApiSupported) AND the server's `screenshare` capability for
+  // this call (call.self.capabilities.screenshare$), fired per-call from
+  // setupCallSubscriptions. The capability is the server's real answer: it's
+  // absent on 1:1 calls (browser-to-browser, PSTN, SIP, SWML), where the
+  // server refuses the share leg with "Must provide a participant invite
+  // first", and present on calls into a room/conference. Hold/transfer have
+  // no equivalent gate: they aren't capabilities at all (see
+  // toggleHold()/transferCall()).
   onCanScreenShareChange?: (canScreenShare: boolean) => void;
   onScreenShareStatusChange?: (status: ScreenShareStatus) => void;
   onAudioProcessingChange?: (state: AudioProcessingState) => void;
@@ -177,7 +165,8 @@ class SignalWireService {
   private preferredOutputDevice: MediaDeviceInfo | null = null;
   // One of the two gates on the screen-share control (see
   // onCanScreenShareChange's declaration). Hides it in browsers where it's
-  // guaranteed to fail, e.g. iOS Safari has no getDisplayMedia at all.
+  // guaranteed to fail, e.g. iOS Safari and some embedded WebViews have no
+  // getDisplayMedia at all.
   private readonly screenShareApiSupported: boolean =
     typeof navigator.mediaDevices?.getDisplayMedia === 'function';
 
@@ -191,7 +180,7 @@ class SignalWireService {
   private warningSub: Subscription | null = null;
   private readySub: Subscription | null = null;
   private capabilitiesSub: Subscription | null = null;
-  private callConnectSub: Subscription | null = null;
+  private screenShareCapabilitySub: Subscription | null = null;
   private callErrorsSub: Subscription | null = null;
   private screenShareSub: Subscription | null = null;
   private qualitySub: Subscription | null = null;
@@ -562,23 +551,22 @@ class SignalWireService {
       console.log('[capabilities] call.capabilities$:', capabilities);
     });
 
-    // Screen-share gate, fired per-call (resetCallState() clears it on every
-    // call end). Starts from browser support alone, then follows the server's
-    // own word on what's on the far end: each `call.connect` event for this
-    // call carries `peer.device.type` ('webrtc' | 'sip' | 'phone') for the leg
-    // it was bridged to, and screen share is withdrawn while that peer is PSTN
-    // or SIP. Re-evaluated on every connect, so a transfer to a different kind
-    // of endpoint updates it. (call.state is NOT usable for this -- in testing
-    // the browser only ever receives call.state for its own 'webrtc' leg.) If
-    // no call.connect arrives, this degrades to the browser-support gate alone.
-    this.onCanScreenShareChange?.(this.screenShareApiSupported);
-    this.callConnectSub = call.signalingEvent$.subscribe((event) => {
-      const { connect_state, peer } = event as CallConnectEvent;
-      if (connect_state !== 'connected') return;
-      const peerType = peer?.device?.type;
-      console.log('[call.connect] peer device:', peerType ?? '(none)');
-      this.onCanScreenShareChange?.(this.screenShareApiSupported && peerType !== 'phone' && peerType !== 'sip');
-    });
+    // Screen-share gate (see onCanScreenShareChange's declaration), fired
+    // per-call since resetCallState() clears it on every call end. Hidden
+    // until the server grants the capability. call.self$ is typed as the
+    // CallSelfParticipant interface, which doesn't declare `capabilities`;
+    // at runtime it's a SelfParticipant, which does.
+    this.onCanScreenShareChange?.(false);
+    this.screenShareCapabilitySub = call.self$
+      .pipe(
+        switchMap((self) => (self instanceof SelfParticipant ? self.capabilities.screenshare$ : of(false))),
+        // self is replaced on every call.joined, re-emitting the same value.
+        distinctUntilChanged(),
+      )
+      .subscribe((granted) => {
+        console.log('[screenshare] capability granted:', granted);
+        this.onCanScreenShareChange?.(this.screenShareApiSupported && granted);
+      });
 
     // Quality/network observables live directly on Call (not call.self), so
     // this is simpler than the self$ tier below -- no nullable intermediate.
@@ -612,8 +600,8 @@ class SignalWireService {
     this.localStreamSub = null;
     this.capabilitiesSub?.unsubscribe();
     this.capabilitiesSub = null;
-    this.callConnectSub?.unsubscribe();
-    this.callConnectSub = null;
+    this.screenShareCapabilitySub?.unsubscribe();
+    this.screenShareCapabilitySub = null;
     this.qualitySub?.unsubscribe();
     this.qualitySub = null;
     this.callErrorsSub?.unsubscribe();
@@ -884,6 +872,20 @@ class SignalWireService {
     toneService.playDisconnectTone();
     this.handleCallEnded();
 
+    // End an active screen share first. As of 4.0.0-rc.5, call.hangup() only
+    // sends a verto.bye for the main leg; the screen-share leg is torn down
+    // locally but never byed, so the server keeps its "(Screen)" member in the
+    // room (observed lingering 4+ minutes). stopScreenShare() byes that leg.
+    // Runs after handleCallEnded() so the UI doesn't wait on it.
+    const self = call.self;
+    if (self && (self.screenShareStatus === 'starting' || self.screenShareStatus === 'started')) {
+      try {
+        await self.stopScreenShare();
+      } catch (error) {
+        console.debug('Stopping screen share during endCall (ignored):', error);
+      }
+    }
+
     // Best-effort hangup signal to the server
     try {
       await call.hangup();
@@ -1110,8 +1112,12 @@ class SignalWireService {
   }
 
   // start/stopScreenShare() live on call.self, gated by the caller on the
-  // canScreenShare flag (onCanScreenShareChange).
-  async toggleScreenShare() {
+  // canScreenShare flag (onCanScreenShareChange). Must be called straight from
+  // a click/keyboard handler: getDisplayMedia() requires a user gesture, so no
+  // await may run before startScreenShare(). `withAudio` asks for the shared
+  // surface's audio -- best-effort (Chrome/Edge tabs and windows); the share
+  // still starts video-only if it isn't granted.
+  async toggleScreenShare(withAudio = false) {
     if (!this.screenShareApiSupported) {
       throw new Error('Screen sharing is not supported in this browser');
     }
@@ -1133,7 +1139,7 @@ class SignalWireService {
         console.log('Screen share is still stopping - ignoring toggle');
         break;
       case 'none':
-        await self.startScreenShare();
+        await self.startScreenShare(withAudio ? { audio: true } : undefined);
         break;
     }
   }

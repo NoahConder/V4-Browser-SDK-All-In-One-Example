@@ -1,5 +1,13 @@
 import { useEffect, useState } from 'react';
-import { MediaAccessError, CallCreateError, MediaTrackError, PreflightError, AuxiliaryLegCancelledError } from '@signalwire/js';
+import {
+  MediaAccessError,
+  CallCreateError,
+  MediaTrackError,
+  PreflightError,
+  AuxiliaryLegCancelledError,
+  AuxiliaryLegTimeoutError,
+  ScreenShareAlreadyActiveError,
+} from '@signalwire/js';
 import { signalWireService, ClientNotReadyError } from '../services/signalwire';
 import { useCallStore } from './useCallStore';
 import { callsAPI } from '../services/api';
@@ -27,6 +35,35 @@ export const describeCallError = (err: unknown): string => {
     return `Connection test failed during the ${err.phase} phase.`;
   }
   return err instanceof Error ? err.message : 'Unknown error';
+};
+
+// Screen-share failures, per the SDK's screen-sharing guide. Returns null for
+// outcomes that aren't errors from the user's point of view. A share failure
+// never affects the call itself.
+const describeScreenShareError = (err: unknown): string | null => {
+  // The user's own stop beat the share to completion.
+  if (err instanceof AuxiliaryLegCancelledError) return null;
+  if (err instanceof ScreenShareAlreadyActiveError) return 'A screen share is already active on this call.';
+  if (err instanceof AuxiliaryLegTimeoutError) return 'Screen sharing timed out while connecting. Please try again.';
+  if (err instanceof DOMException) {
+    switch (err.name) {
+      case 'NotAllowedError': // picker dismissed or permission denied
+      case 'AbortError': // call ended before capture started
+        return null;
+      case 'NotFoundError':
+        return 'No screen is available to share.';
+      case 'NotReadableError':
+        return "Couldn't capture the screen. Try again, or close apps that may be using it.";
+      case 'NotSupportedError':
+        return "Screen sharing isn't supported in this browser.";
+    }
+  }
+  // The server refused the share leg (e.g. "Must provide a participant
+  // invite first" on a 1:1 call). The capability gate should prevent this.
+  if (err instanceof Error && err.name === 'JSONRPCError') {
+    return "Screen sharing isn't available on this call.";
+  }
+  return 'Failed to start screen sharing.';
 };
 
 export const useSignalWire = () => {
@@ -344,18 +381,20 @@ export const useSignalWire = () => {
   // (TransferModal) want the rejection, not a store-wide callError.
   const transferCall = (destination: string) => signalWireService.transferCall(destination);
 
-  const toggleScreenShare = async () => {
+  // Called straight from the click handler -- see the service's
+  // toggleScreenShare() for why nothing may be awaited before it.
+  const toggleScreenShare = async (withAudio = false) => {
     try {
-      await signalWireService.toggleScreenShare();
+      await signalWireService.toggleScreenShare(withAudio);
     } catch (err) {
-      if (err instanceof DOMException && err.name === 'NotAllowedError') {
-        return; // User dismissed the browser's screen-share picker -- not an error.
-      }
-      if (err instanceof AuxiliaryLegCancelledError) {
-        return; // Share was stopped before it finished connecting -- not an error.
-      }
+      const message = describeScreenShareError(err);
+      if (message === null) return;
       console.error('Failed to toggle screen share:', err);
-      setCallState({ callError: 'Failed to start screen sharing.' });
+      // NotSupportedError: the API is unavailable after all, so hide the control.
+      if (err instanceof DOMException && err.name === 'NotSupportedError') {
+        setCallState({ canScreenShare: false });
+      }
+      setCallState({ callError: message });
     }
   };
 

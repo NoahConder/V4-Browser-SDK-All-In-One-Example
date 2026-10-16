@@ -41,6 +41,9 @@ const CallScreen: React.FC<CallScreenProps> = ({
   const [isControlsSheetOpen, setIsControlsSheetOpen] = useState(false);
   const [isTransferModalOpen, setIsTransferModalOpen] = useState(false);
   const [isDevicePickerOpen, setIsDevicePickerOpen] = useState(false);
+  // Kept here (not in the sheet, which unmounts on close) so it survives
+  // reopening the sheet. Best-effort: Chrome/Edge tabs and windows only.
+  const [shareScreenAudio, setShareScreenAudio] = useState(false);
   const {
     sendDTMF,
     toggleHold,
@@ -310,7 +313,9 @@ const CallScreen: React.FC<CallScreenProps> = ({
           }}
           canScreenShare={canScreenShare}
           screenShareStatus={screenShareStatus}
-          onToggleScreenShare={toggleScreenShare}
+          onToggleScreenShare={() => toggleScreenShare(shareScreenAudio)}
+          shareScreenAudio={shareScreenAudio}
+          onToggleShareScreenAudio={() => setShareScreenAudio((prev) => !prev)}
           isEchoCancellationOn={isEchoCancellationOn}
           onToggleEchoCancellation={toggleEchoCancellation}
           isNoiseSuppressionOn={isNoiseSuppressionOn}

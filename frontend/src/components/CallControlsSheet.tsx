@@ -13,6 +13,8 @@ interface CallControlsSheetProps {
   canScreenShare: boolean;
   screenShareStatus: 'none' | 'starting' | 'started' | 'stopping';
   onToggleScreenShare: () => void;
+  shareScreenAudio: boolean;
+  onToggleShareScreenAudio: () => void;
   isEchoCancellationOn: boolean;
   onToggleEchoCancellation: () => void;
   isNoiseSuppressionOn: boolean;
@@ -25,14 +27,16 @@ interface SheetRowProps {
   icon: LucideIcon;
   label: string;
   active?: boolean;
+  disabled?: boolean;
   onClick: () => void;
 }
 
-const SheetRow: React.FC<SheetRowProps> = ({ icon: Icon, label, active, onClick }) => (
+const SheetRow: React.FC<SheetRowProps> = ({ icon: Icon, label, active, disabled, onClick }) => (
   <button
     type="button"
     onClick={onClick}
-    className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-white/10"
+    disabled={disabled}
+    className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-white/10 disabled:cursor-default disabled:opacity-50 disabled:hover:bg-transparent"
   >
     <span
       className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${
@@ -83,6 +87,8 @@ const CallControlsSheet: React.FC<CallControlsSheetProps> = ({
   canScreenShare,
   screenShareStatus,
   onToggleScreenShare,
+  shareScreenAudio,
+  onToggleShareScreenAudio,
   isEchoCancellationOn,
   onToggleEchoCancellation,
   isNoiseSuppressionOn,
@@ -92,7 +98,15 @@ const CallControlsSheet: React.FC<CallControlsSheetProps> = ({
 }) => {
   if (!isOpen) return null;
 
-  const isScreenSharing = screenShareStatus === 'started' || screenShareStatus === 'starting';
+  // 'starting'/'stopping' are busy: the SDK's guide disables the control
+  // until the share settles.
+  const isScreenShareBusy = screenShareStatus === 'starting' || screenShareStatus === 'stopping';
+  const screenShareLabel = {
+    none: 'Share Screen',
+    starting: 'Starting Screen Share…',
+    started: 'Stop Screen Share',
+    stopping: 'Stopping Screen Share…',
+  }[screenShareStatus];
 
   return (
     <div className="absolute inset-0 z-20 flex flex-col justify-end">
@@ -123,12 +137,18 @@ const CallControlsSheet: React.FC<CallControlsSheetProps> = ({
           onClick={onOpenTransfer}
         />
         {canScreenShare && (
-          <SheetRow
-            icon={isScreenSharing ? ScreenShareOff : ScreenShare}
-            label={isScreenSharing ? 'Stop Screen Share' : 'Share Screen'}
-            active={isScreenSharing}
-            onClick={onToggleScreenShare}
-          />
+          <>
+            <SheetRow
+              icon={screenShareStatus === 'started' ? ScreenShareOff : ScreenShare}
+              label={screenShareLabel}
+              active={screenShareStatus === 'started'}
+              disabled={isScreenShareBusy}
+              onClick={onToggleScreenShare}
+            />
+            {screenShareStatus === 'none' && (
+              <SheetSwitch label="Include Tab Audio" checked={shareScreenAudio} onChange={onToggleShareScreenAudio} />
+            )}
+          </>
         )}
         <SheetRow icon={SlidersHorizontal} label="Audio & Video Devices" onClick={onOpenDevicePicker} />
 
