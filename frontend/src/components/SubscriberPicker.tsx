@@ -84,7 +84,7 @@ const SubscriberPicker: React.FC<SubscriberPickerProps> = ({ isOpen, onClose }) 
           type="button"
           onClick={onClose}
           aria-label="Close"
-          className="rounded-full p-1 text-gray-400 transition-colors hover:bg-white/10 hover:text-white"
+          className="-m-2 rounded-full p-3 text-gray-400 transition-colors hover:bg-white/10 hover:text-white"
         >
           <X size={16} />
         </button>

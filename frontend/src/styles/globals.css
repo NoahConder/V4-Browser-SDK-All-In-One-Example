@@ -1,13 +1,77 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import 'tailwindcss';
+
+@config '../../tailwind.config.js';
+
+/*
+  The default border color has changed to `currentcolor` in Tailwind CSS v4,
+  so we've added these compatibility styles to make sure everything still
+  looks the same as it did with Tailwind CSS v3.
+
+  If we ever want to remove these styles, we need to add an explicit border
+  color utility to any element that depends on these defaults.
+*/
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentcolor);
+  }
+}
+
+@utility app-shell {
+  /* Soft top-down glow over pure black -- depth without a loud gradient. */
+  @apply bg-black;
+  background-image: radial-gradient(
+    ellipse 120% 55% at 50% -10%,
+    rgba(99, 99, 102, 0.18),
+    transparent 60%
+  );
+}
+
+@utility glass-bar {
+  /* Frosted status bar / divider strip used at the top of every screen. */
+  @apply border-b border-white/6 bg-white/2 backdrop-blur-xl;
+}
+
+@utility glass-panel {
+  /* Frosted card surface, used for the address input and info panels. */
+  @apply border border-white/10 bg-white/4 backdrop-blur-xl;
+}
+
+@utility dial-button {
+  @apply rounded-full flex flex-col items-center justify-center transition-all duration-150 ease-out active:scale-90 shadow-[0_2px_10px_rgba(0,0,0,0.35)];
+  width: 70px;
+  height: 70px;
+  flex-shrink: 0;
+
+  @media (min-height: 700px) {
+    width: 75px;
+    height: 75px;
+  }
+  /* Small phones (e.g. 320x568): five rows of 70px keys don't fit under the
+     header and address field. */
+  @media (max-height: 620px) {
+    width: 56px;
+    height: 56px;
+  }
+  /* Phones in landscape -- see the `short` screen in tailwind.config.js. */
+  @media (max-height: 500px) {
+    width: 54px;
+    height: 54px;
+  }
+}
+
+@utility dial-button-number {
+  @apply text-2xl sm:text-3xl font-light leading-none;
+}
+
+@utility dial-button-letters {
+  @apply text-[9px] sm:text-[10px] font-medium tracking-wider mt-0.5 opacity-70;
+}
 
 @layer base {
-  html, body {
-    min-width: 360px;
-    min-height: 640px;
-  }
-
   body {
     @apply bg-black text-white;
     -webkit-tap-highlight-color: transparent;
@@ -17,49 +81,8 @@
   }
 
   #root {
-    min-width: 360px;
-    min-height: 640px;
     width: 100%;
     height: 100vh;
-  }
-}
-
-@layer components {
-  /* Soft top-down glow over pure black -- depth without a loud gradient. */
-  .app-shell {
-    @apply bg-black;
-    background-image: radial-gradient(ellipse 120% 55% at 50% -10%, rgba(99, 99, 102, 0.18), transparent 60%);
-  }
-
-  /* Frosted status bar / divider strip used at the top of every screen. */
-  .glass-bar {
-    @apply border-b border-white/[0.06] bg-white/[0.02] backdrop-blur-xl;
-  }
-
-  /* Frosted card surface, used for the address input and info panels. */
-  .glass-panel {
-    @apply border border-white/10 bg-white/[0.04] backdrop-blur-xl;
-  }
-
-  .dial-button {
-    @apply rounded-full flex flex-col items-center justify-center transition-all duration-150 ease-out active:scale-90 shadow-[0_2px_10px_rgba(0,0,0,0.35)];
-    width: 70px;
-    height: 70px;
-    flex-shrink: 0;
-  }
-
-  @media (min-height: 700px) {
-    .dial-button {
-      width: 75px;
-      height: 75px;
-    }
-  }
-
-  .dial-button-number {
-    @apply text-2xl sm:text-3xl font-light leading-none;
-  }
-
-  .dial-button-letters {
-    @apply text-[9px] sm:text-[10px] font-medium tracking-wider mt-0.5 opacity-70;
+    height: 100dvh;
   }
 }

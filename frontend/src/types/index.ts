@@ -16,9 +16,11 @@ export interface CallState {
   // Hold has no SDK truth signal (no held$/isOnHold observable) -- tracked
   // optimistically client-side, same as isMuted/isCameraOn.
   isOnHold: boolean;
+  // Browser getDisplayMedia support AND no server-reported PSTN/SIP leg on
+  // the current call, not a SignalWire call capability -- see signalwire.ts's
+  // onCanScreenShareChange comment. Set per-call. Hold and transfer have no
+  // equivalent gate at all.
   canScreenShare: boolean;
-  canTransfer: boolean;
-  canHold: boolean;
   screenShareStatus: 'none' | 'starting' | 'started' | 'stopping';
   isEchoCancellationOn: boolean;
   isAutoGainOn: boolean;

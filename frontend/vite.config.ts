@@ -7,7 +7,7 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, '../backend', '')
 
   // Parse the hostname from FRONTEND_URL if it exists
-  let allowedHosts = ['localhost', '127.0.0.1', 'briankwest.ngrok.io']
+  const allowedHosts = ['localhost', '127.0.0.1']
   if (env.FRONTEND_URL) {
     try {
       const url = new URL(env.FRONTEND_URL)
@@ -21,14 +21,14 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [react()],
     optimizeDeps: {
-      // @signalwire/js is now the published npm package (4.0.0-rc.0), not a
-      // local alias. Pre-bundle it and rxjs so Vite resolves their ESM cleanly.
+      // @signalwire/js is the published npm package, not a local alias.
+      // Pre-bundle it and rxjs so Vite resolves their ESM cleanly.
       include: ['@signalwire/js', 'rxjs']
     },
     server: {
       port: 5173,
       host: true, // Listen on all addresses
-      allowedHosts, // Allow the ngrok domain
+      allowedHosts, // localhost plus FRONTEND_URL's host (e.g. an ngrok tunnel)
       proxy: {
         '/api': {
           target: 'http://localhost:5001',

@@ -58,7 +58,7 @@ class ToneService {
     this.currentRingtoneOscillators.forEach(osc => {
       try {
         osc.stop();
-      } catch (e) {
+      } catch {
         // Oscillator might already be stopped
       }
     });
@@ -111,7 +111,7 @@ class ToneService {
         try {
           // If the oscillator is still valid, keep it
           return true;
-        } catch (e) {
+        } catch {
           // If it throws, it's already stopped, remove it
           return false;
         }

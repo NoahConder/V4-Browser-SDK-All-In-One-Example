@@ -126,7 +126,7 @@ function ResourceAddressList<T extends DialableResource>({
   return (
     <div className="space-y-1">
       {rows.map(({ item, address, audioPath, videoPath }) => (
-        <div key={`${item.id}-${address.id}`} className="rounded-lg px-2 py-2 transition-colors hover:bg-white/[0.06]">
+        <div key={`${item.id}-${address.id}`} className="rounded-lg px-2 py-2 transition-colors hover:bg-white/6">
           <div className="mb-1.5 flex flex-col">
             <span className="truncate text-sm font-medium text-white">{getRowLabel(item, address)}</span>
             <span className="truncate text-xs text-gray-500">{audioPath}</span>
@@ -136,7 +136,7 @@ function ResourceAddressList<T extends DialableResource>({
             <button
               type="button"
               onClick={() => onSelectAddress(audioPath, false)}
-              className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-white/10 bg-white/[0.06] px-3 py-1.5 text-xs font-medium text-gray-200 backdrop-blur-md transition-colors hover:bg-white/15 hover:text-white active:scale-[0.97]"
+              className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-white/10 bg-white/6 px-3 py-2 text-xs font-medium text-gray-200 backdrop-blur-md transition-colors hover:bg-white/15 hover:text-white active:scale-[0.97]"
             >
               <Phone size={13} /> Audio
             </button>
@@ -145,10 +145,10 @@ function ResourceAddressList<T extends DialableResource>({
               onClick={() => videoPath && onSelectAddress(videoPath, true)}
               disabled={!videoPath}
               aria-label="Dial with video"
-              className={`flex flex-1 items-center justify-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-medium backdrop-blur-md transition-colors active:scale-[0.97] ${
+              className={`flex flex-1 items-center justify-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-medium backdrop-blur-md transition-colors active:scale-[0.97] ${
                 videoPath
-                  ? 'border-white/10 bg-white/[0.06] text-gray-200 hover:bg-white/15 hover:text-white'
-                  : 'cursor-not-allowed border-white/5 bg-white/[0.02] text-gray-600'
+                  ? 'border-white/10 bg-white/6 text-gray-200 hover:bg-white/15 hover:text-white'
+                  : 'cursor-not-allowed border-white/5 bg-white/2 text-gray-600'
               }`}
             >
               <Video size={13} /> Video
@@ -162,7 +162,7 @@ function ResourceAddressList<T extends DialableResource>({
           type="button"
           onClick={handleLoadMore}
           disabled={isLoadingMore}
-          className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg py-2 text-xs font-medium text-gray-400 transition-colors hover:bg-white/10 hover:text-white disabled:opacity-50"
+          className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg py-2.5 text-xs font-medium text-gray-400 transition-colors hover:bg-white/10 hover:text-white disabled:opacity-50"
         >
           {isLoadingMore ? <Loader2 size={14} className="animate-spin" /> : null}
           {isLoadingMore ? 'Loading...' : 'Load 10 more'}

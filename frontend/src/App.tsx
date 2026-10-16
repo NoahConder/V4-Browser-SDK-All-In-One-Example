@@ -14,6 +14,20 @@ function App() {
       console.log('🚪 Page unloading event triggered');
       // Double-check this is a real unload event
       if (event && event.type === 'beforeunload') {
+        // Not while a call is up. client.disconnect() ends the session and
+        // clears its resume state AND its attach records together (the backend
+        // only honors attach records within the session that created them), so
+        // disconnecting here would leave the reloaded page nothing to reattach
+        // to. Letting the socket drop on its own instead keeps the session
+        // alive server-side long enough for the reload to pick the call back
+        // up -- see reconnectAttachedCalls in services/signalwire.ts. The
+        // records expire on their own after preferences.reconnectCallsTimeout
+        // (5 min by default), so nothing is stranded if the user doesn't come
+        // back.
+        if (signalWireService.hasActiveCall()) {
+          console.log('🚪 beforeunload during an active call - keeping the session so the call can be reattached');
+          return;
+        }
         console.log('🚪 Confirmed beforeunload - disconnecting SignalWire');
         signalWireService.disconnect();
       }
@@ -21,34 +35,6 @@ function App() {
 
     // Only add the listener, don't call the function
     window.addEventListener('beforeunload', handleBeforeUnload);
-
-    // Set minimum window size
-    const setMinWindowSize = () => {
-      // For Electron or other desktop environments
-      if (window.resizeTo && window.outerWidth && window.outerHeight) {
-        if (window.outerWidth < 360) {
-          window.resizeTo(360, window.outerHeight);
-        }
-        if (window.outerHeight < 640) {
-          window.resizeTo(window.outerWidth, 640);
-        }
-      }
-
-      // CSS-based constraint for browser windows
-      document.documentElement.style.minWidth = '360px';
-      document.documentElement.style.minHeight = '640px';
-      document.body.style.minWidth = '360px';
-      document.body.style.minHeight = '640px';
-    };
-
-    setMinWindowSize();
-
-    // Monitor window resize
-    const handleResize = () => {
-      setMinWindowSize();
-    };
-
-    window.addEventListener('resize', handleResize);
 
     // Request microphone permissions on load
     const requestPermissions = async () => {
@@ -66,14 +52,13 @@ function App() {
     requestPermissions();
 
     return () => {
-      window.removeEventListener('resize', handleResize);
       window.removeEventListener('beforeunload', handleBeforeUnload);
     };
   }, []);
 
   if (!permissionsGranted) {
     return (
-      <div className="app-shell flex flex-col h-screen items-center justify-center p-8">
+      <div className="app-shell flex flex-col h-dvh items-center justify-center p-8">
         <div className="glass-panel w-full max-w-sm rounded-2xl p-8 text-center">
           <h1 className="text-2xl font-semibold mb-4">Microphone Permission Required</h1>
           <p className="text-gray-400 mb-8">
@@ -85,11 +70,11 @@ function App() {
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 stream.getTracks().forEach(track => track.stop());
                 setPermissionsGranted(true);
-              } catch (err) {
+              } catch {
                 alert('Microphone permission is required to use this app');
               }
             }}
-            className="w-full rounded-xl bg-gradient-to-b from-emerald-400 to-ios-green px-6 py-3 font-medium text-white shadow-[0_4px_16px_rgba(52,199,89,0.35)] transition-all hover:brightness-110 active:scale-[0.98]"
+            className="w-full rounded-xl bg-linear-to-b from-emerald-400 to-ios-green px-6 py-3 font-medium text-white shadow-[0_4px_16px_rgba(52,199,89,0.35)] transition-all hover:brightness-110 active:scale-[0.98]"
           >
             Grant Permission
           </button>
@@ -100,7 +85,7 @@ function App() {
 
   if (!isInitialized) {
     return (
-      <div className="app-shell flex flex-col h-screen items-center justify-center">
+      <div className="app-shell flex flex-col h-dvh items-center justify-center">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-ios-green mb-4 mx-auto"></div>
           <p className="text-gray-400">Connecting to SignalWire...</p>
@@ -111,13 +96,13 @@ function App() {
 
   if (error) {
     return (
-      <div className="app-shell flex flex-col h-screen items-center justify-center p-8">
+      <div className="app-shell flex flex-col h-dvh items-center justify-center p-8">
         <div className="glass-panel w-full max-w-sm rounded-2xl p-8 text-center">
           <h1 className="text-2xl font-semibold mb-4 text-red-400">Connection Error</h1>
           <p className="text-gray-400 mb-8">{error}</p>
           <button
             onClick={() => window.location.reload()}
-            className="w-full rounded-xl border border-white/10 bg-white/[0.06] px-6 py-3 font-medium text-white backdrop-blur-md transition-all hover:bg-white/10 active:scale-[0.98]"
+            className="w-full rounded-xl border border-white/10 bg-white/6 px-6 py-3 font-medium text-white backdrop-blur-md transition-all hover:bg-white/10 active:scale-[0.98]"
           >
             Retry
           </button>

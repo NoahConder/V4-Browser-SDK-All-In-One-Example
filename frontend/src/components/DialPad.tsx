@@ -143,14 +143,14 @@ const DialPad: React.FC<DialPadProps> = ({
 
   return (
     <div className="flex justify-center items-center w-full px-4">
-      <div className="grid grid-cols-3 gap-3 sm:gap-4" style={{ maxWidth: '260px' }}>
+      <div className="grid grid-cols-3 gap-3 sm:gap-4 short:gap-2" style={{ maxWidth: '260px' }}>
         {/* Number Keys */}
         {dialPadKeys.map((row, rowIndex) => (
           <React.Fragment key={rowIndex}>
             {row.map((key) => (
               <button
                 key={key.number}
-                className="dial-button bg-white/[0.06] border border-white/10 backdrop-blur-md hover:bg-white/10 disabled:opacity-40 disabled:active:scale-100"
+                className="dial-button bg-white/6 border border-white/10 backdrop-blur-md hover:bg-white/10 disabled:opacity-40 disabled:active:scale-100"
                 onClick={() => handleKeyPress(key.number)}
                 disabled={disabled}
               >
@@ -182,7 +182,8 @@ const DialPad: React.FC<DialPadProps> = ({
         <button
           onClick={onCall}
           disabled={disabled}
-          className="dial-button bg-gradient-to-b from-emerald-400 to-ios-green shadow-[0_4px_16px_rgba(52,199,89,0.35)] hover:brightness-110 disabled:opacity-40 disabled:active:scale-100"
+          aria-label={callButtonText ? undefined : 'Call'}
+          className="dial-button bg-linear-to-b from-emerald-400 to-ios-green shadow-[0_4px_16px_rgba(52,199,89,0.35)] hover:brightness-110 disabled:opacity-40 disabled:active:scale-100"
         >
           {callButtonText ? (
             <span className="text-lg font-normal">{callButtonText}</span>
@@ -194,6 +195,7 @@ const DialPad: React.FC<DialPadProps> = ({
         {hasNumber ? (
           <button
             ref={deleteButtonRef}
+            aria-label={hideText ? undefined : 'Delete'}
             onMouseDown={handleDeleteMouseDown}
             onMouseUp={handleDeleteMouseUp}
             onMouseLeave={handleDeleteMouseLeave}
@@ -203,7 +205,7 @@ const DialPad: React.FC<DialPadProps> = ({
             className={`dial-button border transition-colors ${
               isLongPressing
                 ? 'bg-red-500/80 border-red-400/50'
-                : 'bg-white/[0.06] border-white/10 backdrop-blur-md hover:bg-white/10'
+                : 'bg-white/6 border-white/10 backdrop-blur-md hover:bg-white/10'
             }`}
           >
             {hideText ? (

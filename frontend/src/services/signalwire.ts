@@ -1,7 +1,14 @@
-import { SignalWire, TokenRefreshError, InvalidCredentialsError } from '@signalwire/js';
+import {
+  SignalWire,
+  TokenRefreshError,
+  InvalidCredentialsError,
+  MediaAccessError,
+  MediaTrackError,
+} from '@signalwire/js';
 import type {
   AuthenticateContext,
   Call,
+  CallStatus,
   ScreenShareStatus,
   PermissionResult,
   PreflightOptions,
@@ -10,7 +17,7 @@ import type {
   QualityLevel,
   NetworkIssue,
 } from '@signalwire/js';
-import { combineLatest, of } from 'rxjs';
+import { combineLatest, of, switchMap } from 'rxjs';
 import type { Observable, Subscription } from 'rxjs';
 import type { TokenData } from '../types';
 import { authAPI } from './api';
@@ -48,6 +55,25 @@ export function switchSubscriber(subscriberId: string | null) {
   window.location.reload();
 }
 
+// A Call in one of these is over -- used when deciding whether a call the SDK
+// put in session.calls$ is still worth adopting.
+const ENDED_CALL_STATUSES: readonly CallStatus[] = [
+  'disconnecting',
+  'disconnected',
+  'failed',
+  'destroyed',
+];
+
+// The slice of a call.connect event the screen-share gate reads.
+// call.signalingEvent$ emits each event's bare payload (no event_type
+// wrapper), typed only as Record<string, unknown>, and the SDK doesn't export
+// its CallConnectPayload -- so this mirrors just the fields we use, and a
+// payload is recognized as call.connect by having connect_state.
+interface CallConnectEvent {
+  connect_state?: 'connecting' | 'connected';
+  peer?: { device?: { type?: 'webrtc' | 'sip' | 'phone' } };
+}
+
 export interface AudioProcessingState {
   echoCancellation: boolean;
   autoGain: boolean;
@@ -62,6 +88,10 @@ export interface CallQualityState {
 
 export interface SignalWireCallbacks {
   onIncomingCall?: (remoteNumber: string, hasVideo: boolean) => void;
+  // Fired when the SDK restores a call that was already up before a page
+  // reload or WebSocket reconnect (see reconnectAttachedCalls in initialize).
+  // The call is live by the time this fires -- the UI just has to catch up.
+  onCallReattached?: (remoteNumber: string, hasVideo: boolean) => void;
   onCallEnded?: (wasIncoming: boolean) => void;
   onCallConnected?: () => void;
   onRemoteVideoChange?: (hasVideo: boolean) => void;
@@ -73,22 +103,40 @@ export interface SignalWireCallbacks {
   // don't happen inside any user-initiated action's try/catch, so they'd
   // otherwise only ever reach console.error/console.warn.
   onClientError?: (message: string) => void;
-  // Call.capabilities$ -- 'screenshare' is present/absent per call, so the UI
-  // gates the screen-share control on this rather than assuming it's always available.
+  // NOT driven by call.capabilities$. Per SignalWire engineering, capabilities
+  // are currently hardcoded server-side for non-conference calls (always just
+  // member.remove/digit/end -- private Fabric address, PSTN, and SIP all
+  // returned the identical set in testing). And as verified in the 4.0.0-rc.5
+  // SDK source, nothing enforces them: startScreenShare(), toggleHold() and
+  // transfer() never consult capabilities. So this is fired per-call from
+  // two server/browser facts instead, never from our own guess at a call's
+  // type (e.g. parsing the dialed string): browser support
+  // (screenShareApiSupported), AND no live PSTN/SIP leg reported by the
+  // server's call.connect events (see the callConnectSub subscription in
+  // setupCallSubscriptions). Hold/transfer have no equivalent gate at all:
+  // see toggleHold()/transferCall().
   onCanScreenShareChange?: (canScreenShare: boolean) => void;
-  // Same idea for 'transfer' -- some call/resource types (e.g. dialing a
-  // fabric address that only grants member.remove/digit/end) never get this
-  // capability, in which case the server silently no-ops transfer() rather
-  // than rejecting it, so the UI must gate on this instead of assuming it works.
-  onCanTransferChange?: (canTransfer: boolean) => void;
-  // Same idea for 'hold' -- per SignalWire's docs, toggleHold() requires this
-  // capability too, and it's likewise absent from this SDK version's
-  // Capability type.
-  onCanHoldChange?: (canHold: boolean) => void;
   onScreenShareStatusChange?: (status: ScreenShareStatus) => void;
   onAudioProcessingChange?: (state: AudioProcessingState) => void;
   onQualityChange?: (state: CallQualityState) => void;
+  // Non-fatal local-media problems reported on call.errors$ while the call
+  // carries on -- most importantly a mic/camera that couldn't be captured at
+  // dial/answer time, which the SDK handles by continuing receive-only
+  // instead of failing the call. Fatal errors aren't forwarded here: those
+  // already move status$ to 'failed', which ends the call through the
+  // normal path.
+  onCallMediaError?: (error: MediaAccessError | MediaTrackError) => void;
 }
+
+// What the browser does when a constraint isn't specified (and what
+// getUserMedia applies by default): all three processing stages on. Used when
+// a track's getSettings() omits a field, which some browsers do for
+// constraints they don't let pages control.
+const DEFAULT_AUDIO_PROCESSING: AudioProcessingState = {
+  echoCancellation: true,
+  autoGain: true,
+  noiseSuppression: true,
+};
 
 class SignalWireService {
   private client: InstanceType<typeof SignalWire> | null = null;
@@ -102,23 +150,40 @@ class SignalWireService {
   // transfer() resolving only confirms the request was sent, not that it
   // succeeded, so this is the only way to see the real outcome in the console.
   private pendingTransferDestination: string | null = null;
+  // Mic mute for the current call, applied locally to the outgoing audio
+  // track -- see toggleMute() for why this isn't the SDK's self.mute().
+  private isMicMuted = false;
   private isInitialized: boolean = false;
   private isInitializing: boolean = false;
   private isReady: boolean = false;
+  // Set for the duration of client.dial(). createOutboundCall() pushes the new
+  // Call into session.calls$ before dial() resolves, so without this the
+  // reattach-adoption subscription would see our own outbound call as an
+  // untracked one and adopt it a moment before makeCall() assigns currentCall.
+  private isDialing: boolean = false;
+  // Set when endCall() runs while client.dial() is still pending. dial() can't
+  // be cancelled and can stay pending for a long time (the docs call local
+  // media acquisition "unbounded" -- e.g. a permission prompt), so the UI may
+  // already have reset to the dialer by the time it resolves. makeCall()
+  // checks this and hangs up instead of adopting a call no screen owns.
+  private dialCancelled: boolean = false;
+  // Mirrors the local mic's processing state for the controls sheet. Read
+  // from the audio track's getSettings() when the local stream arrives, then
+  // updated from each successful call.set*() (see toggleEchoCancellation).
+  private audioProcessing: AudioProcessingState = { ...DEFAULT_AUDIO_PROCESSING };
   // Set via setPreferredAudioOutputDevice() (called by the device picker);
   // toggleSpeaker() applies it to the remote media sink. Speaker toggling has
   // no effect until a device has been explicitly selected here.
   private preferredOutputDevice: MediaDeviceInfo | null = null;
-  // The 'screenshare' call capability is granted server-side per account/call
-  // type -- it says nothing about whether THIS browser can actually share a
-  // screen (e.g. iOS Safari has no getDisplayMedia at all). Per SignalWire's
-  // screen-sharing guide, gate the control on both so it never appears
-  // somewhere it's guaranteed to fail.
+  // One of the two gates on the screen-share control (see
+  // onCanScreenShareChange's declaration). Hides it in browsers where it's
+  // guaranteed to fail, e.g. iOS Safari has no getDisplayMedia at all.
   private readonly screenShareApiSupported: boolean =
     typeof navigator.mediaDevices?.getDisplayMedia === 'function';
 
   // RxJS subscriptions
   private incomingCallSub: Subscription | null = null;
+  private reattachSub: Subscription | null = null;
   private callStatusSub: Subscription | null = null;
   private remoteStreamSub: Subscription | null = null;
   private localStreamSub: Subscription | null = null;
@@ -126,12 +191,9 @@ class SignalWireService {
   private warningSub: Subscription | null = null;
   private readySub: Subscription | null = null;
   private capabilitiesSub: Subscription | null = null;
-  // self$ itself, plus the subs derived from whatever `self` it last emitted
-  // (screenShareStatus$, the combined audio-processing observables) -- torn
-  // down and re-created together whenever self$ emits, since self can be
-  // replaced wholesale on a new call.joined event.
-  private selfSub: Subscription | null = null;
-  private selfDerivedSub: Subscription | null = null;
+  private callConnectSub: Subscription | null = null;
+  private callErrorsSub: Subscription | null = null;
+  private screenShareSub: Subscription | null = null;
   private qualitySub: Subscription | null = null;
   private remoteAudioCheckInterval: ReturnType<typeof setInterval> | null = null;
 
@@ -144,17 +206,17 @@ class SignalWireService {
 
   // Callbacks
   private onIncomingCall: ((remoteNumber: string, hasVideo: boolean) => void) | null = null;
+  private onCallReattached: ((remoteNumber: string, hasVideo: boolean) => void) | null = null;
   private onCallEnded: ((wasIncoming: boolean) => void) | null = null;
   private onCallConnected: (() => void) | null = null;
   private onRemoteVideoChange: ((hasVideo: boolean) => void) | null = null;
   private onReadyChange: ((ready: boolean) => void) | null = null;
   private onClientError: ((message: string) => void) | null = null;
   private onCanScreenShareChange: ((canScreenShare: boolean) => void) | null = null;
-  private onCanTransferChange: ((canTransfer: boolean) => void) | null = null;
-  private onCanHoldChange: ((canHold: boolean) => void) | null = null;
   private onScreenShareStatusChange: ((status: ScreenShareStatus) => void) | null = null;
   private onAudioProcessingChange: ((state: AudioProcessingState) => void) | null = null;
   private onQualityChange: ((state: CallQualityState) => void) | null = null;
+  private onCallMediaError: ((error: MediaAccessError | MediaTrackError) => void) | null = null;
 
   async initialize(callbacks: SignalWireCallbacks = {}) {
     if (this.isInitializing || this.isInitialized) {
@@ -170,17 +232,17 @@ class SignalWireService {
 
     try {
       this.onIncomingCall = callbacks.onIncomingCall || null;
+      this.onCallReattached = callbacks.onCallReattached || null;
       this.onCallEnded = callbacks.onCallEnded || null;
       this.onCallConnected = callbacks.onCallConnected || null;
       this.onRemoteVideoChange = callbacks.onRemoteVideoChange || null;
       this.onReadyChange = callbacks.onReadyChange || null;
       this.onClientError = callbacks.onClientError || null;
       this.onCanScreenShareChange = callbacks.onCanScreenShareChange || null;
-      this.onCanTransferChange = callbacks.onCanTransferChange || null;
-      this.onCanHoldChange = callbacks.onCanHoldChange || null;
       this.onScreenShareStatusChange = callbacks.onScreenShareStatusChange || null;
       this.onAudioProcessingChange = callbacks.onAudioProcessingChange || null;
       this.onQualityChange = callbacks.onQualityChange || null;
+      this.onCallMediaError = callbacks.onCallMediaError || null;
 
       // Create credential provider with automatic refresh
       const credentialProvider = {
@@ -197,8 +259,10 @@ class SignalWireService {
             expiry_at: Date.parse(tokenData.expires_at),
           };
         },
-        refresh: async (context?: AuthenticateContext) => {
-          console.log('[SAT] refresh() context.fingerprint:', context?.fingerprint ?? '(none)');
+        // Takes no context, unlike authenticate(): CredentialProvider.refresh
+        // is typed `() => Promise<SDKCredential>`, so the SDK never hands it a
+        // fingerprint.
+        refresh: async () => {
           // Same selected id as authenticate() -- otherwise refresh would
           // silently fall back to the default subscriber mid-session.
           const tokenData = await authAPI.refreshToken(this.currentToken?.token, getSelectedSubscriberId());
@@ -210,8 +274,29 @@ class SignalWireService {
         },
       };
 
-      // Initialize the v4 client
-      this.client = new SignalWire(credentialProvider);
+      // Initialize the v4 client.
+      //
+      // reconnectAttachedCalls switches on the SDK's AttachManager: each active
+      // call is recorded in sessionStorage (written when the invite is answered
+      // and refreshed on every verto ping), and the next init() replays those
+      // records as verto.invite with `reattaching: true` rather than discarding
+      // them. That's what carries an in-progress call across a page reload or a
+      // WebSocket reconnect. It defaults to false, in which case init() calls
+      // attachManager.flush() and the records are thrown away.
+      //
+      // persistSession is deliberately NOT enabled alongside it. All it adds is
+      // a copy of the credential in localStorage, and resolveCredentials() only
+      // ever reads that cache when no CredentialProvider was supplied -- we
+      // always supply one, so it would buy nothing here beyond leaving a
+      // long-lived SAT on disk. The state reattach actually depends on (the
+      // authorization_state/protocol resume pair and the attach records) is
+      // written to sessionStorage either way, and sessionStorage survives a
+      // reload. It also must not be enabled without re-checking
+      // switchSubscriber() above, which relies on authenticate() running again
+      // on every page load.
+      this.client = new SignalWire(credentialProvider, {
+        reconnectAttachedCalls: true,
+      });
 
       // Default all calls to G.711 (PCMU first, then PCMA). Setting this on the
       // global client preferences applies to both outbound dials and answered
@@ -314,6 +399,48 @@ class SignalWireService {
         });
       });
 
+      // Adopt a call the SDK reattached to (see reconnectAttachedCalls above).
+      // Both reattach paths -- reattachCalls() replaying stored records at
+      // init, and the session-level verto.attach handler when the server
+      // pushes one for a call this client has no object for -- build the Call
+      // and push it straight into session.calls$. Neither goes through dial()
+      // or incomingCalls$, so without this the restored call would be live,
+      // audio and all, while the UI sat on the dial pad with no way to hang up.
+      //
+      // Note the SDK derives direction from the presence of an inbound SDP
+      // offer, and a reattach doesn't carry one, so a restored call always
+      // reports 'outbound' even if it started as an inbound call. That only
+      // affects cosmetics here: onCallEnded reports wasIncoming: false for it.
+      this.reattachSub = this.client.session.calls$.subscribe((calls) => {
+        // This app handles one call at a time: never adopt while a call is
+        // already tracked, and never mid-dial (see isDialing's declaration).
+        if (this.currentCall || this.pendingCall || this.isDialing) return;
+
+        const restored = calls.find((call) => {
+          if (ENDED_CALL_STATUSES.includes(call.status)) return false;
+          // A genuinely ringing inbound call belongs to the incomingCalls$
+          // handler above, which has its own answer/reject UI.
+          if (call.direction === 'inbound' && (call.status === 'ringing' || call.status === 'new')) return false;
+          return true;
+        });
+        if (!restored) return;
+
+        console.log('Adopting reattached call:', restored.id, 'status:', restored.status);
+        this.isMicMuted = false;
+        this.currentCall = restored;
+        this.wasIncomingCall = false;
+        this.setupCallSubscriptions(restored);
+        this.setupRemoteAudioFallback(restored);
+
+        // Same '_undef_' guard as the incoming-call path -- that's what the
+        // platform sends for an unset display name.
+        const rawName = restored.toName;
+        const remoteNumber = (rawName && rawName !== '_undef_') ? rawName : restored.to || 'Unknown';
+        const hasVideo = restored.mediaDirections?.video != null
+          && restored.mediaDirections.video !== 'inactive';
+        this.onCallReattached?.(remoteNumber, hasVideo);
+      });
+
       this.isInitialized = true;
       this.isInitializing = false;
       console.log('SignalWire service fully initialized');
@@ -385,30 +512,72 @@ class SignalWireService {
       }
     });
 
-    // Subscribe to local stream so the self-view <video> (if attached) shows the camera
+    // Subscribe to local stream so the self-view <video> (if attached) shows
+    // the camera, and to seed the audio-processing toggles from what the mic
+    // track is actually running with.
     this.localStreamSub = call.localStream$.subscribe((stream) => {
       if (stream && this.localVideoEl) {
         this.localVideoEl.srcObject = stream;
       }
+      // The SDK swaps in a fresh mic track on device changes; keep it muted
+      // if the user is muted.
+      this.applyMicMute();
+      const audioTrack = stream?.getAudioTracks()[0];
+      if (audioTrack) {
+        const settings = audioTrack.getSettings();
+        this.setAudioProcessing({
+          echoCancellation: settings.echoCancellation ?? DEFAULT_AUDIO_PROCESSING.echoCancellation,
+          autoGain: settings.autoGainControl ?? DEFAULT_AUDIO_PROCESSING.autoGain,
+          noiseSuppression: settings.noiseSuppression ?? DEFAULT_AUDIO_PROCESSING.noiseSuppression,
+        });
+      }
     });
 
-    // 'screenshare' capability is per-call, so gate the screen-share control on it.
+    // call.errors$ (a replay-1 subject, so an error raised inside dial()
+    // before this subscription exists is still delivered) is where the SDK
+    // reports media failures that don't end the call. The important one is
+    // MediaAccessError from 'acquireLocalMedia': the mic/camera couldn't be
+    // captured and the SDK carried on receive-only (fallbackToReceiveOnly
+    // defaults to true), so without this the user would sit in a call nobody
+    // can hear them on. Screen-share and additional-device legs are skipped --
+    // toggleScreenShare's caller already reports those from the rejected
+    // promise.
+    this.callErrorsSub = call.errors$.subscribe((callError) => {
+      console.warn('[call.errors$]', callError.kind, 'fatal:', callError.fatal, 'leg:', callError.leg ?? 'main', callError.error);
+      if (callError.fatal) return;
+      if (callError.leg && callError.leg !== 'main') return;
+      const { error } = callError;
+      if (error instanceof MediaAccessError || error instanceof MediaTrackError) {
+        this.onCallMediaError?.(error);
+      }
+    });
+
+    // Diagnostic only -- NOT used to gate the UI (see onCanScreenShareChange's
+    // declaration comment for why). Logs the raw server-sent set, which the
+    // SDK passes through unchanged from call.joined. Note hold/transfer are
+    // not capabilities at all -- the SDK's Capability vocabulary only covers
+    // in-room actions (mute, deaf, layout, lock, digit, screenshare, end,
+    // device) -- so this can only ever reveal a real 'screenshare' grant.
     this.capabilitiesSub = call.capabilities$.subscribe((capabilities) => {
-      // [transfer] The installed SDK's Capability union (4.0.0-rc.2) doesn't
-      // list 'transfer' at all -- logging the raw list here settles, at
-      // runtime, whether the server ever grants it for this call/destination
-      // type, rather than guessing from a type declaration that may just be
-      // behind the server. Cast past the stale union to check for it anyway.
-      const canTransfer = (capabilities as string[]).includes('transfer');
-      console.log('[transfer] capabilities$:', capabilities, '-- has transfer capability:', canTransfer);
-      // [hold] Same situation as transfer above -- 'hold' isn't in this SDK
-      // version's Capability type either, so this is the only way to confirm
-      // at runtime whether it's actually granted for this call.
-      const canHold = (capabilities as string[]).includes('hold');
-      console.log('[hold] capabilities$:', capabilities, '-- has hold capability:', canHold);
-      this.onCanScreenShareChange?.(this.screenShareApiSupported && capabilities.includes('screenshare'));
-      this.onCanTransferChange?.(canTransfer);
-      this.onCanHoldChange?.(canHold);
+      console.log('[capabilities] call.capabilities$:', capabilities);
+    });
+
+    // Screen-share gate, fired per-call (resetCallState() clears it on every
+    // call end). Starts from browser support alone, then follows the server's
+    // own word on what's on the far end: each `call.connect` event for this
+    // call carries `peer.device.type` ('webrtc' | 'sip' | 'phone') for the leg
+    // it was bridged to, and screen share is withdrawn while that peer is PSTN
+    // or SIP. Re-evaluated on every connect, so a transfer to a different kind
+    // of endpoint updates it. (call.state is NOT usable for this -- in testing
+    // the browser only ever receives call.state for its own 'webrtc' leg.) If
+    // no call.connect arrives, this degrades to the browser-support gate alone.
+    this.onCanScreenShareChange?.(this.screenShareApiSupported);
+    this.callConnectSub = call.signalingEvent$.subscribe((event) => {
+      const { connect_state, peer } = event as CallConnectEvent;
+      if (connect_state !== 'connected') return;
+      const peerType = peer?.device?.type;
+      console.log('[call.connect] peer device:', peerType ?? '(none)');
+      this.onCanScreenShareChange?.(this.screenShareApiSupported && peerType !== 'phone' && peerType !== 'sip');
     });
 
     // Quality/network observables live directly on Call (not call.self), so
@@ -421,33 +590,17 @@ class SignalWireService {
       this.onQualityChange?.({ level, score, networkIssues });
     });
 
-    // call.self is replaced wholesale on each call.joined event, so the subs
-    // derived from it (screen-share status, audio-processing flags) are torn
-    // down and re-created every time self$ emits, not just once here.
-    this.selfSub = call.self$.subscribe((self) => {
-      this.selfDerivedSub?.unsubscribe();
-      this.selfDerivedSub = null;
+    // call.self is replaced wholesale on each call.joined event, so follow
+    // whichever self is current. self$ never emits null (it withholds until
+    // self exists), so there's no empty case to handle here.
+    this.screenShareSub = call.self$
+      .pipe(switchMap((self) => self.screenShareStatus$))
+      .subscribe((status) => this.onScreenShareStatusChange?.(status));
+  }
 
-      if (!self) {
-        this.onScreenShareStatusChange?.('none');
-        this.onAudioProcessingChange?.({ echoCancellation: false, autoGain: false, noiseSuppression: false });
-        return;
-      }
-
-      this.selfDerivedSub = combineLatest([
-        self.screenShareStatus$,
-        self.echoCancellation$,
-        self.autoGain$,
-        self.noiseSuppression$,
-      ]).subscribe(([screenShareStatus, echoCancellation, autoGain, noiseSuppression]) => {
-        this.onScreenShareStatusChange?.(screenShareStatus);
-        this.onAudioProcessingChange?.({
-          echoCancellation: !!echoCancellation,
-          autoGain: !!autoGain,
-          noiseSuppression: !!noiseSuppression,
-        });
-      });
-    });
+  private setAudioProcessing(state: AudioProcessingState) {
+    this.audioProcessing = state;
+    this.onAudioProcessingChange?.(state);
   }
 
   private cleanupCallSubscriptions() {
@@ -459,12 +612,14 @@ class SignalWireService {
     this.localStreamSub = null;
     this.capabilitiesSub?.unsubscribe();
     this.capabilitiesSub = null;
+    this.callConnectSub?.unsubscribe();
+    this.callConnectSub = null;
     this.qualitySub?.unsubscribe();
     this.qualitySub = null;
-    this.selfDerivedSub?.unsubscribe();
-    this.selfDerivedSub = null;
-    this.selfSub?.unsubscribe();
-    this.selfSub = null;
+    this.callErrorsSub?.unsubscribe();
+    this.callErrorsSub = null;
+    this.screenShareSub?.unsubscribe();
+    this.screenShareSub = null;
     if (this.remoteAudioCheckInterval) {
       clearInterval(this.remoteAudioCheckInterval);
       this.remoteAudioCheckInterval = null;
@@ -596,8 +751,16 @@ class SignalWireService {
   }
 
   private playRemoteStream(stream: MediaStream) {
-    console.log('Playing remote stream:', stream.id, 'tracks:', stream.getAudioTracks().length);
     let audioEl = document.getElementById('sw-remote-audio') as HTMLAudioElement;
+    // remoteStream$ and the RTCPeerConnection fallback both deliver the same
+    // remote track, wrapped in different MediaStream objects. Re-assigning
+    // srcObject for a track that's already playing just interrupts playback.
+    const current = audioEl?.srcObject as MediaStream | null;
+    const incoming = stream.getAudioTracks();
+    if (current && incoming.length > 0 && incoming.every((t) => current.getTrackById(t.id))) {
+      return;
+    }
+    console.log('Playing remote stream:', stream.id, 'tracks:', incoming.length);
     if (!audioEl) {
       audioEl = document.createElement('audio');
       audioEl.id = 'sw-remote-audio';
@@ -607,6 +770,8 @@ class SignalWireService {
     audioEl.srcObject = stream;
     audioEl.volume = 1.0;
     audioEl.play().catch(err => {
+      // A newer srcObject superseded this play() call; its own play() takes over.
+      if (err instanceof DOMException && err.name === 'AbortError') return;
       console.error('Remote audio play() failed:', err);
     });
   }
@@ -653,7 +818,9 @@ class SignalWireService {
     return `${destination}${separator}channel=video`;
   }
 
-  async makeCall(phoneNumber: string, video: boolean = false): Promise<Call> {
+  // Resolves null if the user hung up before dial() completed (the call is
+  // hung up instead of adopted).
+  async makeCall(phoneNumber: string, video: boolean = false): Promise<Call | null> {
     if (!this.client) {
       throw new Error('SignalWire client not initialized');
     }
@@ -661,7 +828,14 @@ class SignalWireService {
       throw new ClientNotReadyError();
     }
 
+    // Mute intent starts fresh with each call (the store's isMuted is reset on
+    // every call end). Reset here, before dial() -- not when the Call object
+    // arrives -- so a Mute tapped on the "Calling..." screen is kept.
+    this.isMicMuted = false;
+
     try {
+      this.isDialing = true;
+      this.dialCancelled = false;
       const formattedNumber = this.withVideoChannel(this.normalizeDestination(phoneNumber), video);
       console.log('Dialing:', formattedNumber);
 
@@ -669,6 +843,16 @@ class SignalWireService {
         audio: true,
         video,
       });
+
+      // The user hung up while dial() was pending (see dialCancelled). The UI
+      // has already reset, so don't adopt the call -- end it.
+      if (this.dialCancelled) {
+        console.log('Dial resolved after the user hung up - ending the call');
+        call.hangup().catch((error) => {
+          console.debug('Hangup of cancelled dial (ignored):', error);
+        });
+        return null;
+      }
 
       this.currentCall = call;
       this.wasIncomingCall = false;
@@ -680,12 +864,19 @@ class SignalWireService {
     } catch (error) {
       console.error('Failed to make call:', error);
       throw error;
+    } finally {
+      this.isDialing = false;
     }
   }
 
   async endCall() {
     const call = this.currentCall;
-    if (!call) return;
+    if (!call) {
+      // No Call object yet, but dial() may still be in flight -- make
+      // makeCall() hang it up when it resolves instead of adopting it.
+      if (this.isDialing) this.dialCancelled = true;
+      return;
+    }
 
     // Eagerly clean up state so incoming calls aren't blocked by stale references.
     // Don't wait for the SDK's status$ to emit 'disconnected' — it may be delayed
@@ -713,6 +904,7 @@ class SignalWireService {
       console.warn('Call already in progress, ignoring answer');
       return;
     }
+    this.isMicMuted = false;
 
     try {
       console.log('Answering incoming call...');
@@ -753,27 +945,34 @@ class SignalWireService {
     }
   }
 
+  // Mutes by disabling the outgoing audio track rather than via the SDK's
+  // self.mute()/unmute(): as of 4.0.0-rc.5 the server rejects call.mute and
+  // call.unmute with 403 on 1:1 calls (no self.mute capability), and the SDK's
+  // fallback then stops the mic track and re-acquires it via getUserMedia on
+  // unmute -- which measured ~4-5s of silence to the far end after unmuting.
+  // A disabled track sends silence immediately and re-enables instantly.
   async toggleMute(muted: boolean) {
-    if (!this.currentCall) {
-      console.warn('No active call to mute/unmute');
-      return;
-    }
+    // Record the intent even before the Call object exists (Mute is live on
+    // the "Calling..." screen while dial() is pending); applyMicMute() runs
+    // again once the call's local stream arrives.
+    this.isMicMuted = muted;
+    this.applyMicMute();
+    console.log(`Audio ${muted ? 'muted' : 'unmuted'}`);
+  }
 
-    try {
-      const self = this.currentCall.self;
-      if (!self) {
-        console.warn('Self participant not available yet');
-        return;
-      }
-      if (muted) {
-        await self.mute();
-      } else {
-        await self.unmute();
-      }
-      console.log(`Audio ${muted ? 'muted' : 'unmuted'}`);
-    } catch (error) {
-      console.error('Error toggling mute:', error);
+  // Disables both the local stream's mic track and the outgoing sender track:
+  // on answer, localStream$ emits before the track is attached to the
+  // RTCRtpSender, so the sender alone can be missed. They're normally the same
+  // MediaStreamTrack; when the SDK's local audio pipeline is engaged the sender
+  // carries the pipeline output instead, and muting either one silences it.
+  private applyMicMute() {
+    const call = this.currentCall;
+    if (!call) return;
+    const tracks = new Set<MediaStreamTrack>(call.localStream?.getAudioTracks() ?? []);
+    for (const sender of call.rtcPeerConnection?.getSenders() ?? []) {
+      if (sender.track?.kind === 'audio') tracks.add(sender.track);
     }
+    tracks.forEach((track) => { track.enabled = !this.isMicMuted; });
   }
 
   // Works whether the call started as audio-only or with video: if there's no
@@ -809,6 +1008,35 @@ class SignalWireService {
 
   // No held$/isOnHold observable exists on Call -- the caller tracks hold
   // state optimistically (like isMuted/isCameraOn) and reverts on failure.
+  // The SDK resolves verto.modify-based requests (transfer, hold/unhold) even
+  // when the server REFUSES them: the refusal comes back nested inside a
+  // successful envelope ({result: {result: {error}}}), and the SDK only
+  // reports it on call.errors$ (kind 'signaling', non-fatal) instead of
+  // rejecting. Runs `request` and returns that refusal, or null.
+  //
+  // errors$ is a ReplaySubject(1) delivered on the asap (microtask)
+  // scheduler, so subscribing replays the call's PREVIOUS error. Let that
+  // replay pass before arming, so an earlier failure on this call (a DTMF
+  // digit, a past transfer or hold) isn't attributed to this request; then
+  // flush once more after the request so a refusal reported during it lands.
+  private async refusalOf(call: Call, request: () => Promise<void>): Promise<Error | null> {
+    let armed = false;
+    let refusal = null as Error | null;
+    const sub = call.errors$.subscribe((callError) => {
+      if (armed && callError.kind === 'signaling' && !callError.fatal) refusal = callError.error;
+    });
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+    try {
+      await flush();
+      armed = true;
+      await request();
+      await flush();
+    } finally {
+      sub.unsubscribe();
+    }
+    return refusal;
+  }
+
   async toggleHold() {
     console.log('[hold] Requested');
 
@@ -817,26 +1045,27 @@ class SignalWireService {
       throw new Error('No active call to hold');
     }
 
-    // Per SignalWire's docs, toggleHold() requires the 'hold' capability --
-    // check (and log) it synchronously right before the attempt, same as
-    // transferCall()'s capability check above.
-    const capabilities = this.currentCall.capabilities as string[];
-    console.log('[hold] Current call capabilities:', capabilities, '-- has hold:', capabilities.includes('hold'));
-    if (!capabilities.includes('hold')) {
-      console.error('[hold] Aborted -- this call does not have the hold capability');
-      throw new Error('This call does not support hold');
-    }
-
+    // No pre-flight capability check -- there's nothing to check: 'hold' isn't
+    // part of the SDK's Capability vocabulary at all (hold/unhold are call-leg
+    // requests, not in-room actions), and toggleHold() doesn't consult
+    // capabilities (verified in the 4.0.0-rc.5 SDK source). So just attempt
+    // it and let it succeed or fail on its own.
+    // The docs say this resolves once the server acknowledged the change, but
+    // a server refusal also resolves (see refusalOf), so check for one. Note
+    // the SDK flips its internal hold state even on a refusal.
+    const call = this.currentCall;
+    let refusal: Error | null;
     try {
-      // Unlike transfer(), the docs say this promise resolves once the
-      // server has ACKNOWLEDGED the state change -- so, unlike transfer,
-      // resolving here really does mean success.
-      await this.currentCall.toggleHold();
-      console.log('[hold] call.toggleHold() resolved -- server acknowledged the state change');
+      refusal = await this.refusalOf(call, () => call.toggleHold());
     } catch (error) {
       console.error('[hold] call.toggleHold() rejected:', error);
       throw error;
     }
+    if (refusal) {
+      console.error('[hold] refused by the server:', refusal);
+      throw new Error(`The server refused the hold request (${refusal.message.replace(/\.$/, '')}).`);
+    }
+    console.log('[hold] call.toggleHold() resolved -- server acknowledged the state change');
   }
 
   async transferCall(destination: string) {
@@ -848,34 +1077,40 @@ class SignalWireService {
       throw new Error('No active call to transfer');
     }
 
-    // Per SignalWire's docs, transfer() is rejected server-side if this call
-    // lacks the 'transfer' capability -- check (and log) it synchronously
-    // right before the attempt, since 'transfer' isn't even in this SDK
-    // version's Capability type, so this is the only way to confirm at
-    // runtime whether it's actually being granted for this call/destination.
-    const capabilities = this.currentCall.capabilities as string[];
-    console.log('[transfer] Current call capabilities:', capabilities, '-- has transfer:', capabilities.includes('transfer'));
-    if (!capabilities.includes('transfer')) {
-      console.error('[transfer] Aborted -- this call does not have the transfer capability (server would otherwise silently ignore the request)');
-      throw new Error('This call does not support transfer');
-    }
-
+    // No pre-flight capability check -- see toggleHold()'s comment above for
+    // why. (The transfer() reference page says to check for a 'transfer'
+    // capability, but no such value exists in the SDK's Capability union, so
+    // that check could never pass.)
+    //
+    // A server refusal resolves rather than rejects (see refusalOf). In
+    // real-call testing on 4.0.0-rc.5 the server refused every transfer on
+    // 1:1 calls (-32002 "Permission Denied."), whichever side initiated it and
+    // whatever the destination (SIP URI, Fabric address, PSTN number); the
+    // rejection below is what TransferModal shows the user.
+    const call = this.currentCall;
+    let refusal: Error | null;
     this.pendingTransferDestination = formattedDestination;
     try {
-      await this.currentCall.transfer({ destination: formattedDestination });
-      // Resolving only means the SDK accepted and sent the request -- it does
-      // NOT mean the destination answered. Watch the "Call status" logs above
-      // for the actual outcome.
-      console.log('[transfer] call.transfer() resolved -- request sent, watch "Call status" logs for the real outcome');
+      refusal = await this.refusalOf(call, () => call.transfer({ destination: formattedDestination }));
     } catch (error) {
       console.error('[transfer] call.transfer() rejected:', error);
       this.pendingTransferDestination = null;
       throw error;
     }
+    if (refusal) {
+      console.error('[transfer] refused by the server:', refusal);
+      this.pendingTransferDestination = null;
+      throw new Error(`The server refused the transfer (${refusal.message.replace(/\.$/, '')}).`);
+    }
+    // Per the docs, resolving means the server ACCEPTED the request -- not
+    // that the destination answered. This blind transfer then moves the local
+    // call to 'disconnected'; watch the "Call status" logs above for the
+    // actual outcome.
+    console.log('[transfer] call.transfer() resolved -- server accepted the request, watch "Call status" logs for the real outcome');
   }
 
   // start/stopScreenShare() live on call.self, gated by the caller on the
-  // canScreenShare flag fed from call.capabilities$ (onCanScreenShareChange).
+  // canScreenShare flag (onCanScreenShareChange).
   async toggleScreenShare() {
     if (!this.screenShareApiSupported) {
       throw new Error('Screen sharing is not supported in this browser');
@@ -884,35 +1119,67 @@ class SignalWireService {
     if (!self) {
       throw new Error('No active call to screen share on');
     }
-    if (self.screenShareStatus === 'started' || self.screenShareStatus === 'starting') {
-      await self.stopScreenShare();
-    } else {
-      await self.startScreenShare();
+    switch (self.screenShareStatus) {
+      // Stopping while still 'starting' is supported: it cancels the pending
+      // share (the start promise rejects with AuxiliaryLegCancelledError,
+      // which the caller treats as benign).
+      case 'started':
+      case 'starting':
+        await self.stopScreenShare();
+        break;
+      // The SDK says to treat 'stopping' as busy -- starting now could hit
+      // ScreenShareAlreadyActiveError against the share still tearing down.
+      case 'stopping':
+        console.log('Screen share is still stopping - ignoring toggle');
+        break;
+      case 'none':
+        await self.startScreenShare();
+        break;
     }
   }
 
+  // These use the Call-level set*() methods, which apply browser constraints
+  // to the local mic track (track.applyConstraints, or re-acquiring the track
+  // where runtime constraints aren't honoured, e.g. iOS Safari). NOT the
+  // call.self toggle*() methods: those send a server-side call.audioflags.set
+  // RPC for the conference mix engine, gated on a self.audioflags.set
+  // capability that 1:1 calls aren't granted -- the SDK's own JSDoc points
+  // 1:1 WebRTC calls at these instead.
+  //
+  // set*() resolves false (not reject) when the constraint didn't reach the
+  // mic, so that's surfaced as an error and the toggle state is left alone.
   async toggleEchoCancellation() {
-    const self = this.currentCall?.self;
-    if (!self) {
-      throw new Error('No active call');
+    const call = this.requireCurrentCall();
+    const next = !this.audioProcessing.echoCancellation;
+    if (!(await call.setEchoCancellation(next))) {
+      throw new Error("Couldn't change echo cancellation on your microphone.");
     }
-    await self.toggleEchoCancellation();
+    this.setAudioProcessing({ ...this.audioProcessing, echoCancellation: next });
   }
 
   async toggleAutoGain() {
-    const self = this.currentCall?.self;
-    if (!self) {
-      throw new Error('No active call');
+    const call = this.requireCurrentCall();
+    const next = !this.audioProcessing.autoGain;
+    if (!(await call.setAutoGainControl(next))) {
+      throw new Error("Couldn't change auto gain on your microphone.");
     }
-    await self.toggleAudioInputAutoGain();
+    this.setAudioProcessing({ ...this.audioProcessing, autoGain: next });
   }
 
   async toggleNoiseSuppression() {
-    const self = this.currentCall?.self;
-    if (!self) {
+    const call = this.requireCurrentCall();
+    const next = !this.audioProcessing.noiseSuppression;
+    if (!(await call.setNoiseSuppression(next))) {
+      throw new Error("Couldn't change noise suppression on your microphone.");
+    }
+    this.setAudioProcessing({ ...this.audioProcessing, noiseSuppression: next });
+  }
+
+  private requireCurrentCall(): Call {
+    if (!this.currentCall) {
       throw new Error('No active call');
     }
-    await self.toggleNoiseSuppression();
+    return this.currentCall;
   }
 
   // Browsers don't have a phone's earpiece/loudspeaker distinction -- this
@@ -1040,6 +1307,8 @@ class SignalWireService {
     this.pendingCall = null;
     this.wasIncomingCall = false;
     this.pendingTransferDestination = null;
+    // Not via setAudioProcessing() -- the store's own reset covers the UI.
+    this.audioProcessing = { ...DEFAULT_AUDIO_PROCESSING };
 
     // Clean up audio/video sinks
     this.clearAudioSink();
@@ -1053,6 +1322,13 @@ class SignalWireService {
     }
   }
 
+  // Whether a call is currently up. Used by App.tsx's beforeunload handler to
+  // decide whether tearing the session down is safe -- disconnect() wipes the
+  // attach records a reload would otherwise reattach to.
+  hasActiveCall(): boolean {
+    return this.currentCall !== null;
+  }
+
   disconnect() {
     if (!this.client) {
       console.log('Disconnect called but no client exists - ignoring');
@@ -1064,6 +1340,8 @@ class SignalWireService {
     this.cleanupCallSubscriptions();
     this.incomingCallSub?.unsubscribe();
     this.incomingCallSub = null;
+    this.reattachSub?.unsubscribe();
+    this.reattachSub = null;
     this.errorSub?.unsubscribe();
     this.errorSub = null;
     this.warningSub?.unsubscribe();

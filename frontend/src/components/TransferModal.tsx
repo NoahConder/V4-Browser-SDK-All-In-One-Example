@@ -50,7 +50,7 @@ const TransferModal: React.FC<TransferModalProps> = ({ isOpen, onClose, onTransf
             type="button"
             onClick={handleClose}
             aria-label="Close"
-            className="rounded-full p-1 text-gray-400 transition-colors hover:bg-white/10 hover:text-white"
+            className="-m-2 rounded-full p-3 text-gray-400 transition-colors hover:bg-white/10 hover:text-white"
           >
             <X size={16} />
           </button>
@@ -69,7 +69,7 @@ const TransferModal: React.FC<TransferModalProps> = ({ isOpen, onClose, onTransf
           onKeyDown={(e) => e.key === 'Enter' && handleTransfer()}
           placeholder="Number or address"
           disabled={isSubmitting}
-          className="mb-3 w-full rounded-xl border border-white/10 bg-white/[0.06] px-4 py-3 text-white outline-none placeholder:text-gray-500 disabled:opacity-50"
+          className="mb-3 w-full rounded-xl border border-white/10 bg-white/6 px-4 py-3 text-white outline-hidden placeholder:text-gray-500 disabled:opacity-50"
         />
 
         {error && <p className="mb-3 text-sm text-red-400">{error}</p>}
@@ -79,7 +79,7 @@ const TransferModal: React.FC<TransferModalProps> = ({ isOpen, onClose, onTransf
             type="button"
             onClick={handleClose}
             disabled={isSubmitting}
-            className="flex-1 rounded-xl border border-white/10 bg-white/[0.06] px-4 py-2.5 font-medium text-white transition-colors hover:bg-white/10 disabled:opacity-50"
+            className="flex-1 rounded-xl border border-white/10 bg-white/6 px-4 py-2.5 font-medium text-white transition-colors hover:bg-white/10 disabled:opacity-50"
           >
             Cancel
           </button>
@@ -87,7 +87,7 @@ const TransferModal: React.FC<TransferModalProps> = ({ isOpen, onClose, onTransf
             type="button"
             onClick={handleTransfer}
             disabled={!destination.trim() || isSubmitting}
-            className="flex-1 rounded-xl bg-gradient-to-b from-emerald-400 to-ios-green px-4 py-2.5 font-medium text-white transition-all hover:brightness-110 disabled:opacity-50"
+            className="flex-1 rounded-xl bg-linear-to-b from-emerald-400 to-ios-green px-4 py-2.5 font-medium text-white transition-all hover:brightness-110 disabled:opacity-50"
           >
             {isSubmitting ? 'Transferring…' : 'Transfer'}
           </button>

@@ -43,7 +43,7 @@ const DiagnosticsPanel: React.FC<DiagnosticsPanelProps> = ({ isOpen, onClose }) 
           type="button"
           onClick={onClose}
           aria-label="Close"
-          className="rounded-full p-1 text-gray-400 transition-colors hover:bg-white/10 hover:text-white"
+          className="-m-2 rounded-full p-3 text-gray-400 transition-colors hover:bg-white/10 hover:text-white"
         >
           <X size={16} />
         </button>
@@ -63,13 +63,13 @@ const DiagnosticsPanel: React.FC<DiagnosticsPanelProps> = ({ isOpen, onClose }) 
             onChange={(e) => setDestination(e.target.value)}
             placeholder="Number or address to test"
             disabled={isRunning}
-            className="flex-1 rounded-xl border border-white/10 bg-white/[0.06] px-3 py-2 text-sm text-white outline-none placeholder:text-gray-500 disabled:opacity-50"
+            className="flex-1 rounded-xl border border-white/10 bg-white/6 px-3 py-2 text-sm text-white outline-hidden placeholder:text-gray-500 disabled:opacity-50"
           />
           <button
             type="button"
             onClick={handleRunTest}
             disabled={!destination.trim() || isRunning}
-            className="shrink-0 rounded-xl bg-gradient-to-b from-emerald-400 to-ios-green px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
+            className="shrink-0 rounded-xl bg-linear-to-b from-emerald-400 to-ios-green px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
           >
             {isRunning ? <Loader2 size={16} className="animate-spin" /> : 'Run'}
           </button>
@@ -112,7 +112,7 @@ const DiagnosticsPanel: React.FC<DiagnosticsPanelProps> = ({ isOpen, onClose }) 
       <button
         type="button"
         onClick={downloadDiagnostics}
-        className="flex w-full items-center gap-2 rounded-xl border border-white/10 bg-white/[0.06] px-3 py-2 text-sm text-white transition-colors hover:bg-white/10"
+        className="flex w-full items-center gap-2 rounded-xl border border-white/10 bg-white/6 px-3 py-2 text-sm text-white transition-colors hover:bg-white/10"
       >
         <Download size={14} />
         Export Diagnostics

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { MediaAccessError, CallCreateError, MediaTrackError, PreflightError } from '@signalwire/js';
+import { MediaAccessError, CallCreateError, MediaTrackError, PreflightError, AuxiliaryLegCancelledError } from '@signalwire/js';
 import { signalWireService, ClientNotReadyError } from '../services/signalwire';
 import { useCallStore } from './useCallStore';
 import { callsAPI } from '../services/api';
@@ -57,6 +57,25 @@ export const useSignalWire = () => {
               isVideoCall: hasVideo,
             });
           },
+          onCallReattached: (remoteNumber, hasVideo) => {
+            // The call is already up (reload / reconnect restored it), so jump
+            // straight to the in-call screen rather than the dialing states an
+            // outbound call passes through. callStatus is left at 'connecting'
+            // until the reattached call's own status$ reports 'connected' via
+            // onCallConnected -- reattachment isn't instant, and claiming
+            // 'connected' early would show a running timer on a dead call if
+            // the reattach turns out to have failed.
+            console.log('🔔 Call reattached after reload/reconnect:', remoteNumber);
+            setCallState({
+              isInCall: true,
+              isIncoming: false,
+              remoteNumber,
+              callDirection: 'outbound',
+              callStatus: 'connecting',
+              isVideoCall: hasVideo,
+              isCameraOn: hasVideo,
+            });
+          },
           onCallEnded: (wasIncoming: boolean) => {
             console.log('🔔 Remote party ended call - returning to idle, wasIncoming:', wasIncoming);
 
@@ -88,12 +107,6 @@ export const useSignalWire = () => {
           onCanScreenShareChange: (canScreenShare: boolean) => {
             setCallState({ canScreenShare });
           },
-          onCanTransferChange: (canTransfer: boolean) => {
-            setCallState({ canTransfer });
-          },
-          onCanHoldChange: (canHold: boolean) => {
-            setCallState({ canHold });
-          },
           onScreenShareStatusChange: (status) => {
             setCallState({ screenShareStatus: status });
           },
@@ -102,6 +115,17 @@ export const useSignalWire = () => {
               isEchoCancellationOn: state.echoCancellation,
               isAutoGainOn: state.autoGain,
               isNoiseSuppressionOn: state.noiseSuppression,
+            });
+          },
+          onCallMediaError: (err) => {
+            // 'acquireLocalMedia' is the receive-only fallback: the call is
+            // up but nothing is being sent, so say so explicitly.
+            const receiveOnly = err instanceof MediaAccessError && err.operation === 'acquireLocalMedia';
+            const message = describeCallError(err);
+            setCallState({
+              callError: receiveOnly
+                ? `${message} The call is continuing, but the other side can't hear${err.media.includes('video') ? ' or see' : ''} you.`
+                : message,
             });
           },
           onQualityChange: (state) => {
@@ -148,15 +172,20 @@ export const useSignalWire = () => {
       setError(null);
       setCallState({ callError: null });
 
-      // Log call to backend
-      console.log('📝 Logging call to backend...');
-      const callData = await callsAPI.initiateCall(phoneNumber);
-      console.log('✅ Backend logged call:', callData);
+      // Log call to backend. Cosmetic (see CLAUDE.md), so it must neither
+      // delay the dial nor fail it: awaiting it first left a window where
+      // hanging up was a no-op (nothing was dialing yet) and the call was
+      // placed anyway once the request returned.
+      callsAPI.initiateCall(phoneNumber)
+        .then((callData) => console.log('✅ Backend logged call:', callData))
+        .catch((err) => console.warn('Backend call log failed (ignored):', err));
 
       // Make the actual call
       console.log('📞 Making actual call via SignalWire service...');
       const call = await signalWireService.makeCall(phoneNumber, video);
       console.log('✅ SignalWire service returned call object:', call);
+      // The user hung up while the dial was in flight; the UI already reset.
+      if (!call) return;
 
       // Call has been placed, waiting for remote to answer
       // Actual 'connected' status will come via onCallConnected callback
@@ -165,7 +194,6 @@ export const useSignalWire = () => {
       });
 
       console.log('✅ Call state updated, call should be active');
-      return callData;
     } catch (err) {
       const message = describeCallError(err);
       console.error('❌ Failed to make call:', err);
@@ -299,10 +327,9 @@ export const useSignalWire = () => {
 
   const toggleHold = async () => {
     const { isOnHold } = useCallStore.getState();
-    // Optimistic, like mute/camera -- but reverted on failure (unlike those).
-    // The UI should already gate the hold control on canHold, but this is
-    // still reachable directly, so describeCallError surfaces the specific
-    // "this call does not support hold" message rather than a generic one.
+    // Optimistic, like mute/camera -- but reverted on failure (unlike those),
+    // since toggleHold() isn't pre-checked against anything and can genuinely
+    // fail server-side.
     setCallState({ isOnHold: !isOnHold, callError: null });
 
     try {
@@ -324,16 +351,23 @@ export const useSignalWire = () => {
       if (err instanceof DOMException && err.name === 'NotAllowedError') {
         return; // User dismissed the browser's screen-share picker -- not an error.
       }
+      if (err instanceof AuxiliaryLegCancelledError) {
+        return; // Share was stopped before it finished connecting -- not an error.
+      }
       console.error('Failed to toggle screen share:', err);
       setCallState({ callError: 'Failed to start screen sharing.' });
     }
   };
 
+  // The service only updates the toggle state once the constraint actually
+  // reached the mic, so a failure leaves the switch where it was -- surface
+  // why instead of leaving it silently unresponsive.
   const toggleEchoCancellation = async () => {
     try {
       await signalWireService.toggleEchoCancellation();
     } catch (err) {
-      console.warn('Echo cancellation toggle warning:', err);
+      console.warn('Echo cancellation toggle failed:', err);
+      setCallState({ callError: describeCallError(err) });
     }
   };
 
@@ -341,7 +375,8 @@ export const useSignalWire = () => {
     try {
       await signalWireService.toggleAutoGain();
     } catch (err) {
-      console.warn('Auto gain toggle warning:', err);
+      console.warn('Auto gain toggle failed:', err);
+      setCallState({ callError: describeCallError(err) });
     }
   };
 
@@ -349,7 +384,8 @@ export const useSignalWire = () => {
     try {
       await signalWireService.toggleNoiseSuppression();
     } catch (err) {
-      console.warn('Noise suppression toggle warning:', err);
+      console.warn('Noise suppression toggle failed:', err);
+      setCallState({ callError: describeCallError(err) });
     }
   };
 

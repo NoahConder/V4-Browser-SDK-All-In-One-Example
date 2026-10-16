@@ -54,8 +54,6 @@ const CallScreen: React.FC<CallScreenProps> = ({
   const callError = useCallStore((s) => s.callError);
   const isOnHold = useCallStore((s) => s.isOnHold);
   const canScreenShare = useCallStore((s) => s.canScreenShare);
-  const canTransfer = useCallStore((s) => s.canTransfer);
-  const canHold = useCallStore((s) => s.canHold);
   const screenShareStatus = useCallStore((s) => s.screenShareStatus);
   const isEchoCancellationOn = useCallStore((s) => s.isEchoCancellationOn);
   const isAutoGainOn = useCallStore((s) => s.isAutoGainOn);
@@ -119,11 +117,11 @@ const CallScreen: React.FC<CallScreenProps> = ({
   const showVideoUI = isVideoCall || isCameraOn || remoteHasVideo;
 
   return (
-    <div className="app-shell flex flex-col h-screen">
+    <div className="app-shell flex flex-col h-dvh">
       {/* Status Bar - always visible */}
-      <div className="glass-bar relative flex items-center justify-between px-6 py-2 text-sm">
+      <div className="glass-bar relative flex items-center justify-between px-4 py-2 text-sm sm:px-6">
         <span className="text-ios-green">●</span>
-        <span className="absolute left-1/2 transform -translate-x-1/2 font-medium tracking-wide text-gray-400">
+        <span className="pointer-events-none absolute left-1/2 -translate-x-1/2 font-medium tracking-wide text-gray-400">
           SignalWire
         </span>
         <div className="flex items-center gap-2">
@@ -133,7 +131,7 @@ const CallScreen: React.FC<CallScreenProps> = ({
               {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
             </span>
             {activeSubscriberName && (
-              <span className="max-w-[6rem] truncate text-[10px] text-gray-500">{activeSubscriberName}</span>
+              <span className="max-w-24 truncate text-[10px] text-gray-500">{activeSubscriberName}</span>
             )}
           </div>
         </div>
@@ -165,12 +163,12 @@ const CallScreen: React.FC<CallScreenProps> = ({
         )}
 
         {showDialPad ? (
-          <>
+          <div className="relative z-10 flex flex-1 flex-col min-h-0 overflow-y-auto short:flex-row short:items-center">
             {/* DTMF Display - matches idle dialer's address input styling */}
-            <div className="relative z-10 flex-1 flex items-center justify-center px-6 py-4 min-h-0">
+            <div className="flex-1 flex items-center justify-center px-6 py-4 short:px-4">
               <div className="glass-panel flex w-full max-w-sm items-center justify-center rounded-2xl px-4 py-3">
                 {dialPadInput ? (
-                  <div className="text-2xl sm:text-3xl font-light tracking-wide">
+                  <div className="min-w-0 text-2xl sm:text-3xl font-light tracking-wide wrap-anywhere">
                     {dialPadInput}
                   </div>
                 ) : (
@@ -180,7 +178,7 @@ const CallScreen: React.FC<CallScreenProps> = ({
             </div>
 
             {/* Dial Pad with Hide button */}
-            <div className="relative z-10 pb-6 sm:pb-8">
+            <div className="pb-6 sm:pb-8 short:flex-1 short:py-2">
               <DialPad
                 onKeyPress={handleDialPadKey}
                 onCall={() => setShowDialPad(false)} // Hide button
@@ -191,19 +189,19 @@ const CallScreen: React.FC<CallScreenProps> = ({
                 callButtonText="Hide"
               />
             </div>
-          </>
+          </div>
         ) : (
-          <>
+          <div className="relative z-10 flex flex-1 flex-col min-h-0 overflow-y-auto short:flex-row short:items-center">
             {/* Call Info */}
-            <div className="relative z-10 flex-1 flex flex-col justify-center items-center px-4 py-4 min-h-0">
+            <div className="flex-1 flex flex-col justify-center items-center px-4 py-4 short:self-stretch">
               {!showVideoUI && (
-                <div className="mb-6 flex h-24 w-24 items-center justify-center rounded-full bg-gradient-to-b from-white/10 to-white/[0.02] ring-1 ring-white/10 shadow-[0_8px_24px_rgba(0,0,0,0.4)]">
+                <div className="mb-6 flex h-24 w-24 short:hidden items-center justify-center rounded-full bg-linear-to-b from-white/10 to-white/2 ring-1 ring-white/10 shadow-[0_8px_24px_rgba(0,0,0,0.4)]">
                   <Phone size={36} className="text-gray-300" />
                 </div>
               )}
               <div
-                className={`text-center ${
-                  showVideoUI ? 'mt-auto w-full bg-gradient-to-t from-black/70 to-transparent px-4 pb-4 pt-10' : ''
+                className={`max-w-full text-center ${
+                  showVideoUI ? 'mt-auto w-full bg-linear-to-t from-black/70 to-transparent px-4 pb-4 pt-10' : ''
                 }`}
               >
                 <div className="mb-2 inline-flex items-center gap-2 text-sm text-gray-400">
@@ -212,7 +210,7 @@ const CallScreen: React.FC<CallScreenProps> = ({
                   )}
                   {isOnHold ? 'On Hold' : callStatus === 'connected' ? 'Connected' : 'Calling…'}
                 </div>
-                <div className="text-2xl sm:text-3xl font-light mb-4">{phoneNumber}</div>
+                <div className="text-2xl sm:text-3xl font-light mb-4 wrap-anywhere">{phoneNumber}</div>
                 <div className="inline-block rounded-full bg-white/5 px-3 py-1 text-lg sm:text-xl text-gray-300 tabular-nums">
                   {formatDuration(callDuration)}
                 </div>
@@ -220,16 +218,18 @@ const CallScreen: React.FC<CallScreenProps> = ({
             </div>
 
             {/* Call Controls - Bottom buttons */}
-            <div className="relative z-10 pb-6 sm:pb-8">
+            <div className="pb-6 sm:pb-8 short:flex-1 short:py-2">
               <div className="flex justify-center items-center w-full px-4">
-                <div className="grid grid-cols-3 gap-3 sm:gap-4" style={{ maxWidth: '260px' }}>
+                <div className="grid grid-cols-3 gap-3 sm:gap-4 short:gap-2" style={{ maxWidth: '260px' }}>
                   {/* Mute Button */}
                   <button
                     onClick={onToggleMute}
+                    aria-label={isMuted ? 'Unmute' : 'Mute'}
+                    aria-pressed={isMuted}
                     className={`dial-button border transition-all ${
                       isMuted
                         ? 'bg-white text-black border-white'
-                        : 'bg-white/[0.06] text-white border-white/10 backdrop-blur-md hover:bg-white/10'
+                        : 'bg-white/6 text-white border-white/10 backdrop-blur-md hover:bg-white/10'
                     }`}
                   >
                     {isMuted ? <MicOff size={24} /> : <Mic size={24} />}
@@ -238,7 +238,8 @@ const CallScreen: React.FC<CallScreenProps> = ({
                   {/* Keypad Button */}
                   <button
                     onClick={() => setShowDialPad(true)}
-                    className="dial-button border border-white/10 bg-white/[0.06] backdrop-blur-md hover:bg-white/10"
+                    aria-label="Keypad"
+                    className="dial-button border border-white/10 bg-white/6 backdrop-blur-md hover:bg-white/10"
                   >
                     <Keyboard size={24} />
                   </button>
@@ -246,10 +247,12 @@ const CallScreen: React.FC<CallScreenProps> = ({
                   {/* Speaker Button */}
                   <button
                     onClick={onToggleSpeaker}
+                    aria-label="Speaker"
+                    aria-pressed={isSpeakerOn}
                     className={`dial-button border transition-all ${
                       isSpeakerOn
                         ? 'bg-white text-black border-white'
-                        : 'bg-white/[0.06] text-white border-white/10 backdrop-blur-md hover:bg-white/10'
+                        : 'bg-white/6 text-white border-white/10 backdrop-blur-md hover:bg-white/10'
                     }`}
                   >
                     {isSpeakerOn ? <Volume2 size={24} /> : <VolumeX size={24} />}
@@ -258,10 +261,12 @@ const CallScreen: React.FC<CallScreenProps> = ({
                   {/* Camera Button */}
                   <button
                     onClick={onToggleCamera}
+                    aria-label={isCameraOn ? 'Turn camera off' : 'Turn camera on'}
+                    aria-pressed={isCameraOn}
                     className={`dial-button border transition-all ${
                       isCameraOn
                         ? 'bg-white text-black border-white'
-                        : 'bg-white/[0.06] text-white border-white/10 backdrop-blur-md hover:bg-white/10'
+                        : 'bg-white/6 text-white border-white/10 backdrop-blur-md hover:bg-white/10'
                     }`}
                   >
                     {isCameraOn ? <Video size={24} /> : <VideoOff size={24} />}
@@ -270,7 +275,8 @@ const CallScreen: React.FC<CallScreenProps> = ({
                   {/* End Call Button */}
                   <button
                     onClick={onEndCall}
-                    className="dial-button bg-gradient-to-b from-red-500 to-ios-red shadow-[0_4px_16px_rgba(255,59,48,0.35)] hover:brightness-110"
+                    aria-label="End call"
+                    className="dial-button bg-linear-to-b from-red-500 to-ios-red shadow-[0_4px_16px_rgba(255,59,48,0.35)] hover:brightness-110"
                   >
                     <PhoneOff size={32} fill="white" />
                   </button>
@@ -279,14 +285,14 @@ const CallScreen: React.FC<CallScreenProps> = ({
                   <button
                     onClick={() => setIsControlsSheetOpen(true)}
                     aria-label="More call controls"
-                    className="dial-button border border-white/10 bg-white/[0.06] backdrop-blur-md hover:bg-white/10"
+                    className="dial-button border border-white/10 bg-white/6 backdrop-blur-md hover:bg-white/10"
                   >
                     <MoreHorizontal size={24} />
                   </button>
                 </div>
               </div>
             </div>
-          </>
+          </div>
         )}
 
         <CallControlsSheet
@@ -302,8 +308,6 @@ const CallScreen: React.FC<CallScreenProps> = ({
             setIsControlsSheetOpen(false);
             setIsDevicePickerOpen(true);
           }}
-          canHold={canHold}
-          canTransfer={canTransfer}
           canScreenShare={canScreenShare}
           screenShareStatus={screenShareStatus}
           onToggleScreenShare={toggleScreenShare}
@@ -321,7 +325,12 @@ const CallScreen: React.FC<CallScreenProps> = ({
           onTransfer={transferCall}
         />
 
-        <DevicePicker isOpen={isDevicePickerOpen} onClose={() => setIsDevicePickerOpen(false)} />
+        {isDevicePickerOpen && (
+          <div className="absolute inset-0 z-20 flex flex-col justify-center">
+            <div className="absolute inset-0 bg-black/60" onClick={() => setIsDevicePickerOpen(false)} />
+            <DevicePicker isOpen onClose={() => setIsDevicePickerOpen(false)} />
+          </div>
+        )}
       </div>
     </div>
   );

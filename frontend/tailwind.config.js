@@ -6,6 +6,11 @@ export default {
   ],
   theme: {
     extend: {
+      screens: {
+        // Phones in landscape (and other very short viewports): layouts switch
+        // from a stacked column to side-by-side so nothing overlaps or scrolls.
+        short: { raw: '(max-height: 500px)' },
+      },
       colors: {
         'ios-gray': {
           900: '#1c1c1e',

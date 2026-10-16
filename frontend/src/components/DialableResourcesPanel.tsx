@@ -46,14 +46,14 @@ const DialableResourcesPanel: React.FC<DialableResourcesPanelProps> = ({ isOpen,
   return (
     <div className="glass-panel mx-auto mt-2 max-h-64 w-[calc(100%-2rem)] max-w-sm overflow-y-auto rounded-2xl px-4 py-3">
       <div className="mb-2 flex items-center justify-between">
-        <div className="flex items-center gap-1 rounded-full bg-white/[0.06] p-0.5 text-xs font-medium uppercase tracking-wider">
+        <div className="flex items-center gap-1 rounded-full bg-white/6 p-0.5 text-xs font-medium uppercase tracking-wider">
           {TABS.map((tab) => (
             <button
               key={tab.key}
               type="button"
               onClick={() => setActiveTab(tab.key)}
               aria-pressed={activeTab === tab.key}
-              className={`rounded-full px-3 py-1 transition-colors ${
+              className={`rounded-full px-3 py-2 transition-colors ${
                 activeTab === tab.key ? 'bg-white text-black' : 'text-gray-400 hover:text-white'
               }`}
             >
@@ -65,7 +65,7 @@ const DialableResourcesPanel: React.FC<DialableResourcesPanelProps> = ({ isOpen,
           type="button"
           onClick={onClose}
           aria-label="Close"
-          className="rounded-full p-1 text-gray-400 transition-colors hover:bg-white/10 hover:text-white"
+          className="-m-2 rounded-full p-3 text-gray-400 transition-colors hover:bg-white/10 hover:text-white"
         >
           <X size={14} />
         </button>

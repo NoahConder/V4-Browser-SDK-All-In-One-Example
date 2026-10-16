@@ -37,7 +37,7 @@ class ErrorBoundary extends Component<Props, State> {
     if (this.state.hasError) {
       // Fallback UI - just show loading briefly
       return (
-        <div className="flex flex-col h-screen bg-black items-center justify-center">
+        <div className="flex flex-col h-dvh bg-black items-center justify-center">
           <div className="text-center">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-ios-green mb-4 mx-auto"></div>
             <p className="text-gray-400">Recovering...</p>

@@ -280,89 +280,110 @@ const Dialer: React.FC = () => {
 
   // Show dialer
   return (
-    <div className="app-shell relative flex flex-col h-screen">
-      {/* Status Bar */}
-      <div className="glass-bar relative flex items-center justify-between px-6 py-2 text-sm">
-        <span className="text-ios-green">●</span>
-        <span className="absolute left-1/2 transform -translate-x-1/2 font-medium tracking-wide text-gray-400">SignalWire</span>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => toggleHeaderPanel('devices')}
-            aria-label="Audio & Video Devices"
-            aria-pressed={isDevicePickerOpen}
-            className={`rounded-full p-1 transition-colors hover:bg-white/10 hover:text-white ${
-              isDevicePickerOpen ? 'text-white' : 'text-gray-400'
-            }`}
-          >
-            <SlidersHorizontal size={16} />
-          </button>
-          <button
-            type="button"
-            onClick={() => toggleHeaderPanel('diagnostics')}
-            aria-label="Diagnostics"
-            aria-pressed={isDiagnosticsPanelOpen}
-            className={`rounded-full p-1 transition-colors hover:bg-white/10 hover:text-white ${
-              isDiagnosticsPanelOpen ? 'text-white' : 'text-gray-400'
-            }`}
-          >
-            <Activity size={16} />
-          </button>
-          <button
-            type="button"
-            onClick={() => toggleHeaderPanel('resources')}
-            aria-label="Dialable Resources"
-            aria-pressed={isResourcesPanelOpen}
-            className={`rounded-full p-1 transition-colors hover:bg-white/10 hover:text-white ${
-              isResourcesPanelOpen ? 'text-white' : 'text-gray-400'
-            }`}
-          >
-            <List size={16} />
-          </button>
-          <button
-            type="button"
-            onClick={() => toggleHeaderPanel('subscriber')}
-            aria-label="Subscriber"
-            aria-pressed={isSubscriberPanelOpen}
-            className={`rounded-full p-1 transition-colors hover:bg-white/10 hover:text-white ${
-              isSubscriberPanelOpen ? 'text-white' : 'text-gray-400'
-            }`}
-          >
-            <User size={16} />
-          </button>
-          <div className="flex flex-col items-end leading-tight">
-            <span className="text-gray-400">{new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-            {activeSubscriberName && (
-              <span className="max-w-[6rem] truncate text-[10px] text-gray-500">{activeSubscriberName}</span>
-            )}
+    <div className="app-shell relative flex flex-col h-dvh">
+      {/* Status Bar + header panels. z-30 so the panels (positioned absolutely
+          just below the bar) overlay the dial pad instead of pushing it down. */}
+      <div className="relative z-30">
+        <div className="glass-bar relative flex items-center justify-between px-4 py-1 text-sm sm:px-6">
+          <span className="text-ios-green">●</span>
+          {/* Hidden on phones: centered, it collides with the four header icons
+              and swallows taps meant for them. */}
+          <span className="pointer-events-none absolute left-1/2 hidden -translate-x-1/2 font-medium tracking-wide text-gray-400 sm:block">SignalWire</span>
+          <div className="flex items-center">
+            <button
+              type="button"
+              onClick={() => toggleHeaderPanel('devices')}
+              aria-label="Audio & Video Devices"
+              aria-pressed={isDevicePickerOpen}
+              className={`flex h-10 w-10 items-center justify-center rounded-full transition-colors hover:bg-white/10 hover:text-white ${
+                isDevicePickerOpen ? 'text-white' : 'text-gray-400'
+              }`}
+            >
+              <SlidersHorizontal size={18} />
+            </button>
+            <button
+              type="button"
+              onClick={() => toggleHeaderPanel('diagnostics')}
+              aria-label="Diagnostics"
+              aria-pressed={isDiagnosticsPanelOpen}
+              className={`flex h-10 w-10 items-center justify-center rounded-full transition-colors hover:bg-white/10 hover:text-white ${
+                isDiagnosticsPanelOpen ? 'text-white' : 'text-gray-400'
+              }`}
+            >
+              <Activity size={18} />
+            </button>
+            <button
+              type="button"
+              onClick={() => toggleHeaderPanel('resources')}
+              aria-label="Dialable Resources"
+              aria-pressed={isResourcesPanelOpen}
+              className={`flex h-10 w-10 items-center justify-center rounded-full transition-colors hover:bg-white/10 hover:text-white ${
+                isResourcesPanelOpen ? 'text-white' : 'text-gray-400'
+              }`}
+            >
+              <List size={18} />
+            </button>
+            <button
+              type="button"
+              onClick={() => toggleHeaderPanel('subscriber')}
+              aria-label="Subscriber"
+              aria-pressed={isSubscriberPanelOpen}
+              className={`flex h-10 w-10 items-center justify-center rounded-full transition-colors hover:bg-white/10 hover:text-white ${
+                isSubscriberPanelOpen ? 'text-white' : 'text-gray-400'
+              }`}
+            >
+              <User size={18} />
+            </button>
+            <div className="ml-1 flex flex-col items-end leading-tight">
+              <span className="text-gray-400">{new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+              {activeSubscriberName && (
+                <span className="max-w-24 truncate text-[10px] text-gray-500">{activeSubscriberName}</span>
+              )}
+            </div>
           </div>
+        </div>
+
+        <div className="absolute inset-x-0 top-full">
+          {/* Dims the dial pad behind an open panel; tap outside to close. -z-10
+              keeps it under the status bar (inside this z-30 layer) so the header
+              icons stay tappable for switching panels. */}
+          {activeHeaderPanel && (
+            <div className="fixed inset-0 -z-10 bg-black/60" onClick={() => setActiveHeaderPanel(null)} />
+          )}
+
+          <SubscriberPicker isOpen={isSubscriberPanelOpen} onClose={() => setActiveHeaderPanel(null)} />
+
+          <DialableResourcesPanel
+            isOpen={isResourcesPanelOpen}
+            onClose={() => setActiveHeaderPanel(null)}
+            onSelectAddress={(path, video) => {
+              setPhoneNumber(path);
+              setWantsVideo(video);
+              setActiveHeaderPanel(null);
+            }}
+          />
+
+          <DevicePicker isOpen={isDevicePickerOpen} onClose={() => setActiveHeaderPanel(null)} />
+
+          <DiagnosticsPanel isOpen={isDiagnosticsPanelOpen} onClose={() => setActiveHeaderPanel(null)} />
         </div>
       </div>
 
-      <SubscriberPicker isOpen={isSubscriberPanelOpen} onClose={() => setActiveHeaderPanel(null)} />
-
-      <DialableResourcesPanel
-        isOpen={isResourcesPanelOpen}
-        onClose={() => setActiveHeaderPanel(null)}
-        onSelectAddress={(path, video) => {
-          setPhoneNumber(path);
-          setWantsVideo(video);
-          setActiveHeaderPanel(null);
-        }}
-      />
-
-      <DevicePicker isOpen={isDevicePickerOpen} onClose={() => setActiveHeaderPanel(null)} />
-
-      <DiagnosticsPanel isOpen={isDiagnosticsPanelOpen} onClose={() => setActiveHeaderPanel(null)} />
-
-      {callError && (
-        <ErrorBanner message={callError} onDismiss={() => setCallState({ callError: null })} />
-      )}
-
-      {/* Main Content Container */}
-      <div className="flex-1 flex flex-col min-h-0">
+      {/* Main Content Container -- scrolls rather than overlapping if it ever
+          outgrows the screen; side-by-side on short (landscape phone) screens. */}
+      <div className="flex-1 flex flex-col min-h-0 overflow-y-auto short:flex-row short:items-center">
         {/* To Address Input -- type a number, SIP URI, or Fabric address directly */}
-        <div className="flex-1 flex flex-col items-center justify-center px-6 py-4 min-h-0">
+        <div className="flex-1 flex flex-col items-center justify-center px-6 py-4 short:px-4">
+          {/* In this column (not a full-width row above it) so it takes space
+              from the address area rather than pushing the dial pad off small
+              and landscape screens. */}
+          {callError && (
+            <ErrorBanner
+              message={callError}
+              onDismiss={() => setCallState({ callError: null })}
+              className="mb-3 w-full"
+            />
+          )}
           <div
             className={`glass-panel flex w-full max-w-sm items-center gap-3 rounded-2xl px-4 py-3 transition-colors ${
               isAddressInputFocused ? 'border-white/25 bg-white/[0.07]' : ''
@@ -386,7 +407,7 @@ const Dialer: React.FC = () => {
               onBlur={() => setIsAddressInputFocused(false)}
               disabled={isInCall || isCallingInProgress}
               placeholder="Number or address"
-              className={`w-full min-w-0 bg-transparent font-light text-white outline-none border-none placeholder:text-gray-500 disabled:opacity-50 ${getAddressInputSizeClass(addressInputValue)}`}
+              className={`w-full min-w-0 bg-transparent font-light text-white outline-hidden border-none placeholder:text-gray-500 disabled:opacity-50 [@media(max-width:359px)]:placeholder-shown:text-sm ${getAddressInputSizeClass(addressInputValue)}`}
             />
 
             {phoneNumber && !isInCall && !isCallingInProgress && (
@@ -394,7 +415,7 @@ const Dialer: React.FC = () => {
                 type="button"
                 onClick={handleClearAll}
                 aria-label="Clear"
-                className="shrink-0 rounded-full p-1.5 text-gray-400 transition-colors hover:bg-white/10 hover:text-white"
+                className="-m-1 shrink-0 rounded-full p-2.5 text-gray-400 transition-colors hover:bg-white/10 hover:text-white"
               >
                 <X size={16} />
               </button>
@@ -410,7 +431,7 @@ const Dialer: React.FC = () => {
               className={`shrink-0 flex h-9 w-9 items-center justify-center rounded-full border transition-colors disabled:opacity-50 ${
                 wantsVideo
                   ? 'bg-white text-black border-white'
-                  : 'bg-white/[0.06] text-gray-300 border-white/10 hover:bg-white/10'
+                  : 'bg-white/6 text-gray-300 border-white/10 hover:bg-white/10'
               }`}
             >
               {wantsVideo ? <Video size={18} /> : <VideoOff size={18} />}
@@ -425,7 +446,7 @@ const Dialer: React.FC = () => {
         </div>
 
         {/* Dial Pad Container */}
-        <div className="pb-6 sm:pb-8">
+        <div className="pb-6 sm:pb-8 short:flex-1 short:py-2">
           <DialPad
             onKeyPress={handleKeyInput}
             onCall={handleCall}
