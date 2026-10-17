@@ -5,11 +5,15 @@ import {
   MediaAccessError,
   MediaTrackError,
   SelfParticipant,
+  setDebugOptions,
+  setLogLevel,
+  version as sdkVersion,
 } from '@signalwire/js';
 import type {
   AuthenticateContext,
   Call,
   CallStatus,
+  DeviceRecoveryEvent,
   Directory,
   ScreenShareStatus,
   PermissionResult,
@@ -28,6 +32,7 @@ import type { TokenData } from '../types';
 import axios from 'axios';
 import { authAPI } from './api';
 import { toneService } from './tones';
+import { loadSettings, type DialerSettings } from './settings';
 import { isDialAddress } from '../utils/address';
 
 // Thrown by makeCall()/answerCall() when client.ready$ is currently false --
@@ -169,6 +174,33 @@ export interface SignalWireCallbacks {
   // low-frequency and drive the call screen's "Reconnecting…" state.
   onRecoveryStateChange?: (state: RecoveryState) => void;
   onMediaDisruptionChange?: (disrupted: boolean) => void;
+  // client.isRegistered$: whether this subscriber is reachable for incoming
+  // calls. False under Do Not Disturb (unregister()); ready$ is unaffected.
+  onRegisteredChange?: (registered: boolean) => void;
+  // Informational, not an error: e.g. the SDK switched devices by itself
+  // after one was unplugged (client.deviceRecovered$).
+  onClientNotice?: (message: string) => void;
+}
+
+const DEVICE_KIND_LABEL: Record<DeviceRecoveryEvent['kind'], string> = {
+  audioinput: 'Microphone',
+  audiooutput: 'Speaker',
+  videoinput: 'Camera',
+};
+
+const DEVICE_RECOVERY_REASON: Record<DeviceRecoveryEvent['reason'], string> = {
+  device_disconnected: 'the previous one was disconnected',
+  device_reconnected: 'it was reconnected',
+  session_restored: 'the session was restored',
+  fallback_to_default: 'falling back to the default',
+  default_changed: 'the system default changed',
+  ambiguous_match: 'the previous one could not be matched',
+};
+
+function describeDeviceRecovery(event: DeviceRecoveryEvent): string {
+  const kind = DEVICE_KIND_LABEL[event.kind];
+  const target = event.newDevice?.label ? `"${event.newDevice.label}"` : 'another device';
+  return `${kind} switched to ${target}: ${DEVICE_RECOVERY_REASON[event.reason]}.`;
 }
 
 // What the browser does when a constraint isn't specified (and what
@@ -234,6 +266,8 @@ class SignalWireService {
   private errorSub: Subscription | null = null;
   private warningSub: Subscription | null = null;
   private readySub: Subscription | null = null;
+  private registeredSub: Subscription | null = null;
+  private deviceRecoveredSub: Subscription | null = null;
   private capabilitiesSub: Subscription | null = null;
   private screenShareCapabilitySub: Subscription | null = null;
   private callErrorsSub: Subscription | null = null;
@@ -285,6 +319,8 @@ class SignalWireService {
   private onRemoteAudioBlocked: (() => void) | null = null;
   private onRecoveryStateChange: ((state: RecoveryState) => void) | null = null;
   private onMediaDisruptionChange: ((disrupted: boolean) => void) | null = null;
+  private onRegisteredChange: ((registered: boolean) => void) | null = null;
+  private onClientNotice: ((message: string) => void) | null = null;
 
   async initialize(callbacks: SignalWireCallbacks = {}) {
     if (this.isInitializing || this.isInitialized) {
@@ -316,6 +352,8 @@ class SignalWireService {
       this.onRemoteAudioBlocked = callbacks.onRemoteAudioBlocked || null;
       this.onRecoveryStateChange = callbacks.onRecoveryStateChange || null;
       this.onMediaDisruptionChange = callbacks.onMediaDisruptionChange || null;
+      this.onRegisteredChange = callbacks.onRegisteredChange || null;
+      this.onClientNotice = callbacks.onClientNotice || null;
 
       // Create credential provider with automatic refresh
       const credentialProvider = {
@@ -367,16 +405,21 @@ class SignalWireService {
       // reload. It also must not be enabled without re-checking
       // switchSubscriber() above, which relies on authenticate() running again
       // on every page load.
+      // Tester settings (codec order, relay-only, SDK logging) come from
+      // services/settings.ts; see applySettings() for live changes.
+      const settings = loadSettings();
       this.client = new SignalWire(credentialProvider, {
         reconnectAttachedCalls: true,
+        logLevel: settings.logLevel,
+        debug: { logWsTraffic: settings.logWsTraffic },
       });
 
-      // Default all calls to G.711 (PCMU first, then PCMA). Setting this on the
-      // global client preferences applies to both outbound dials and answered
-      // inbound calls — RTCPeerConnectionController falls back to these when a
-      // call doesn't override preferredAudioCodecs. The SDK reorders the SDP so
-      // these payload types are offered ahead of Opus.
-      this.client.preferences.preferredAudioCodecs = ['PCMU', 'PCMA'];
+      // Codec order defaults to G.711 (PCMU, then PCMA, then Opus). Setting it
+      // on the global client preferences applies to both outbound dials and
+      // answered inbound calls — RTCPeerConnectionController falls back to
+      // these when a call doesn't override preferredAudioCodecs, reordering
+      // the SDP so the preferred payload types are offered first.
+      this.applyPreferences(settings);
 
       // Subscribe to errors. Most errors here are transient/best-effort (e.g.
       // the RPCTimeoutError noted in disconnect() below) and already handled
@@ -407,6 +450,19 @@ class SignalWireService {
       this.readySub = this.client.ready$.subscribe((ready) => {
         this.isReady = ready;
         this.onReadyChange?.(ready);
+      });
+
+      // Registration (reachability for incoming calls) is separate from
+      // readiness: unregister() -- Do Not Disturb -- flips this alone.
+      this.registeredSub = this.client.isRegistered$.subscribe((registered) => {
+        this.onRegisteredChange?.(registered);
+      });
+
+      // The SDK swaps devices by itself when one is unplugged/replugged or
+      // the OS default changes; say so rather than leaving the user to wonder
+      // why their audio moved.
+      this.deviceRecoveredSub = this.client.deviceRecovered$.subscribe((event) => {
+        this.onClientNotice?.(describeDeviceRecovery(event));
       });
 
       // Register for incoming calls
@@ -1602,6 +1658,38 @@ class SignalWireService {
     this.client?.selectAudioOutputDevice(device);
   }
 
+  // Live settings changes. Log settings are SDK globals and take effect at
+  // once; codec order and relay-only are read by the SDK at the next
+  // offer/answer and peer-connection creation respectively, so they apply to
+  // the next call (no reload).
+  applySettings(settings: DialerSettings) {
+    setLogLevel(settings.logLevel);
+    setDebugOptions({ logWsTraffic: settings.logWsTraffic });
+    this.applyPreferences(settings);
+  }
+
+  private applyPreferences(settings: DialerSettings) {
+    if (!this.client) return;
+    this.client.preferences.preferredAudioCodecs = settings.audioCodecOrder;
+    this.client.preferences.relayOnly = settings.relayOnly;
+  }
+
+  getSdkInfo(): { version: string; audioCodecs: readonly string[] } {
+    return { version: sdkVersion, audioCodecs: this.client?.platformCapabilities.audioCodecs ?? [] };
+  }
+
+  // Do Not Disturb: stay connected but stop receiving calls. unregister()
+  // flips isRegistered$ only -- ready$ (and the header dot) stay green.
+  // Session-only: every page load registers again in initialize().
+  async setDoNotDisturb(enabled: boolean): Promise<void> {
+    if (!this.client) throw new Error('SignalWire client not initialized');
+    if (enabled) {
+      await this.client.unregister();
+    } else {
+      await this.client.register();
+    }
+  }
+
   // The subscriber's own address book (client.directory$): other subscribers,
   // rooms, apps -- everything this identity can dial, from the SDK rather
   // than the backend's REST listings. undefined until the client is connected.
@@ -1750,6 +1838,10 @@ class SignalWireService {
     this.warningSub = null;
     this.readySub?.unsubscribe();
     this.readySub = null;
+    this.registeredSub?.unsubscribe();
+    this.registeredSub = null;
+    this.deviceRecoveredSub?.unsubscribe();
+    this.deviceRecoveredSub = null;
     this.isReady = false;
 
     if (this.currentCall) {

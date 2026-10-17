@@ -195,6 +195,12 @@ export const useSignalWire = () => {
           onMediaDisruptionChange: (isMediaDisrupted) => {
             setCallState({ isMediaDisrupted });
           },
+          onRegisteredChange: (isRegistered) => {
+            setCallState({ isRegistered });
+          },
+          onClientNotice: (clientNotice) => {
+            setCallState({ clientNotice });
+          },
           onRemoteVideoChange: (hasVideo: boolean) => {
             setCallState({ remoteHasVideo: hasVideo });
           },
@@ -515,6 +521,17 @@ export const useSignalWire = () => {
     }
   };
 
+  // Do Not Disturb (unregister/register). isRegistered follows the SDK's
+  // isRegistered$ via onRegisteredChange rather than being set here.
+  const setDoNotDisturb = async (enabled: boolean) => {
+    try {
+      await signalWireService.setDoNotDisturb(enabled);
+    } catch (err) {
+      console.warn('Do Not Disturb change failed:', err);
+      setCallState({ callError: describeCallError(err) });
+    }
+  };
+
   // One manual ICE restart, from the call-stats sheet.
   const requestIceRestart = async () => {
     try {
@@ -543,5 +560,6 @@ export const useSignalWire = () => {
     toggleAutoGain,
     toggleNoiseSuppression,
     requestIceRestart,
+    setDoNotDisturb,
   };
 };

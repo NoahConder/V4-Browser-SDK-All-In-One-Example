@@ -1,7 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { Check, Loader2, X } from 'lucide-react';
+import { SheetSwitch } from './SheetPrimitives';
 import { subscribersAPI } from '../services/api';
 import { signalWireService, switchSubscriber } from '../services/signalwire';
+import { useCallStore } from '../hooks/useCallStore';
+import { describeCallError } from '../hooks/useSignalWire';
 import type { Subscriber } from '../types';
 
 interface SubscriberPickerProps {
@@ -21,8 +24,25 @@ const SubscriberPicker: React.FC<SubscriberPickerProps> = ({ isOpen, onClose }) 
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isTogglingDnd, setIsTogglingDnd] = useState(false);
+  const isRegistered = useCallStore((s) => s.isRegistered);
+  const isClientReady = useCallStore((s) => s.isClientReady);
+  const setCallState = useCallStore((s) => s.setCallState);
 
   const activeId = signalWireService.getActiveSubscriberId();
+
+  // Do Not Disturb = unregistered. The switch reflects the SDK's
+  // isRegistered$ (via the store), not an optimistic flag.
+  const toggleDoNotDisturb = async () => {
+    setIsTogglingDnd(true);
+    try {
+      await signalWireService.setDoNotDisturb(isRegistered);
+    } catch (err) {
+      setCallState({ callError: describeCallError(err) });
+    } finally {
+      setIsTogglingDnd(false);
+    }
+  };
 
   useEffect(() => {
     if (!isOpen) return;
@@ -89,6 +109,16 @@ const SubscriberPicker: React.FC<SubscriberPickerProps> = ({ isOpen, onClose }) 
           <X size={16} />
         </button>
       </div>
+
+      <div className={isTogglingDnd || !isClientReady ? 'pointer-events-none opacity-50' : ''}>
+        <SheetSwitch
+          label="Do Not Disturb"
+          hint={isRegistered ? 'Stay connected but stop receiving calls' : 'Not receiving calls (this session only)'}
+          checked={!isRegistered}
+          onChange={toggleDoNotDisturb}
+        />
+      </div>
+      <div className="mx-3 my-1 border-t border-white/10" />
 
       {isLoading ? (
         <div className="flex items-center gap-2 px-3 py-4 text-sm text-gray-400">

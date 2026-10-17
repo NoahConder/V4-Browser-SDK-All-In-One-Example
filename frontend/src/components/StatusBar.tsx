@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { BellOff } from 'lucide-react';
 import { useCallStore } from '../hooks/useCallStore';
 
 const formatClock = (date: Date) => date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -36,6 +37,7 @@ interface StatusBarProps {
 // network blip), title, any per-screen controls, clock, and active subscriber.
 const StatusBar: React.FC<StatusBarProps> = ({ children, hasIcons = false }) => {
   const isClientReady = useCallStore((s) => s.isClientReady);
+  const isRegistered = useCallStore((s) => s.isRegistered);
   const activeSubscriberName = useCallStore((s) => s.activeSubscriberName);
   const clock = useClock();
 
@@ -53,6 +55,14 @@ const StatusBar: React.FC<StatusBarProps> = ({ children, hasIcons = false }) => 
             carries it (and the sr-only copy below covers screen readers). */}
         {!isClientReady && <span aria-hidden className="hidden text-xs text-amber-400 sm:inline">Reconnecting…</span>}
         <span className="sr-only">{isClientReady ? 'Connected' : 'Reconnecting'}</span>
+        {/* Do Not Disturb (unregistered): connected, so the dot stays green,
+            but incoming calls won't arrive. Toggled in the Subscriber panel. */}
+        {isClientReady && !isRegistered && (
+          <span title="Do Not Disturb — not receiving calls" className="flex items-center text-amber-400">
+            <BellOff size={12} aria-hidden />
+            <span className="sr-only">Do Not Disturb</span>
+          </span>
+        )}
       </span>
       <span
         className={`pointer-events-none absolute left-1/2 -translate-x-1/2 font-medium tracking-wide text-gray-400 ${

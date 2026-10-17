@@ -5,7 +5,13 @@ export interface CallState {
   // (HTMLMediaElement.setSinkId -- missing on Firefox and Safari). A fact
   // about the session, preserved across resets like isClientReady.
   canSelectAudioOutput: boolean;
+  // client.isRegistered$ -- reachable for incoming calls. False under Do Not
+  // Disturb. Session state, preserved across resets like isClientReady.
+  isRegistered: boolean;
   callError: string | null;
+  // Informational banner (device switched by the SDK, etc.), shown with an
+  // info tone. Preserved across resets like callError; dismissed explicitly.
+  clientNotice: string | null;
   isInCall: boolean;
   isIncoming: boolean;
   isMuted: boolean;

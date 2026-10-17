@@ -89,6 +89,7 @@ const Dialer: React.FC = () => {
   const isCameraOn = useCallStore((s) => s.isCameraOn);
   const remoteHasVideo = useCallStore((s) => s.remoteHasVideo);
   const callError = useCallStore((s) => s.callError);
+  const clientNotice = useCallStore((s) => s.clientNotice);
   const setCallState = useCallStore((s) => s.setCallState);
   const resetCallState = useCallStore((s) => s.resetCallState);
 
@@ -348,6 +349,14 @@ const Dialer: React.FC = () => {
             <ErrorBanner
               message={callError}
               onDismiss={() => setCallState({ callError: null })}
+              className="mb-3 w-full"
+            />
+          )}
+          {clientNotice && (
+            <ErrorBanner
+              tone="info"
+              message={clientNotice}
+              onDismiss={() => setCallState({ clientNotice: null })}
               className="mb-3 w-full"
             />
           )}

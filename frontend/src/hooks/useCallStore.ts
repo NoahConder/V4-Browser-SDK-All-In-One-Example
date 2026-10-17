@@ -10,7 +10,9 @@ const initialState: CallState = {
   isConnected: false,  // Keep false - connection status shouldn't change
   isClientReady: false,  // Preserved across resets, same as isConnected -- see resetCallState
   canSelectAudioOutput: true,  // Session fact (platformCapabilities), preserved like isClientReady
+  isRegistered: true,  // Session state (Do Not Disturb), preserved like isClientReady
   callError: null,
+  clientNotice: null,
   isInCall: false,
   isIncoming: false,
   isMuted: false,
@@ -56,6 +58,8 @@ export const useCallStore = create<CallStore>((set) => ({
         isConnected: state.isConnected,  // Preserve connection status
         isClientReady: state.isClientReady,  // Preserve live readiness across call resets
         canSelectAudioOutput: state.canSelectAudioOutput,  // Browser capability, not call state
+        isRegistered: state.isRegistered,  // Do Not Disturb is session state, not call state
+        clientNotice: state.clientNotice,  // Dismissed explicitly, like callError
         activeSubscriberName: state.activeSubscriberName,  // Session identity, not call state
         // Preserve callError -- a failed call attempt resets straight back to
         // idle (see Dialer.tsx's handleCall), and the whole point of the error

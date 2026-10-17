@@ -109,6 +109,7 @@ const CallScreen: React.FC<CallScreenProps> = ({
   } = useSignalWire();
   const callStatus = useCallStore((s) => s.callStatus);
   const callError = useCallStore((s) => s.callError);
+  const clientNotice = useCallStore((s) => s.clientNotice);
   const isOnHold = useCallStore((s) => s.isOnHold);
   const canScreenShare = useCallStore((s) => s.canScreenShare);
   const screenShareStatus = useCallStore((s) => s.screenShareStatus);
@@ -222,6 +223,9 @@ const CallScreen: React.FC<CallScreenProps> = ({
 
         {callError && (
           <ErrorBanner message={callError} onDismiss={() => setCallState({ callError: null })} />
+        )}
+        {clientNotice && (
+          <ErrorBanner tone="info" message={clientNotice} onDismiss={() => setCallState({ clientNotice: null })} />
         )}
 
         {/* The browser refused to start remote audio without a gesture (see
