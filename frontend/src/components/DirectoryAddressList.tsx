@@ -24,7 +24,7 @@ const FILTERS: Array<{ key: TypeFilter; label: string }> = [
 ];
 
 interface DirectoryAddressListProps {
-  onSelectAddress: (path: string, video: boolean) => void;
+  onSelectAddress: (path: string, video: boolean, label?: string) => void;
 }
 
 // The signed-in subscriber's address book from the SDK (client.directory$):

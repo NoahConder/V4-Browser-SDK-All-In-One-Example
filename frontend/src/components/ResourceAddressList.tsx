@@ -56,7 +56,8 @@ interface AddressRowListProps {
   error: string | null;
   hasMore: boolean;
   onLoadMore: () => void;
-  onSelectAddress: (path: string, video: boolean) => void;
+  // `label` is the row's display name, passed along for the Recents log.
+  onSelectAddress: (path: string, video: boolean, label?: string) => void;
   emptyMessage: string;
   loadingMessage: string;
   loadMoreLabel?: string;
@@ -113,7 +114,7 @@ export function AddressRowList({
           <div className="flex gap-2">
             <button
               type="button"
-              onClick={() => onSelectAddress(row.audioPath, false)}
+              onClick={() => onSelectAddress(row.audioPath, false, row.label)}
               disabled={row.disabled}
               title={row.disabled ? row.disabledReason : undefined}
               className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-white/10 bg-white/6 px-3 py-2 text-xs font-medium text-gray-200 backdrop-blur-md transition-colors hover:bg-white/15 hover:text-white active:scale-[0.97] disabled:cursor-not-allowed disabled:border-white/5 disabled:bg-white/2 disabled:text-gray-600 disabled:hover:bg-white/2"
@@ -122,7 +123,7 @@ export function AddressRowList({
             </button>
             <button
               type="button"
-              onClick={() => row.videoPath && onSelectAddress(row.videoPath, true)}
+              onClick={() => row.videoPath && onSelectAddress(row.videoPath, true, row.label)}
               disabled={!row.videoPath || row.disabled}
               title={row.disabled ? row.disabledReason : undefined}
               aria-label="Dial with video"
@@ -150,7 +151,7 @@ export function AddressRowList({
 }
 
 interface ResourceAddressListProps<T extends DialableResource> {
-  onSelectAddress: (path: string, video: boolean) => void;
+  onSelectAddress: (path: string, video: boolean, label?: string) => void;
   fetchPage: (offset: number, limit: number) => Promise<ResourcePage<T>>;
   getRowLabel: (item: T, address: DialableAddress) => string;
   emptyMessage: string;

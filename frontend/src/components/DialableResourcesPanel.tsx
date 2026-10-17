@@ -2,23 +2,27 @@ import React from 'react';
 import { X } from 'lucide-react';
 import ResourceAddressList, { type ResourcePage } from './ResourceAddressList';
 import DirectoryAddressList from './DirectoryAddressList';
+import RecentsList from './RecentsList';
 import { swmlAPI, sipAPI } from '../services/api';
 import type { SwmlScript, SipCredential, DialableAddress } from '../types';
 
-export type ResourceTab = 'directory' | 'swml' | 'sip';
+export type ResourceTab = 'directory' | 'recents' | 'swml' | 'sip';
 
 interface DialableResourcesPanelProps {
   isOpen: boolean;
-  // Controlled by Dialer so other UI (e.g. a shortcut) can open a specific tab.
+  // Controlled by Dialer so other UI (the Recents shortcut) can open a
+  // specific tab.
   activeTab: ResourceTab;
   onTabChange: (tab: ResourceTab) => void;
   onClose: () => void;
-  onSelectAddress: (path: string, video: boolean) => void;
+  // `label` is the picked entry's display name, for the Recents log.
+  onSelectAddress: (path: string, video: boolean, label?: string) => void;
 }
 
 // Short labels so the whole tab strip fits a 320px-wide phone.
 const TABS: Array<{ key: ResourceTab; label: string; title: string }> = [
   { key: 'directory', label: 'Directory', title: "This subscriber's address book (SDK directory)" },
+  { key: 'recents', label: 'Recents', title: 'Calls made and received in this browser' },
   { key: 'swml', label: 'SWML', title: 'SWML scripts in the space' },
   { key: 'sip', label: 'SIP', title: 'SIP credentials in the space' },
 ];
@@ -59,7 +63,7 @@ const DialableResourcesPanel: React.FC<DialableResourcesPanelProps> = ({
         <div
           role="tablist"
           aria-label="Dialable resources"
-          className="flex items-center gap-1 rounded-full bg-white/6 p-0.5 text-xs font-medium uppercase tracking-wider"
+          className="flex min-w-0 items-center gap-0.5 overflow-x-auto rounded-full bg-white/6 p-0.5 text-xs font-medium uppercase tracking-wider"
         >
           {TABS.map((tab) => (
             <button
@@ -71,7 +75,7 @@ const DialableResourcesPanel: React.FC<DialableResourcesPanelProps> = ({
               aria-controls="resources-tabpanel"
               title={tab.title}
               onClick={() => onTabChange(tab.key)}
-              className={`rounded-full px-3 py-2 transition-colors ${
+              className={`shrink-0 rounded-full px-2.5 py-2 transition-colors ${
                 activeTab === tab.key ? 'bg-white text-black' : 'text-gray-400 hover:text-white'
               }`}
             >
@@ -94,6 +98,8 @@ const DialableResourcesPanel: React.FC<DialableResourcesPanelProps> = ({
       <div id="resources-tabpanel" role="tabpanel" aria-labelledby={`resources-tab-${activeTab}`}>
         {activeTab === 'directory' ? (
           <DirectoryAddressList key="directory" onSelectAddress={onSelectAddress} />
+        ) : activeTab === 'recents' ? (
+          <RecentsList key="recents" onSelectAddress={onSelectAddress} />
         ) : activeTab === 'swml' ? (
           <ResourceAddressList
             key="swml"

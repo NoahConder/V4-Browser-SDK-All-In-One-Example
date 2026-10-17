@@ -115,7 +115,12 @@ export interface ConnectionStatsSnapshot {
 }
 
 export interface SignalWireCallbacks {
-  onIncomingCall?: (remoteNumber: string, hasVideo: boolean) => void;
+  // `remoteNumber` is the display caller id (fromName, else from); `from` is
+  // the raw address to redial, `callId` the SDK call id -- both for Recents.
+  onIncomingCall?: (remoteNumber: string, hasVideo: boolean, from: string | undefined, callId: string) => void;
+  // A second incoming call that arrived during a call (or a dial) and was
+  // refused automatically -- logged as missed.
+  onIncomingCallAutoRejected?: (remoteNumber: string, from: string | undefined) => void;
   // Fired when the SDK restores a call that was already up before a page
   // reload or WebSocket reconnect (see reconnectAttachedCalls in initialize).
   // The call is live by the time this fires -- the UI just has to catch up.
@@ -260,7 +265,11 @@ class SignalWireService {
   private remoteAudioRoutedToVideo: boolean = false;
 
   // Callbacks
-  private onIncomingCall: ((remoteNumber: string, hasVideo: boolean) => void) | null = null;
+  private onIncomingCall: SignalWireCallbacks['onIncomingCall'] | null = null;
+  private onIncomingCallAutoRejected: SignalWireCallbacks['onIncomingCallAutoRejected'] | null = null;
+  // Calls already auto-rejected, so a re-emission of incomingCalls$ with the
+  // same still-ringing call isn't logged as missed twice.
+  private autoRejectedCallIds = new Set<string>();
   private onCallReattached: ((remoteNumber: string, hasVideo: boolean) => void) | null = null;
   private onCallEnded: ((wasIncoming: boolean) => void) | null = null;
   private onCallConnected: (() => void) | null = null;
@@ -291,6 +300,7 @@ class SignalWireService {
 
     try {
       this.onIncomingCall = callbacks.onIncomingCall || null;
+      this.onIncomingCallAutoRejected = callbacks.onIncomingCallAutoRejected || null;
       this.onCallReattached = callbacks.onCallReattached || null;
       this.onCallEnded = callbacks.onCallEnded || null;
       this.onCallConnected = callbacks.onCallConnected || null;
@@ -408,12 +418,20 @@ class SignalWireService {
         const ringingCall = calls.find(c => c.status === 'ringing' || c.status === 'new');
         if (!ringingCall) return;
 
+        // fromName/from are public on the v4 Call type (4.0.0-rc.0)
+        const rawName = ringingCall.fromName;
+        const callerId = (rawName && rawName !== '_undef_') ? rawName : ringingCall.from || 'Unknown';
+
         // Auto-reject if already in a call -- or still placing one: while
         // dial() is in flight currentCall isn't set yet, but the UI is already
         // on the call screen, so a ringing pendingCall would be unreachable.
         if (this.currentCall || this.isDialing) {
-          console.log('Already in a call - auto-rejecting incoming call');
-          ringingCall.reject();
+          if (!this.autoRejectedCallIds.has(ringingCall.id)) {
+            this.autoRejectedCallIds.add(ringingCall.id);
+            console.log('Already in a call - auto-rejecting incoming call from', callerId);
+            this.onIncomingCallAutoRejected?.(callerId, ringingCall.from);
+            ringingCall.reject();
+          }
           return;
         }
 
@@ -421,10 +439,6 @@ class SignalWireService {
         if (this.pendingCall && this.pendingCall.id === ringingCall.id) return;
 
         this.pendingCall = ringingCall;
-
-        // fromName/from are public on the v4 Call type (4.0.0-rc.0)
-        const rawName = ringingCall.fromName;
-        const callerId = (rawName && rawName !== '_undef_') ? rawName : ringingCall.from || 'Unknown';
         console.log('Incoming call from:', callerId);
 
         // Best-effort: mediaDirections reflects the inbound SDP offer, so a
@@ -435,7 +449,7 @@ class SignalWireService {
           && ringingCall.mediaDirections.video !== 'inactive';
 
         toneService.playIncomingCallTone();
-        if (this.onIncomingCall) this.onIncomingCall(callerId, hasVideo);
+        this.onIncomingCall?.(callerId, hasVideo, ringingCall.from, ringingCall.id);
 
         // Watch for the caller hanging up before we answer
         const cleanupCanceled = () => {

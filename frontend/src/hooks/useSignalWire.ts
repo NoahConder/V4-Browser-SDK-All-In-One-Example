@@ -10,7 +10,21 @@ import {
 } from '@signalwire/js';
 import { signalWireService, ClientNotReadyError } from '../services/signalwire';
 import { useCallStore } from './useCallStore';
+import { useRecentsStore } from './useRecentsStore';
 import { callsAPI } from '../services/api';
+import { formatPhoneNumber } from '../utils/address';
+
+// Who this browser is signed in as, stamped on each Recents entry.
+const activeSubscriber = () => ({
+  subscriberId: signalWireService.getActiveSubscriberId(),
+  subscriberName: signalWireService.getActiveSubscriberDisplayName(),
+});
+
+// The in-progress Recents entry, if any.
+const activeRecent = () => {
+  const { entries, activeId } = useRecentsStore.getState();
+  return entries.find((entry) => entry.id === activeId);
+};
 
 // Turns an SDK error (or anything else a try/catch might catch) into a
 // message a user could actually act on, instead of a raw Error.message.
@@ -84,8 +98,15 @@ export const useSignalWire = () => {
     const initializeSignalWire = async () => {
       try {
         await signalWireService.initialize({
-          onIncomingCall: (remoteNumber, hasVideo) => {
-            // Handle incoming call
+          onIncomingCall: (remoteNumber, hasVideo, from, callId) => {
+            useRecentsStore.getState().start({
+              direction: 'inbound',
+              destination: from || remoteNumber,
+              label: remoteNumber,
+              video: hasVideo,
+              callId,
+              ...activeSubscriber(),
+            });
             setCallState({
               isIncoming: true,
               remoteNumber,
@@ -93,6 +114,12 @@ export const useSignalWire = () => {
               callStatus: 'ringing',
               isVideoCall: hasVideo,
             });
+          },
+          onIncomingCallAutoRejected: (remoteNumber, from) => {
+            useRecentsStore.getState().addFinished(
+              { direction: 'inbound', destination: from || remoteNumber, label: remoteNumber, video: false, ...activeSubscriber() },
+              'missed',
+            );
           },
           onCallReattached: (remoteNumber, hasVideo) => {
             // The call is already up (reload / reconnect restored it), so jump
@@ -103,6 +130,17 @@ export const useSignalWire = () => {
             // 'connected' early would show a running timer on a dead call if
             // the reattach turns out to have failed.
             console.log('🔔 Call reattached after reload/reconnect:', remoteNumber);
+            // Already connected before this page loaded; onCallEnded finishes
+            // it as answered.
+            useRecentsStore.getState().start({
+              direction: 'outbound',
+              destination: remoteNumber,
+              label: formatPhoneNumber(remoteNumber),
+              video: hasVideo,
+              connectedAt: Date.now(),
+              reattached: true,
+              ...activeSubscriber(),
+            });
             setCallState({
               isInCall: true,
               isIncoming: false,
@@ -115,6 +153,13 @@ export const useSignalWire = () => {
           },
           onCallEnded: (wasIncoming: boolean) => {
             console.log('🔔 Remote party ended call - returning to idle, wasIncoming:', wasIncoming);
+
+            // Answered if it ever connected; otherwise the caller gave up
+            // (missed) or the dial never went through (failed). The hook's
+            // own endCall/rejectCall finish their entries first, so this only
+            // settles whatever is still in progress.
+            const recent = activeRecent();
+            useRecentsStore.getState().finish(recent?.connectedAt ? 'answered' : wasIncoming ? 'missed' : 'failed');
 
             // Get the current call direction before resetting
             const { callDirection } = useCallStore.getState();
@@ -136,6 +181,7 @@ export const useSignalWire = () => {
               callStatus: 'connected',
               connectedAt: useCallStore.getState().connectedAt ?? Date.now(),
             });
+            useRecentsStore.getState().markConnected();
           },
           onCallStatusChange: (status) => {
             setCallState({ callStatus: status });
@@ -226,11 +272,20 @@ export const useSignalWire = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const makeCall = async (phoneNumber: string, video: boolean = false) => {
+  // `label` is the picked resource's display name, when the destination came
+  // from the resources panel; typed numbers are formatted for display.
+  const makeCall = async (phoneNumber: string, video: boolean = false, label?: string) => {
     try {
       console.log('📢 useSignalWire.makeCall() called with:', phoneNumber, 'video:', video);
       setError(null);
       setCallState({ callError: null });
+      useRecentsStore.getState().start({
+        direction: 'outbound',
+        destination: phoneNumber,
+        label: label ?? formatPhoneNumber(phoneNumber),
+        video,
+        ...activeSubscriber(),
+      });
 
       // Log call to backend. Cosmetic (see CLAUDE.md), so it must neither
       // delay the dial nor fail it: awaiting it first left a window where
@@ -246,6 +301,7 @@ export const useSignalWire = () => {
       console.log('✅ SignalWire service returned call object:', call);
       // The user hung up while the dial was in flight; the UI already reset.
       if (!call) return;
+      useRecentsStore.getState().setCallId(call.id);
 
       // From here call.status$ drives callStatus: 'ringing' once the far end
       // rings (onCallStatusChange), 'connected' when it answers.
@@ -263,6 +319,7 @@ export const useSignalWire = () => {
       // attempt shouldn't take over the whole app UI, just explain itself on
       // the idle dialer screen via ErrorBanner.
       setCallState({ callError: message });
+      useRecentsStore.getState().finish('failed');
       throw err;
     }
   };
@@ -270,6 +327,10 @@ export const useSignalWire = () => {
   const endCall = async () => {
     try {
       console.log('🔴 Ending call...');
+      // Hanging up before the far end answered is a cancelled call. An
+      // answered one is finished by onCallEnded, which the service fires
+      // synchronously inside endCall().
+      if (!activeRecent()?.connectedAt) useRecentsStore.getState().finish('cancelled');
       await signalWireService.endCall();
       resetCallState();
       setError(null);  // Clear any errors
@@ -304,6 +365,7 @@ export const useSignalWire = () => {
       // incoming-call screen. callError survives resetCallState() and
       // explains what happened once back on the dialer.
       const message = describeCallError(err);
+      useRecentsStore.getState().finish('failed');
       resetCallState();
       setCallState({ callError: message });
     }
@@ -312,6 +374,7 @@ export const useSignalWire = () => {
   const rejectCall = async () => {
     try {
       console.log('🚫 Rejecting incoming call...');
+      useRecentsStore.getState().finish('declined');
       await signalWireService.rejectCall();
       resetCallState();
       setError(null);  // Clear any errors

@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Activity, AtSign, List, Phone, Slash, SlidersHorizontal, User, Video, VideoOff, X } from 'lucide-react';
+import { Activity, AtSign, History, List, Phone, Slash, SlidersHorizontal, User, Video, VideoOff, X } from 'lucide-react';
 import DialPad from './DialPad';
 import StatusBar from './StatusBar';
 import CallScreen from './CallScreen';
@@ -10,6 +10,7 @@ import DiagnosticsPanel from './DiagnosticsPanel';
 import SubscriberPicker from './SubscriberPicker';
 import ErrorBanner from './ErrorBanner';
 import { useCallStore } from '../hooks/useCallStore';
+import { useRecentsStore } from '../hooks/useRecentsStore';
 import { useSignalWire } from '../hooks/useSignalWire';
 import { type DialAddressType, countDigits, formatPhoneNumber, getDialAddressType, isDialAddress } from '../utils/address';
 
@@ -69,10 +70,11 @@ const Dialer: React.FC = () => {
   const [resourcesTab, setResourcesTab] = useState<ResourceTab>('directory');
   const addressInputRef = useRef<HTMLInputElement>(null);
   const [addressFontSize, setAddressFontSize] = useState(ADDRESS_FONT_SIZES_PX[0]);
-  const [lastDialedNumber, setLastDialedNumber] = useState(() => {
-    // Load last dialed number from localStorage
-    return localStorage.getItem('lastDialedNumber') || '';
-  });
+  // The display name of a destination picked from the resources panel, kept
+  // only while the field still holds that destination (editing it by hand
+  // makes the label stale). Passed to makeCall for the Recents log.
+  const [picked, setPicked] = useState<{ destination: string; label: string } | null>(null);
+  const pickedLabel = picked && picked.destination === phoneNumber ? picked.label : undefined;
 
   // Selector-based (not `useCallStore()`) so this component only re-renders
   // when a field it actually reads changes -- not on every call-quality tick
@@ -92,13 +94,6 @@ const Dialer: React.FC = () => {
 
   const { makeCall, endCall, answerCall, rejectCall, toggleMute, toggleCamera, toggleSpeaker } = useSignalWire();
 
-  // Save last dialed number to localStorage whenever it changes
-  useEffect(() => {
-    if (lastDialedNumber) {
-      localStorage.setItem('lastDialedNumber', lastDialedNumber);
-    }
-  }, [lastDialedNumber]);
-
   const handleKeyInput = (key: string) => {
     if (phoneNumber.length < 128) {  // Long enough for SIP URIs / Fabric addresses
       setPhoneNumber((prev) => prev + key);
@@ -116,7 +111,6 @@ const Dialer: React.FC = () => {
   const handleCall = async () => {
     console.log('📢 handleCall() triggered');
     console.log('Current phoneNumber:', phoneNumber);
-    console.log('Last dialed number:', lastDialedNumber);
 
     // Prevent multiple simultaneous calls
     if (isCallingInProgress) {
@@ -124,11 +118,17 @@ const Dialer: React.FC = () => {
       return;
     }
 
-    // If no number is entered but we have a last dialed number, just populate it
-    if (!phoneNumber && lastDialedNumber) {
-      console.log('🔄 Populating with last dialed number:', lastDialedNumber);
-      setPhoneNumber(lastDialedNumber);
-      return; // Don't dial, just populate
+    // Empty field + Call, like iOS: fill in the last outbound destination
+    // (and whether it was a video call) rather than dialing.
+    if (!phoneNumber) {
+      const lastOutbound = useRecentsStore.getState().entries.find((entry) => entry.direction === 'outbound');
+      if (lastOutbound) {
+        console.log('🔄 Populating with last dialed destination:', lastOutbound.destination);
+        setPhoneNumber(lastOutbound.destination);
+        setWantsVideo(lastOutbound.video);
+        setPicked({ destination: lastOutbound.destination, label: lastOutbound.label });
+      }
+      return;
     }
 
     // If a number is entered, dial it. SIP URIs and Fabric addresses can be
@@ -136,7 +136,6 @@ const Dialer: React.FC = () => {
     // the 7-digit sanity check (digits only -- "555-1234" has 7).
     if (phoneNumber && (isDialAddress(phoneNumber) || countDigits(phoneNumber) >= 7)) {
       console.log('📞 Dialing:', phoneNumber);
-      setLastDialedNumber(phoneNumber);
       setIsCallingInProgress(true);
 
       // Immediately set the call state to show the call screen
@@ -154,7 +153,7 @@ const Dialer: React.FC = () => {
       });
 
       try {
-        await makeCall(phoneNumber, wantsVideo);
+        await makeCall(phoneNumber, wantsVideo, pickedLabel);
         console.log('✅ makeCall completed');
       } catch (error) {
         console.error('❌ makeCall failed:', error);
@@ -323,9 +322,10 @@ const Dialer: React.FC = () => {
             activeTab={resourcesTab}
             onTabChange={setResourcesTab}
             onClose={() => setActiveHeaderPanel(null)}
-            onSelectAddress={(path, video) => {
+            onSelectAddress={(path, video, label) => {
               setPhoneNumber(path);
               setWantsVideo(video);
+              setPicked(label ? { destination: path, label } : null);
               setActiveHeaderPanel(null);
             }}
           />
@@ -391,6 +391,23 @@ const Dialer: React.FC = () => {
                 className="-m-1 shrink-0 rounded-full p-2.5 text-gray-400 transition-colors hover:bg-white/10 hover:text-white"
               >
                 <X size={16} />
+              </button>
+            )}
+
+            {/* Shortcut to the Recents tab; takes the Clear button's slot
+                while the field is empty. */}
+            {!phoneNumber && (
+              <button
+                type="button"
+                onClick={() => {
+                  setResourcesTab('recents');
+                  setActiveHeaderPanel('resources');
+                }}
+                aria-label="Recent calls"
+                title="Recent calls"
+                className="-m-1 shrink-0 rounded-full p-2.5 text-gray-400 transition-colors hover:bg-white/10 hover:text-white"
+              >
+                <History size={16} />
               </button>
             )}
 
