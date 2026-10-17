@@ -39,7 +39,7 @@ test.describe('Directory tab', () => {
     await page.click('button[aria-label="Dialable Resources"]');
   });
 
-  test('lists the subscriber address book with badges, (you), filter and paging', async ({ page }) => {
+  test('lists the address book with badges and (you); filters load the whole directory', async ({ page }) => {
     const tabs = page.locator('[role="tab"]');
     await expect(tabs).toHaveText(['Directory', 'Recents', 'SWML', 'SIP']);
     await expect(tabs.first()).toHaveAttribute('aria-selected', 'true');
@@ -53,14 +53,24 @@ test.describe('Directory tab', () => {
     await expect(panel).toContainText('Subscriber');
     await expect(panel).toContainText('Room');
     await expect(row(page, 'swdialer (you)').locator('button:has-text("Audio")')).toBeDisabled();
+    // Page 1 only so far: "All" offers manual paging.
+    await expect(page.locator('button:has-text("Load more")')).toHaveCount(1);
 
+    // A type filter keeps loading pages until the directory is exhausted
+    // (the real one is name-sorted, 100 per page, apps first).
     await page.click('button:has-text("Rooms")');
+    await expect.poll(() => drainLog(page)).toEqual([['loadMore']]);
     await expect(row(page, 'Team Room')).toBeVisible();
     await expect(row(page, 'Alice')).toHaveCount(0);
-    await page.click('button:has-text("All")');
+    await expect(row(page, 'IVR App')).toHaveCount(0);
 
-    await page.click('button:has-text("Load more")');
-    await expect.poll(() => drainLog(page)).toEqual([['loadMore']]);
+    await page.click('button:has-text("Subscribers")');
+    await expect(row(page, 'Alice')).toBeVisible();
+    await expect(row(page, 'swdialer (you)')).toBeVisible();
+    await expect(row(page, 'Team Room')).toHaveCount(0);
+
+    // Everything is loaded now, so "All" shows page 2 with nothing left to load.
+    await page.click('button:has-text("All")');
     await expect(row(page, 'IVR App')).toBeVisible();
     await expect(page.locator('button:has-text("Load more")')).toHaveCount(0);
   });

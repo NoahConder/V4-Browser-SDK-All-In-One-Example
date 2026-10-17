@@ -70,6 +70,16 @@ function DirectoryAddressList({ onSelectAddress }: DirectoryAddressListProps) {
     return () => sub.unsubscribe();
   }, []);
 
+  // A type filter is only useful over the whole directory: the SDK pages it
+  // 100 at a time sorted by name with no server-side type filter, and apps
+  // dominate (the test space had 387 entries with 2 subscribers and 3 rooms,
+  // which sat two or three pages deep). So while a filter is active, keep
+  // loading until the SDK says there's no more; "All" keeps manual paging.
+  useEffect(() => {
+    if (filter === 'all' || !hasMore || isLoading) return;
+    directoryRef.current?.loadMore();
+  }, [filter, hasMore, isLoading]);
+
   const ownAddressIds = signalWireService.getOwnAddressIds();
   const ownSubscriberId = signalWireService.getActiveSubscriberId();
 
@@ -115,10 +125,12 @@ function DirectoryAddressList({ onSelectAddress }: DirectoryAddressListProps) {
       </div>
       <AddressRowList
         rows={isAvailable ? rows : []}
-        isLoading={isLoading && addresses.length === 0}
-        isLoadingMore={isLoading && addresses.length > 0}
+        // Spinner while nothing is loaded yet, or while a filter is still
+        // auto-loading pages and hasn't found a match.
+        isLoading={isLoading && (addresses.length === 0 || (filter !== 'all' && rows.length === 0))}
+        isLoadingMore={isLoading && addresses.length > 0 && (filter === 'all' || rows.length > 0)}
         error={null}
-        hasMore={isAvailable && hasMore}
+        hasMore={isAvailable && hasMore && filter === 'all'}
         onLoadMore={() => directoryRef.current?.loadMore()}
         onSelectAddress={onSelectAddress}
         emptyMessage={
