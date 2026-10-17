@@ -4,7 +4,7 @@ import DialPad from './DialPad';
 import StatusBar from './StatusBar';
 import CallScreen from './CallScreen';
 import IncomingCall from './IncomingCall';
-import DialableResourcesPanel from './DialableResourcesPanel';
+import DialableResourcesPanel, { type ResourceTab } from './DialableResourcesPanel';
 import DevicePicker from './DevicePicker';
 import DiagnosticsPanel from './DiagnosticsPanel';
 import SubscriberPicker from './SubscriberPicker';
@@ -64,6 +64,9 @@ const Dialer: React.FC = () => {
   const isSubscriberPanelOpen = activeHeaderPanel === 'subscriber';
   const toggleHeaderPanel = (panel: HeaderPanel) =>
     setActiveHeaderPanel((prev) => (prev === panel ? null : panel));
+  // The resources panel's tab is owned here so shortcuts can open a specific
+  // one; it also survives closing and reopening the panel.
+  const [resourcesTab, setResourcesTab] = useState<ResourceTab>('directory');
   const addressInputRef = useRef<HTMLInputElement>(null);
   const [addressFontSize, setAddressFontSize] = useState(ADDRESS_FONT_SIZES_PX[0]);
   const [lastDialedNumber, setLastDialedNumber] = useState(() => {
@@ -317,6 +320,8 @@ const Dialer: React.FC = () => {
 
           <DialableResourcesPanel
             isOpen={isResourcesPanelOpen}
+            activeTab={resourcesTab}
+            onTabChange={setResourcesTab}
             onClose={() => setActiveHeaderPanel(null)}
             onSelectAddress={(path, video) => {
               setPhoneNumber(path);

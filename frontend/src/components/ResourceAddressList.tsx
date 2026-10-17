@@ -12,6 +12,143 @@ export interface ResourcePage<T extends DialableResource> {
   hasMore: boolean;
 }
 
+const PAGE_SIZE = 10;
+
+// One dialable row: a label, the audio dial URL, and the video dial URL when
+// the address has a distinct one.
+export interface AddressRow {
+  key: string;
+  label: string;
+  audioPath: string;
+  videoPath: string | null;
+  // Small tag after the label (the Directory tab shows the resource type).
+  badge?: { label: string; className: string };
+  // Listed but not dialable (the Directory entry for yourself).
+  disabled?: boolean;
+  disabledReason?: string;
+}
+
+// Every address carries one dial URL per channel (audio/video/messaging), each
+// already including the right `?channel=...` query string. Default to the
+// audio channel; only surface a separate video option when it's a distinct URL.
+// (Not exported: a non-component export here would break Fast Refresh.)
+function rowsFor<T extends DialableResource>(
+  items: T[],
+  getRowLabel: (item: T, address: DialableAddress) => string,
+): AddressRow[] {
+  const rows: AddressRow[] = [];
+  for (const item of items) {
+    for (const address of item.addresses) {
+      const audioPath = address.channels.audio ?? Object.values(address.channels)[0];
+      if (!audioPath) continue;
+      const videoPath =
+        address.channels.video && address.channels.video !== audioPath ? address.channels.video : null;
+      rows.push({ key: `${item.id}-${address.id}`, label: getRowLabel(item, address), audioPath, videoPath });
+    }
+  }
+  return rows;
+}
+
+interface AddressRowListProps {
+  rows: AddressRow[];
+  isLoading: boolean;
+  isLoadingMore: boolean;
+  error: string | null;
+  hasMore: boolean;
+  onLoadMore: () => void;
+  onSelectAddress: (path: string, video: boolean) => void;
+  emptyMessage: string;
+  loadingMessage: string;
+  loadMoreLabel?: string;
+}
+
+// Presentational list shared by the REST-backed tabs (ResourceAddressList
+// below) and the SDK-backed Directory tab, which own their loading state.
+export function AddressRowList({
+  rows,
+  isLoading,
+  isLoadingMore,
+  error,
+  hasMore,
+  onLoadMore,
+  onSelectAddress,
+  emptyMessage,
+  loadingMessage,
+  loadMoreLabel = `Load ${PAGE_SIZE} more`,
+}: AddressRowListProps) {
+  if (isLoading) {
+    return (
+      <div className="flex items-center gap-2 py-4 text-sm text-gray-400">
+        <Loader2 size={16} className="animate-spin" /> {loadingMessage}
+      </div>
+    );
+  }
+
+  if (error) {
+    return <div className="py-4 text-sm text-red-400">{error}</div>;
+  }
+
+  if (rows.length === 0) {
+    return <div className="py-4 text-sm text-gray-400">{emptyMessage}</div>;
+  }
+
+  return (
+    <div className="space-y-1">
+      {rows.map((row) => (
+        <div key={row.key} className="rounded-lg px-2 py-2 transition-colors hover:bg-white/6">
+          <div className="mb-1.5 flex flex-col">
+            <span className="flex min-w-0 items-center gap-2">
+              <span className="truncate text-sm font-medium text-white">{row.label}</span>
+              {row.badge && (
+                <span
+                  className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider ${row.badge.className}`}
+                >
+                  {row.badge.label}
+                </span>
+              )}
+            </span>
+            <span className="truncate text-xs text-gray-500">{row.audioPath}</span>
+          </div>
+
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => onSelectAddress(row.audioPath, false)}
+              disabled={row.disabled}
+              title={row.disabled ? row.disabledReason : undefined}
+              className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-white/10 bg-white/6 px-3 py-2 text-xs font-medium text-gray-200 backdrop-blur-md transition-colors hover:bg-white/15 hover:text-white active:scale-[0.97] disabled:cursor-not-allowed disabled:border-white/5 disabled:bg-white/2 disabled:text-gray-600 disabled:hover:bg-white/2"
+            >
+              <Phone size={13} /> Audio
+            </button>
+            <button
+              type="button"
+              onClick={() => row.videoPath && onSelectAddress(row.videoPath, true)}
+              disabled={!row.videoPath || row.disabled}
+              title={row.disabled ? row.disabledReason : undefined}
+              aria-label="Dial with video"
+              className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-white/10 bg-white/6 px-3 py-2 text-xs font-medium text-gray-200 backdrop-blur-md transition-colors hover:bg-white/15 hover:text-white active:scale-[0.97] disabled:cursor-not-allowed disabled:border-white/5 disabled:bg-white/2 disabled:text-gray-600 disabled:hover:bg-white/2"
+            >
+              <Video size={13} /> Video
+            </button>
+          </div>
+        </div>
+      ))}
+
+      {hasMore && (
+        <button
+          type="button"
+          onClick={onLoadMore}
+          disabled={isLoadingMore}
+          className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg py-2.5 text-xs font-medium text-gray-400 transition-colors hover:bg-white/10 hover:text-white disabled:opacity-50"
+        >
+          {isLoadingMore ? <Loader2 size={14} className="animate-spin" /> : null}
+          {isLoadingMore ? 'Loading...' : loadMoreLabel}
+        </button>
+      )}
+    </div>
+  );
+}
+
 interface ResourceAddressListProps<T extends DialableResource> {
   onSelectAddress: (path: string, video: boolean) => void;
   fetchPage: (offset: number, limit: number) => Promise<ResourcePage<T>>;
@@ -20,32 +157,8 @@ interface ResourceAddressListProps<T extends DialableResource> {
   loadingMessage: string;
 }
 
-const PAGE_SIZE = 10;
-
-interface AddressRow<T extends DialableResource> {
-  item: T;
-  address: DialableAddress;
-  audioPath: string;
-  videoPath: string | null;
-}
-
-// Every address carries one dial URL per channel (audio/video/messaging), each
-// already including the right `?channel=...` query string. Default to the
-// audio channel; only surface a separate video option when it's a distinct URL.
-function rowsFor<T extends DialableResource>(items: T[]): Array<AddressRow<T>> {
-  const rows: Array<AddressRow<T>> = [];
-  for (const item of items) {
-    for (const address of item.addresses) {
-      const audioPath = address.channels.audio ?? Object.values(address.channels)[0];
-      if (!audioPath) continue;
-      const videoPath =
-        address.channels.video && address.channels.video !== audioPath ? address.channels.video : null;
-      rows.push({ item, address, audioPath, videoPath });
-    }
-  }
-  return rows;
-}
-
+// REST-backed list (SWML Scripts, SIP Credentials): fetches offset/limit
+// pages from the backend and renders them with AddressRowList.
 function ResourceAddressList<T extends DialableResource>({
   onSelectAddress,
   fetchPage,
@@ -105,70 +218,18 @@ function ResourceAddressList<T extends DialableResource>({
       });
   };
 
-  if (isLoading) {
-    return (
-      <div className="flex items-center gap-2 py-4 text-sm text-gray-400">
-        <Loader2 size={16} className="animate-spin" /> {loadingMessage}
-      </div>
-    );
-  }
-
-  if (error) {
-    return <div className="py-4 text-sm text-red-400">{error}</div>;
-  }
-
-  const rows = rowsFor(items);
-
-  if (rows.length === 0) {
-    return <div className="py-4 text-sm text-gray-400">{emptyMessage}</div>;
-  }
-
   return (
-    <div className="space-y-1">
-      {rows.map(({ item, address, audioPath, videoPath }) => (
-        <div key={`${item.id}-${address.id}`} className="rounded-lg px-2 py-2 transition-colors hover:bg-white/6">
-          <div className="mb-1.5 flex flex-col">
-            <span className="truncate text-sm font-medium text-white">{getRowLabel(item, address)}</span>
-            <span className="truncate text-xs text-gray-500">{audioPath}</span>
-          </div>
-
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => onSelectAddress(audioPath, false)}
-              className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-white/10 bg-white/6 px-3 py-2 text-xs font-medium text-gray-200 backdrop-blur-md transition-colors hover:bg-white/15 hover:text-white active:scale-[0.97]"
-            >
-              <Phone size={13} /> Audio
-            </button>
-            <button
-              type="button"
-              onClick={() => videoPath && onSelectAddress(videoPath, true)}
-              disabled={!videoPath}
-              aria-label="Dial with video"
-              className={`flex flex-1 items-center justify-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-medium backdrop-blur-md transition-colors active:scale-[0.97] ${
-                videoPath
-                  ? 'border-white/10 bg-white/6 text-gray-200 hover:bg-white/15 hover:text-white'
-                  : 'cursor-not-allowed border-white/5 bg-white/2 text-gray-600'
-              }`}
-            >
-              <Video size={13} /> Video
-            </button>
-          </div>
-        </div>
-      ))}
-
-      {hasMore && (
-        <button
-          type="button"
-          onClick={handleLoadMore}
-          disabled={isLoadingMore}
-          className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg py-2.5 text-xs font-medium text-gray-400 transition-colors hover:bg-white/10 hover:text-white disabled:opacity-50"
-        >
-          {isLoadingMore ? <Loader2 size={14} className="animate-spin" /> : null}
-          {isLoadingMore ? 'Loading...' : 'Load 10 more'}
-        </button>
-      )}
-    </div>
+    <AddressRowList
+      rows={rowsFor(items, getRowLabel)}
+      isLoading={isLoading}
+      isLoadingMore={isLoadingMore}
+      error={error}
+      hasMore={hasMore}
+      onLoadMore={handleLoadMore}
+      onSelectAddress={onSelectAddress}
+      emptyMessage={emptyMessage}
+      loadingMessage={loadingMessage}
+    />
   );
 }
 

@@ -10,6 +10,7 @@ import type {
   AuthenticateContext,
   Call,
   CallStatus,
+  Directory,
   ScreenShareStatus,
   PermissionResult,
   PreflightOptions,
@@ -1585,6 +1586,20 @@ class SignalWireService {
   setPreferredAudioOutputDevice(device: MediaDeviceInfo | null) {
     this.preferredOutputDevice = device;
     this.client?.selectAudioOutputDevice(device);
+  }
+
+  // The subscriber's own address book (client.directory$): other subscribers,
+  // rooms, apps -- everything this identity can dial, from the SDK rather
+  // than the backend's REST listings. undefined until the client is connected.
+  // Nothing is fetched until the Directory tab subscribes to it.
+  getDirectory$(): Observable<Directory | undefined> {
+    return this.client?.directory$ ?? of(undefined);
+  }
+
+  // Ids of this subscriber's own fabric addresses, so the Directory tab can
+  // mark (and not offer to dial) yourself.
+  getOwnAddressIds(): Set<string> {
+    return new Set((this.client?.user?.addresses ?? []).map((address) => address.id));
   }
 
   // Thin passthroughs for the device picker -- nothing outside this file

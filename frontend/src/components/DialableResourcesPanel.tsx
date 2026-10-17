@@ -1,20 +1,26 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { X } from 'lucide-react';
 import ResourceAddressList, { type ResourcePage } from './ResourceAddressList';
+import DirectoryAddressList from './DirectoryAddressList';
 import { swmlAPI, sipAPI } from '../services/api';
 import type { SwmlScript, SipCredential, DialableAddress } from '../types';
 
+export type ResourceTab = 'directory' | 'swml' | 'sip';
+
 interface DialableResourcesPanelProps {
   isOpen: boolean;
+  // Controlled by Dialer so other UI (e.g. a shortcut) can open a specific tab.
+  activeTab: ResourceTab;
+  onTabChange: (tab: ResourceTab) => void;
   onClose: () => void;
   onSelectAddress: (path: string, video: boolean) => void;
 }
 
-type ResourceTab = 'swml' | 'sip';
-
-const TABS: Array<{ key: ResourceTab; label: string }> = [
-  { key: 'swml', label: 'SWML Scripts' },
-  { key: 'sip', label: 'SIP Credentials' },
+// Short labels so the whole tab strip fits a 320px-wide phone.
+const TABS: Array<{ key: ResourceTab; label: string; title: string }> = [
+  { key: 'directory', label: 'Directory', title: "This subscriber's address book (SDK directory)" },
+  { key: 'swml', label: 'SWML', title: 'SWML scripts in the space' },
+  { key: 'sip', label: 'SIP', title: 'SIP credentials in the space' },
 ];
 
 // Module-scope (referentially stable) so ResourceAddressList's fetch effect
@@ -38,21 +44,33 @@ const getSwmlRowLabel = (_script: SwmlScript, address: DialableAddress): string 
 const getSipRowLabel = (credential: SipCredential, address: DialableAddress): string =>
   `${credential.sip_endpoint.username} · ${address.display_name || address.name}`;
 
-const DialableResourcesPanel: React.FC<DialableResourcesPanelProps> = ({ isOpen, onClose, onSelectAddress }) => {
-  const [activeTab, setActiveTab] = useState<ResourceTab>('swml');
-
+const DialableResourcesPanel: React.FC<DialableResourcesPanelProps> = ({
+  isOpen,
+  activeTab,
+  onTabChange,
+  onClose,
+  onSelectAddress,
+}) => {
   if (!isOpen) return null;
 
   return (
-    <div className="glass-panel mx-auto mt-2 max-h-64 w-[calc(100%-2rem)] max-w-sm overflow-y-auto rounded-2xl px-4 py-3">
-      <div className="mb-2 flex items-center justify-between">
-        <div className="flex items-center gap-1 rounded-full bg-white/6 p-0.5 text-xs font-medium uppercase tracking-wider">
+    <div className="glass-panel mx-auto mt-2 max-h-72 w-[calc(100%-2rem)] max-w-sm overflow-y-auto rounded-2xl px-4 py-3">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <div
+          role="tablist"
+          aria-label="Dialable resources"
+          className="flex items-center gap-1 rounded-full bg-white/6 p-0.5 text-xs font-medium uppercase tracking-wider"
+        >
           {TABS.map((tab) => (
             <button
               key={tab.key}
               type="button"
-              onClick={() => setActiveTab(tab.key)}
-              aria-pressed={activeTab === tab.key}
+              role="tab"
+              id={`resources-tab-${tab.key}`}
+              aria-selected={activeTab === tab.key}
+              aria-controls="resources-tabpanel"
+              title={tab.title}
+              onClick={() => onTabChange(tab.key)}
               className={`rounded-full px-3 py-2 transition-colors ${
                 activeTab === tab.key ? 'bg-white text-black' : 'text-gray-400 hover:text-white'
               }`}
@@ -71,25 +89,31 @@ const DialableResourcesPanel: React.FC<DialableResourcesPanelProps> = ({ isOpen,
         </button>
       </div>
 
-      {activeTab === 'swml' ? (
-        <ResourceAddressList
-          key="swml"
-          fetchPage={fetchSwmlPage}
-          getRowLabel={getSwmlRowLabel}
-          onSelectAddress={onSelectAddress}
-          emptyMessage="No SWML scripts found in this space."
-          loadingMessage="Loading scripts..."
-        />
-      ) : (
-        <ResourceAddressList
-          key="sip"
-          fetchPage={fetchSipPage}
-          getRowLabel={getSipRowLabel}
-          onSelectAddress={onSelectAddress}
-          emptyMessage="No SIP credentials found in this space."
-          loadingMessage="Loading credentials..."
-        />
-      )}
+      {/* Each list is keyed by tab so switching remounts it (fresh fetch for the
+          REST tabs; the Directory is cached by the SDK and re-renders instantly). */}
+      <div id="resources-tabpanel" role="tabpanel" aria-labelledby={`resources-tab-${activeTab}`}>
+        {activeTab === 'directory' ? (
+          <DirectoryAddressList key="directory" onSelectAddress={onSelectAddress} />
+        ) : activeTab === 'swml' ? (
+          <ResourceAddressList
+            key="swml"
+            fetchPage={fetchSwmlPage}
+            getRowLabel={getSwmlRowLabel}
+            onSelectAddress={onSelectAddress}
+            emptyMessage="No SWML scripts found in this space."
+            loadingMessage="Loading scripts..."
+          />
+        ) : (
+          <ResourceAddressList
+            key="sip"
+            fetchPage={fetchSipPage}
+            getRowLabel={getSipRowLabel}
+            onSelectAddress={onSelectAddress}
+            emptyMessage="No SIP credentials found in this space."
+            loadingMessage="Loading credentials..."
+          />
+        )}
+      </div>
     </div>
   );
 };
