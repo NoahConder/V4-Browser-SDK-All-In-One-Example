@@ -20,6 +20,12 @@ export const countDigits = (value: string): number => (value.match(/\d/g) ?? [])
 // Display-only formatting (the dial path normalizes separately, to E.164).
 // US numbers get (555) 123-4567; anything else is shown as typed.
 export const formatPhoneNumber = (number: string): string => {
+  // A browser-to-browser caller arrives as "subscriber://<name>" (observed on
+  // 4.0.0-rc.5); show the name. Not a dial address, so only for display.
+  const subscriber = /^subscriber:\/\/(.+)$/i.exec(number);
+  if (subscriber) {
+    return subscriber[1];
+  }
   // SIP URIs and Fabric addresses aren't phone numbers -- display as typed.
   if (isDialAddress(number)) {
     return number;

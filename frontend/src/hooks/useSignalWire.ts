@@ -50,6 +50,16 @@ export const describeCallError = (err: unknown): string => {
     return `A problem occurred with your ${err.kind} device.`;
   }
   if (err instanceof CallCreateError) {
+    // The SDK wraps the server's refusal; its JSON body (with a `code`) is in
+    // the underlying error's message. Observed on a real call to a subscriber
+    // in Do Not Disturb: 422 "no_devices_or_registrations".
+    const detail = String((err.error as { message?: unknown } | undefined)?.message ?? err.error ?? '');
+    if (/no_devices_or_registrations/.test(detail)) {
+      return "The destination isn't online: it has no registered devices, or it's in Do Not Disturb.";
+    }
+    if (/timeout/i.test(err.message)) {
+      return 'The call timed out while being set up.';
+    }
     return "Couldn't start the call.";
   }
   if (err instanceof PreflightError) {

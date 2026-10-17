@@ -61,9 +61,13 @@ test('in-call sheets are modal dialogs; the status line is a live region', async
   await expect(page.locator('[aria-live="polite"]:has-text("Connected")')).toHaveCount(1);
 });
 
-test('incoming call: Enter answers, Escape declines', async ({ page }) => {
+test('incoming call: Enter answers, Escape declines; subscriber caller ids are shown by name', async ({ page }) => {
   await openDialer(page);
   await stubCallMethods(page);
+  // A browser-to-browser caller arrives as "subscriber://<name>" (seen on a real call).
+  await setState(page, { isInCall: false, isIncoming: true, callStatus: 'ringing', remoteNumber: 'subscriber://noah-test' });
+  await expect(page.locator('.select-text:has-text("noah-test")')).toBeVisible();
+  await expect(page.locator('text=subscriber://')).toHaveCount(0);
   await setState(page, { isInCall: false, isIncoming: true, callStatus: 'ringing', remoteNumber: '+15551234567' });
   await expect(page.locator('button[aria-label="Accept"]')).toBeVisible();
   await page.keyboard.press('Enter');
