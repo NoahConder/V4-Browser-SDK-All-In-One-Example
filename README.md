@@ -50,7 +50,7 @@ This fork diverges from [briankwest/swdialer](https://github.com/briankwest/swdi
 - ✅ "Reconnecting…" during media loss, deferring to the SDK's own recovery before giving up on a call
 - ✅ Pre-call network diagnostics (with options), diagnostics export, and SDK settings: codec order, log level, WebSocket tracing, relay-only media
 - ✅ Directory of everything the subscriber can dial (other subscribers, rooms, SIP endpoints, SWML scripts), Recents with redial, and browsers for the space's SWML scripts and SIP credentials
-- ✅ Subscriber picker to act as any subscriber in the space, and Do Not Disturb
+- ✅ Subscribers panel: call any subscriber's browser (audio or video), switch the dialer to act as one, and Do Not Disturb
 - ✅ Installable (PWA manifest and icons), keyboard shortcuts, and dialogs that trap and return focus
 - ✅ Automatic token refresh: the SDK calls the backend's refresh endpoint about 80% into each token's lifetime
 - ✅ Microphone permission prompt, inline error banners, and an error boundary for unexpected failures
@@ -128,7 +128,7 @@ npm run dev                       # http://localhost:5173, proxies /api to :5001
 3. Type a phone number, SIP URI (`sip:user@domain`), or Fabric address (`/public/room`), or pick one from the resources panel (list icon in the header): **Directory** lists everything this subscriber can dial — tap **Subscribers** to find the other browsers (each subscriber's address is `/private/<name>`), **Rooms** for video rooms — **Recents** lists calls made and received in this browser, and **SWML**/**SIP** list the space's scripts and credentials. Toggle the camera button in the address field for a video call, then press the green call button (or Enter). With an empty field, the call button fills in the last number you dialed.
 4. Incoming calls show a full-screen accept/decline screen (Enter accepts, Escape declines).
 5. In a call: the keypad sends DTMF once connected (also from your keyboard), `m` toggles mute, and tapping the signal icon in the header opens live call statistics. More → Hold, Transfer, Screen Share (on room calls), devices and audio processing.
-6. To act as a different subscriber, open the Subscriber panel (person icon). The page reloads under the new identity. The same panel has a Do Not Disturb switch (stay connected, stop receiving calls).
+6. The Subscribers panel (person icon) lists the space's subscribers with their `/private/<name>` addresses: **Audio**/**Video** fill the dial field to call that subscriber's browser, **Switch** reloads the dialer signed in as them, and the Do Not Disturb switch at the top stops this browser from receiving calls while staying connected. (Calling a subscriber whose browser is closed or in Do Not Disturb is refused by the server; the dialer says so.)
 7. Diagnostics (pulse icon) runs a pre-call connection test and holds the SDK settings: audio codec order, SDK log level, WebSocket tracing, relay-only media and app debug logs. Log settings apply at once; codec and relay settings apply to the next call.
 
 ## Development
@@ -153,7 +153,7 @@ The app's own console logging is off by default; turn on "App debug logs" in Dia
 | `GET /health` | Health check with configuration status |
 | `POST /api/auth/token` | Mint a subscriber token for the browser SDK. Requires `X-API-Key`; rate limited |
 | `POST /api/auth/refresh` | Mint a fresh token (called by the SDK before expiry). Requires `X-API-Key`; rate limited |
-| `GET /api/subscribers` | List the space's subscribers (id, display name, email). Requires `X-API-Key`; rate limited. `limit` ≤ 50 |
+| `GET /api/subscribers` | List the space's subscribers (id, display name, email, dialable addresses). Requires `X-API-Key`; rate limited. `limit` ≤ 50 |
 | `GET /api/swml/scripts` | Paginated SWML scripts with their dialable addresses. `limit` ≤ 50 |
 | `GET /api/sip/credentials` | Paginated SIP credentials with their dialable addresses. `limit` ≤ 50 |
 | `POST /api/calls/dial` | Records an outbound call in the in-memory log (the call itself is placed by the browser) |

@@ -49,6 +49,48 @@ function rowsFor<T extends DialableResource>(
   return rows;
 }
 
+const DIAL_BUTTON_CLASS =
+  'flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-white/10 bg-white/6 px-3 py-2 text-xs font-medium text-gray-200 backdrop-blur-md transition-colors hover:bg-white/15 hover:text-white active:scale-[0.97] disabled:cursor-not-allowed disabled:border-white/5 disabled:bg-white/2 disabled:text-gray-600 disabled:hover:bg-white/2';
+
+interface DialButtonsProps {
+  audioPath: string;
+  videoPath: string | null;
+  // Display name passed along to onSelectAddress for the Recents log.
+  label: string;
+  disabled?: boolean;
+  disabledReason?: string;
+  onSelectAddress: (path: string, video: boolean, label?: string) => void;
+}
+
+// The Audio / Video pair under every dialable row (Directory, SWML, SIP,
+// Recents, Subscribers). Video is disabled when there's no distinct video
+// channel; both are disabled for a row that can't be dialed (yourself).
+export function DialButtons({ audioPath, videoPath, label, disabled, disabledReason, onSelectAddress }: DialButtonsProps) {
+  return (
+    <div className="flex gap-2">
+      <button
+        type="button"
+        onClick={() => onSelectAddress(audioPath, false, label)}
+        disabled={disabled}
+        title={disabled ? disabledReason : undefined}
+        className={DIAL_BUTTON_CLASS}
+      >
+        <Phone size={13} /> Audio
+      </button>
+      <button
+        type="button"
+        onClick={() => videoPath && onSelectAddress(videoPath, true, label)}
+        disabled={!videoPath || disabled}
+        title={disabled ? disabledReason : undefined}
+        aria-label="Dial with video"
+        className={DIAL_BUTTON_CLASS}
+      >
+        <Video size={13} /> Video
+      </button>
+    </div>
+  );
+}
+
 interface AddressRowListProps {
   rows: AddressRow[];
   isLoading: boolean;
@@ -111,27 +153,14 @@ export function AddressRowList({
             <span className="truncate text-xs text-gray-500">{row.audioPath}</span>
           </div>
 
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => onSelectAddress(row.audioPath, false, row.label)}
-              disabled={row.disabled}
-              title={row.disabled ? row.disabledReason : undefined}
-              className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-white/10 bg-white/6 px-3 py-2 text-xs font-medium text-gray-200 backdrop-blur-md transition-colors hover:bg-white/15 hover:text-white active:scale-[0.97] disabled:cursor-not-allowed disabled:border-white/5 disabled:bg-white/2 disabled:text-gray-600 disabled:hover:bg-white/2"
-            >
-              <Phone size={13} /> Audio
-            </button>
-            <button
-              type="button"
-              onClick={() => row.videoPath && onSelectAddress(row.videoPath, true, row.label)}
-              disabled={!row.videoPath || row.disabled}
-              title={row.disabled ? row.disabledReason : undefined}
-              aria-label="Dial with video"
-              className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-white/10 bg-white/6 px-3 py-2 text-xs font-medium text-gray-200 backdrop-blur-md transition-colors hover:bg-white/15 hover:text-white active:scale-[0.97] disabled:cursor-not-allowed disabled:border-white/5 disabled:bg-white/2 disabled:text-gray-600 disabled:hover:bg-white/2"
-            >
-              <Video size={13} /> Video
-            </button>
-          </div>
+          <DialButtons
+            audioPath={row.audioPath}
+            videoPath={row.videoPath}
+            label={row.label}
+            disabled={row.disabled}
+            disabledReason={row.disabledReason}
+            onSelectAddress={onSelectAddress}
+          />
         </div>
       ))}
 

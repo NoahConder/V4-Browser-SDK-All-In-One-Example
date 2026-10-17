@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Check, Loader2, X } from 'lucide-react';
 import { SheetSwitch } from './SheetPrimitives';
+import { DialButtons } from './ResourceAddressList';
 import { subscribersAPI } from '../services/api';
 import { signalWireService, switchSubscriber } from '../services/signalwire';
 import { useCallStore } from '../hooks/useCallStore';
@@ -11,15 +12,20 @@ import type { Subscriber } from '../types';
 interface SubscriberPickerProps {
   isOpen: boolean;
   onClose: () => void;
+  // Fills the dial field with a subscriber's address (browser-to-browser
+  // call); same handler as the resources panel.
+  onSelectAddress: (path: string, video: boolean, label?: string) => void;
 }
 
 const PAGE_SIZE = 10;
 
-// Picking a subscriber persists the choice and reloads the page (see
-// switchSubscriber in signalwire.ts) -- the SignalWire client authenticates
-// as a fixed identity at construction time and is never re-initialized in
-// place, so there's no in-session way to "become" someone else.
-const SubscriberPicker: React.FC<SubscriberPickerProps> = ({ isOpen, onClose }) => {
+// Two things per subscriber: *call* it (Audio/Video fill the dial field with
+// its /private/<name> address) or *become* it ("Switch"). Switching persists
+// the choice and reloads the page (see switchSubscriber in signalwire.ts) --
+// the SignalWire client authenticates as a fixed identity at construction
+// time and is never re-initialized in place, so there's no in-session way to
+// "become" someone else.
+const SubscriberPicker: React.FC<SubscriberPickerProps> = ({ isOpen, onClose, onSelectAddress }) => {
   const [subscribers, setSubscribers] = useState<Subscriber[]>([]);
   const [hasMore, setHasMore] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -94,21 +100,16 @@ const SubscriberPicker: React.FC<SubscriberPickerProps> = ({ isOpen, onClose }) 
       });
   };
 
-  const handleSelect = (subscriber: Subscriber) => {
-    if (subscriber.id === activeId) return;
-    switchSubscriber(subscriber.id);
-  };
-
   return (
     <div
       ref={dialogRef}
       role="dialog"
       aria-modal="true"
       aria-labelledby="subscriber-title"
-      className="glass-panel relative z-10 mx-auto mt-2 max-h-64 w-[calc(100%-2rem)] max-w-sm overflow-y-auto rounded-2xl px-2 py-2"
+      className="glass-panel relative z-10 mx-auto mt-2 max-h-72 w-[calc(100%-2rem)] max-w-sm overflow-y-auto rounded-2xl px-2 py-2"
     >
       <div className="flex items-center justify-between px-3 py-2">
-        <span id="subscriber-title" className="text-xs font-medium uppercase tracking-wider text-gray-400">Subscriber</span>
+        <span id="subscriber-title" className="text-xs font-medium uppercase tracking-wider text-gray-400">Subscribers</span>
         <button
           type="button"
           onClick={onClose}
@@ -141,22 +142,48 @@ const SubscriberPicker: React.FC<SubscriberPickerProps> = ({ isOpen, onClose }) 
         <div className="space-y-0.5">
           {subscribers.map((subscriber) => {
             const isActive = subscriber.id === activeId;
+            // A subscriber normally has one address with audio and video channels.
+            const address = subscriber.addresses.find((a) => a.channels.audio) ?? subscriber.addresses[0];
+            const audioPath = address?.channels.audio ?? null;
+            const videoPath = address?.channels.video && address.channels.video !== audioPath ? address.channels.video : null;
             return (
-              <button
-                key={subscriber.id}
-                type="button"
-                onClick={() => handleSelect(subscriber)}
-                disabled={isActive}
-                className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition-colors hover:bg-white/10 disabled:hover:bg-transparent"
-              >
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm text-white">{subscriber.display_name}</span>
-                  {subscriber.email && (
-                    <span className="block truncate text-xs text-gray-500">{subscriber.email}</span>
+              <div key={subscriber.id} className="rounded-xl px-3 py-2 transition-colors hover:bg-white/6">
+                <div className="flex items-center gap-3">
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm text-white">
+                      {subscriber.display_name}
+                      {isActive && <span className="text-gray-500"> (you)</span>}
+                    </span>
+                    <span className="block truncate text-xs text-gray-500">
+                      {audioPath ? audioPath.replace(/\?channel=.*$/, '') : subscriber.email ?? ''}
+                    </span>
+                  </span>
+                  {isActive ? (
+                    <Check size={16} className="shrink-0 text-ios-green" aria-label="Signed in as this subscriber" />
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => switchSubscriber(subscriber.id)}
+                      title="Reload the dialer signed in as this subscriber"
+                      className="shrink-0 rounded-full px-2.5 py-1 text-xs font-medium text-gray-300 transition-colors hover:bg-white/10 hover:text-white"
+                    >
+                      Switch
+                    </button>
                   )}
-                </span>
-                {isActive && <Check size={16} className="shrink-0 text-ios-green" />}
-              </button>
+                </div>
+                {audioPath && (
+                  <div className="mt-1.5">
+                    <DialButtons
+                      audioPath={audioPath}
+                      videoPath={videoPath}
+                      label={subscriber.display_name}
+                      disabled={isActive}
+                      disabledReason="This is the subscriber you're signed in as"
+                      onSelectAddress={onSelectAddress}
+                    />
+                  </div>
+                )}
+              </div>
             );
           })}
 

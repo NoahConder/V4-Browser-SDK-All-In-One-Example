@@ -170,6 +170,14 @@ class SignalWireClient:
         """
         return self._get_all_pages(f"{self.api_base}/resources/subscribers")
 
+    def list_subscriber_addresses(self, subscriber_id: str) -> list:
+        """
+        List the dialable addresses for a given subscriber (its /private/<name>
+        Fabric address, with audio and video channels).
+        https://signalwire.com/docs/apis/rest/subscribers/list-subscriber-addresses
+        """
+        return self._get_all_pages(f"{self.api_base}/resources/subscribers/{subscriber_id}/addresses")
+
     @staticmethod
     def is_dial_address(destination: str) -> bool:
         """

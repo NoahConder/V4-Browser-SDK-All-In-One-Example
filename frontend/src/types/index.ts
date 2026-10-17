@@ -118,4 +118,6 @@ export interface Subscriber {
   id: string;
   display_name: string;
   email: string | null;
+  // The subscriber's dialable Fabric addresses (normally one, /private/<name>).
+  addresses: DialableAddress[];
 }

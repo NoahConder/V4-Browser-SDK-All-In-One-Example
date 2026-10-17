@@ -2,6 +2,7 @@ import os
 from flask import Blueprint, jsonify, request
 from utils.signalwire import get_client
 from utils.security import api_key_ok, rate_limited, client_ip, bounded_page
+from concurrent.futures import ThreadPoolExecutor
 import logging
 import time
 
@@ -13,6 +14,7 @@ subscribers_bp = Blueprint('subscribers', __name__)
 # same way as the token endpoints instead of being left open.
 _subscribers_cache = {"data": None, "expires_at": 0}
 CACHE_TTL_SECONDS = 60
+ADDRESS_FETCH_WORKERS = 10
 
 
 def _gate():
@@ -58,7 +60,27 @@ def display_name_for(subscriber: dict) -> str:
     )
 
 
-def _to_public_shape(subscriber: dict) -> dict:
+def _public_address(address: dict) -> dict:
+    return {
+        "id": address.get('id'),
+        "name": address.get('name'),
+        "display_name": address.get('display_name'),
+        "channels": address.get('channels') or {},
+    }
+
+
+def _fetch_addresses(subscriber: dict) -> list:
+    """The subscriber's dialable Fabric addresses (one REST call per
+    subscriber, so only done for the requested page). Lets the picker offer
+    to *call* a subscriber, not just to become one."""
+    try:
+        return [_public_address(a) for a in get_client().list_subscriber_addresses(subscriber['id'])]
+    except Exception as e:
+        logger.warning(f"Failed to load addresses for subscriber {subscriber.get('id')}: {e}")
+        return []
+
+
+def _to_public_shape(subscriber: dict, addresses: list) -> dict:
     """Trim the raw SignalWire subscriber record down to what a picker UI
     needs -- drop job_title/company_name/timezone/country/etc. to avoid
     forwarding more PII to the browser than necessary.
@@ -68,13 +90,15 @@ def _to_public_shape(subscriber: dict) -> dict:
         "id": subscriber.get('id'),
         "display_name": display_name_for(subscriber),
         "email": nested.get('email'),
+        "addresses": addresses,
     }
 
 
 @subscribers_bp.route('', methods=['GET'])
 def get_subscribers():
     """
-    List subscribers in this space, paginated for a picker UI.
+    List subscribers in this space, paginated for a picker UI, each with its
+    dialable addresses.
     """
     blocked = _gate()
     if blocked:
@@ -89,7 +113,10 @@ def get_subscribers():
         offset, limit = bounded_page(request)
 
         subscribers = get_subscribers_cached()
-        page = [_to_public_shape(s) for s in subscribers[offset:offset + limit]]
+        page_records = subscribers[offset:offset + limit]
+        with ThreadPoolExecutor(max_workers=ADDRESS_FETCH_WORKERS) as executor:
+            page_addresses = list(executor.map(_fetch_addresses, page_records))
+        page = [_to_public_shape(s, a) for s, a in zip(page_records, page_addresses)]
 
         return jsonify({
             "success": True,

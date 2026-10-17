@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Phone, PhoneIncoming, PhoneMissed, PhoneOutgoing, Trash2, Video } from 'lucide-react';
+import { PhoneIncoming, PhoneMissed, PhoneOutgoing, Trash2, Video } from 'lucide-react';
+import { DialButtons } from './ResourceAddressList';
 import { useRecentsStore, type RecentCall } from '../hooks/useRecentsStore';
 import { useCallStore } from '../hooks/useCallStore';
 import { getDialAddressType } from '../utils/address';
@@ -37,9 +38,6 @@ const durationOf = (entry: RecentCall): string | null => {
 // as audio must not quietly keep the video channel.
 const asAudioDestination = (destination: string): string =>
   destination.replace(/([?&])channel=[^&]*/i, '$1channel=audio');
-
-const DIAL_BUTTON_CLASS =
-  'flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-white/10 bg-white/6 px-3 py-2 text-xs font-medium text-gray-200 backdrop-blur-md transition-colors hover:bg-white/15 hover:text-white active:scale-[0.97] disabled:cursor-not-allowed disabled:border-white/5 disabled:bg-white/2 disabled:text-gray-600 disabled:hover:bg-white/2';
 
 // Calls made and received in this browser (useRecentsStore), newest first,
 // each redialable as audio or video.
@@ -86,24 +84,12 @@ function RecentsList({ onSelectAddress }: RecentsListProps) {
               </div>
             </div>
 
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => onSelectAddress(asAudioDestination(entry.destination), false, entry.label)}
-                className={DIAL_BUTTON_CLASS}
-              >
-                <Phone size={13} /> Audio
-              </button>
-              <button
-                type="button"
-                onClick={() => canVideo && onSelectAddress(entry.destination, true, entry.label)}
-                disabled={!canVideo}
-                aria-label="Dial with video"
-                className={DIAL_BUTTON_CLASS}
-              >
-                <Video size={13} /> Video
-              </button>
-            </div>
+            <DialButtons
+              audioPath={asAudioDestination(entry.destination)}
+              videoPath={canVideo ? entry.destination : null}
+              label={entry.label}
+              onSelectAddress={onSelectAddress}
+            />
           </div>
         );
       })}

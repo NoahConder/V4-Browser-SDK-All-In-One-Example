@@ -222,6 +222,16 @@ const Dialer: React.FC = () => {
   const addressInputValue = isAddressInputFocused ? phoneNumber : formatPhoneNumber(phoneNumber);
   const isDialerShown = !isInCall && !isIncoming;
 
+  // A row picked from the resources or subscriber panel: fill the field, sync
+  // the video toggle to the channel that was chosen, remember the label for
+  // Recents, close the panel. Doesn't auto-dial.
+  const selectAddress = (path: string, video: boolean, label?: string) => {
+    setPhoneNumber(path);
+    setWantsVideo(video);
+    setPicked(label ? { destination: path, label } : null);
+    setActiveHeaderPanel(null);
+  };
+
   // Re-fit on every value change and whenever the input's width changes
   // (rotation, an error banner, the clear button appearing).
   useLayoutEffect(() => {
@@ -303,19 +313,18 @@ const Dialer: React.FC = () => {
             <div className="fixed inset-0 -z-10 bg-black/60" onClick={() => setActiveHeaderPanel(null)} />
           )}
 
-          <SubscriberPicker isOpen={isSubscriberPanelOpen} onClose={() => setActiveHeaderPanel(null)} />
+          <SubscriberPicker
+            isOpen={isSubscriberPanelOpen}
+            onClose={() => setActiveHeaderPanel(null)}
+            onSelectAddress={selectAddress}
+          />
 
           <DialableResourcesPanel
             isOpen={isResourcesPanelOpen}
             activeTab={resourcesTab}
             onTabChange={setResourcesTab}
             onClose={() => setActiveHeaderPanel(null)}
-            onSelectAddress={(path, video, label) => {
-              setPhoneNumber(path);
-              setWantsVideo(video);
-              setPicked(label ? { destination: path, label } : null);
-              setActiveHeaderPanel(null);
-            }}
+            onSelectAddress={selectAddress}
           />
 
           <DevicePicker isOpen={isDevicePickerOpen} onClose={() => setActiveHeaderPanel(null)} />
