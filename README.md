@@ -8,6 +8,11 @@ A web-based iPhone-style dialer built with React and the SignalWire Browser SDK 
 
 This fork diverges from [briankwest/swdialer](https://github.com/briankwest/swdialer) in the ways below. This list grows as the fork continues to evolve — newest changes at the top.
 
+- **Tests and CI** — a Playwright suite (`frontend/e2e/`, `npm test`) that runs without SignalWire credentials through a dev-only `?e2e=1` seam, a screenshot run for every screen at four viewports (`npm run test:shots`), a pytest suite for the backend that shares a number-normalization fixture with the frontend, and a GitHub Actions workflow running lint, type-check, build and both suites.
+- **Tester tooling from the SDK** — a **Directory** tab listing the signed-in subscriber's own address book (`client.directory$`: other subscribers for browser-to-browser calls, video rooms, apps); a **Recents** tab (client-side call log with outcomes, durations and redial, replacing the single remembered number); a **Call Statistics** sheet behind the quality badge (RTT, jitter, loss, bandwidth estimate, negotiated codecs, ICE path, SDK recovery state and events, call id); live mic and remote **audio-level meters**; **Do Not Disturb** (`unregister()`); and **SDK Settings** in the Diagnostics panel — audio codec order, SDK log level, WebSocket tracing, relay-only (TURN) media and app debug logs — applied without a reload. The connection test gained its options (skip the media test, test length) and shows STUN/TURN reachability and device checks.
+- **Call-flow fixes found by review** — the Speaker toggle's "off" direction never worked (SDK `applySelectedAudioOutputDevice()` returns `false` with no device selected) and is now disabled where `setSinkId` is unsupported; the call timer starts when the far end answers (not when dialing starts) and the status line distinguishes "Ringing…"; DTMF is held until connected; a startup failure shows the error screen instead of spinning forever; a deleted saved subscriber no longer locks the app out; an incoming call during a dial is auto-rejected; pasted numbers like `(555) 123-4567` normalize the same way the backend does; a browser that blocks autoplay (e.g. after a reload that reattached a call) shows "Tap to enable audio"; media loss during a call shows "Reconnecting…" and defers to the SDK's recovery instead of hanging up on the first ICE failure.
+- **Interaction and accessibility** — every sheet, modal and panel is a proper dialog (focus trap, Escape, focus return); keyboard shortcuts (Enter/Escape to answer/decline, `m` to mute, hold `0` for `+`); an installable PWA manifest with icons, safe-area padding for notched phones, and pinch-zoom re-enabled; console noise replaced by an app logger gated behind a setting.
+- **Backend hardening** — one shared REST client, request timeouts, bounded page sizes, generic error bodies, redacted request logging, and removal of the unused `/api/auth/validate` and `/api/calls/incoming` stubs.
 - **Toolchain refresh** — Vite 8, Tailwind CSS 4, and typescript-eslint 8 on the frontend; the backend now depends only on what it uses (Flask, Flask-CORS, requests, python-dotenv), all on current releases.
 - **Call-experience improvements** — verified with automated browser-to-browser, PSTN, and SIP test calls:
   - Instant mute and unmute. Audio resumes the moment you unmute.
@@ -39,11 +44,14 @@ This fork diverges from [briankwest/swdialer](https://github.com/briankwest/swdi
 - ✅ Outbound audio or video calls to phone numbers (normalized to E.164), SIP URIs, and Fabric addresses
 - ✅ Inbound calls with a full-screen accept/decline screen and ringtone (a second incoming call during an active call is auto-rejected)
 - ✅ In-call controls: mute, speaker, camera, keypad, hold/resume, and screen share (with optional tab audio) on video room/conference calls
-- ✅ DTMF from the on-screen keypad (with key tones) or your keyboard
+- ✅ DTMF from the on-screen keypad (with key tones) or your keyboard, once the call is connected
 - ✅ Audio/video device picker and echo cancellation / noise suppression / auto gain toggles
-- ✅ Live call-quality indicator, pre-call network diagnostics, and diagnostics export
-- ✅ Browser for the space's dialable SWML scripts and SIP credentials
-- ✅ Subscriber picker to act as any subscriber in the space
+- ✅ Live call-quality badge that opens a call-statistics sheet (RTT, jitter, loss, codecs, ICE path, recovery events, call id), plus mic and remote audio-level meters
+- ✅ "Reconnecting…" during media loss, deferring to the SDK's own recovery before giving up on a call
+- ✅ Pre-call network diagnostics (with options), diagnostics export, and SDK settings: codec order, log level, WebSocket tracing, relay-only media
+- ✅ Directory of everything the subscriber can dial (other subscribers, rooms, apps), Recents with redial, and browsers for the space's SWML scripts and SIP credentials
+- ✅ Subscriber picker to act as any subscriber in the space, and Do Not Disturb
+- ✅ Installable (PWA manifest and icons), keyboard shortcuts, and dialogs that trap and return focus
 - ✅ Automatic token refresh: the SDK calls the backend's refresh endpoint about 80% into each token's lifetime
 - ✅ Microphone permission prompt, inline error banners, and an error boundary for unexpected failures
 
@@ -117,9 +125,11 @@ npm run dev                       # http://localhost:5173, proxies /api to :5001
 
 1. Open `http://localhost:5173` and allow microphone access.
 2. Wait for the dialer to connect.
-3. Type a phone number, SIP URI (`sip:user@domain`), or Fabric address (`/public/room`), or pick one from the Dialable Resources panel (list icon in the header). Toggle the camera button in the address field for a video call, then press the green call button.
-4. Incoming calls show a full-screen accept/decline screen.
-5. To act as a different subscriber, open the Subscriber panel (person icon). The page reloads under the new identity.
+3. Type a phone number, SIP URI (`sip:user@domain`), or Fabric address (`/public/room`), or pick one from the resources panel (list icon in the header): **Directory** lists everything this subscriber can dial — including other subscribers, for browser-to-browser calls — **Recents** lists calls made and received in this browser, and **SWML**/**SIP** list the space's scripts and credentials. Toggle the camera button in the address field for a video call, then press the green call button (or Enter). With an empty field, the call button fills in the last number you dialed.
+4. Incoming calls show a full-screen accept/decline screen (Enter accepts, Escape declines).
+5. In a call: the keypad sends DTMF once connected (also from your keyboard), `m` toggles mute, and tapping the signal icon in the header opens live call statistics. More → Hold, Transfer, Screen Share (on room calls), devices and audio processing.
+6. To act as a different subscriber, open the Subscriber panel (person icon). The page reloads under the new identity. The same panel has a Do Not Disturb switch (stay connected, stop receiving calls).
+7. Diagnostics (pulse icon) runs a pre-call connection test and holds the SDK settings: audio codec order, SDK log level, WebSocket tracing, relay-only media and app debug logs. Log settings apply at once; codec and relay settings apply to the next call.
 
 ## Development
 
@@ -127,9 +137,13 @@ npm run dev                       # http://localhost:5173, proxies /api to :5001
 cd frontend
 npm run build                     # type-check + production build
 npm run lint                      # eslint
+npm test                          # Playwright suite (starts or reuses the dev server)
+npm run test:shots                # screenshots of every screen at four viewports → e2e/screenshots/
 ```
 
-There are no automated tests in this repo.
+The Playwright suite in `frontend/e2e/` needs no SignalWire credentials: it opens the app with `?e2e=1`, a dev-server-only seam that skips the SignalWire connection, then stubs the service and drives the UI state directly. Backend tests: `pip install -r backend/requirements-dev.txt` once, then `python -m pytest backend/tests` from the repo root (with the venv active). The two suites share `frontend/e2e/fixtures/dial-normalization.json`, so a change to phone-number normalization on one side fails the other side's test until it's mirrored. `.github/workflows/ci.yml` runs all of this on push and pull request.
+
+The app's own console logging is off by default; turn on "App debug logs" in Diagnostics & Settings to see call-flow traces (the SDK's log level is a separate setting there).
 
 ### Backend API Endpoints
 

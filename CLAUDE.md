@@ -25,9 +25,11 @@ npm install
 npm run dev                            # Vite dev server on :5173 (proxies /api → :5001)
 npm run build                          # tsc + vite build
 npm run lint                           # eslint
+npm test                               # Playwright e2e suite (no credentials needed)
+npm run test:shots                     # screenshots of every screen → e2e/screenshots/
 ```
 
-There are no tests in this repo.
+Tests: `cd frontend && npm test` runs the Playwright suite in `frontend/e2e/` (`playwright.config.ts` starts or reuses the Vite dev server). It needs **no SignalWire credentials**: pages open with `?e2e=1`, a dev-server-only seam in `useSignalWire.ts` that registers the hook's callbacks on the service (`signalWireService.setCallbacks`) without calling `initialize()`. Tests then stub service methods via `page.evaluate(import('/src/services/signalwire.ts'))` (private members are reachable at runtime), fire callbacks like `s.onIncomingCall(...)`, and drive screens with `useCallStore.getState().setCallState` — see `e2e/helpers.ts`. Keep the dev server and the test's module instances in sync: Vite HMR timestamps modules you've just edited, so after editing `signalwire.ts`/`useCallStore.ts` restart the dev server before trusting a failing run. `npm run test:shots` writes non-asserting screenshots of every screen at four viewports to `e2e/screenshots/` (gitignored). Backend: `source venv/bin/activate && python -m pytest backend/tests` (install `backend/requirements-dev.txt` first); `test_numbers.py` and `e2e/dialer.spec.ts` share `frontend/e2e/fixtures/dial-normalization.json` to enforce the number-normalization sync rule below. CI (`.github/workflows/ci.yml`) runs lint, `tsc`, build, the Playwright suite and pytest.
 
 Vite 8 requires Node 20.19+. npm 10.8.x (what the devcontainer ships) crashes with `Cannot read properties of null (reading 'edgesOut')` when *changing* frontend dependencies (an arborist peer-set bug triggered by `@vitejs/plugin-react`'s optional peers); run those installs with `npx npm@11 install ...`. A plain `npm install`/`npm ci` from the existing lockfile works fine on 10.8.
 

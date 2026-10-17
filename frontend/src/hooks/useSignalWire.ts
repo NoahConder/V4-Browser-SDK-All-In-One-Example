@@ -8,12 +8,18 @@ import {
   AuxiliaryLegTimeoutError,
   ScreenShareAlreadyActiveError,
 } from '@signalwire/js';
-import { signalWireService, ClientNotReadyError } from '../services/signalwire';
+import { signalWireService, ClientNotReadyError, type SignalWireCallbacks } from '../services/signalwire';
 import { useCallStore } from './useCallStore';
 import { useRecentsStore } from './useRecentsStore';
 import { callsAPI } from '../services/api';
 import { formatPhoneNumber } from '../utils/address';
 import { log } from '../utils/log';
+
+// Test seam, dev server only: `?e2e=1` skips the SignalWire connection so the
+// Playwright suite (frontend/e2e) runs without credentials. The hook's
+// callbacks are still registered on the service, so tests fire them and stub
+// the service's methods while driving the store directly.
+const E2E_SEAM = import.meta.env.DEV && new URLSearchParams(window.location.search).has('e2e');
 
 // Who this browser is signed in as, stamped on each Recents entry.
 const activeSubscriber = () => ({
@@ -98,7 +104,7 @@ export const useSignalWire = () => {
   useEffect(() => {
     const initializeSignalWire = async () => {
       try {
-        await signalWireService.initialize({
+        const callbacks: SignalWireCallbacks = {
           onIncomingCall: (remoteNumber, hasVideo, from, callId) => {
             useRecentsStore.getState().start({
               direction: 'inbound',
@@ -242,7 +248,16 @@ export const useSignalWire = () => {
               networkIssueCount: state.networkIssues.length,
             });
           },
-        });
+        };
+
+        if (E2E_SEAM) {
+          signalWireService.setCallbacks(callbacks);
+          setIsInitialized(true);
+          setCallState({ isClientReady: true, activeSubscriberName: 'e2e' });
+          return;
+        }
+
+        await signalWireService.initialize(callbacks);
 
         setIsInitialized(true);
 

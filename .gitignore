@@ -7,6 +7,14 @@ __pycache__/
 node_modules/
 frontend/dist/
 
+# Playwright
+frontend/test-results/
+frontend/playwright-report/
+frontend/e2e/screenshots/
+
+# Python tests
+.pytest_cache/
+
 # Env / secrets
 backend/.env
 backend/.env.local

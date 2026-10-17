@@ -315,6 +315,31 @@ class SignalWireService {
   private onRegisteredChange: ((registered: boolean) => void) | null = null;
   private onClientNotice: ((message: string) => void) | null = null;
 
+  // Wire the UI's callbacks. initialize() does this itself; the Playwright
+  // suite's `?e2e=1` seam (see useSignalWire) calls it directly so the hook's
+  // callbacks are registered without connecting to SignalWire.
+  setCallbacks(callbacks: SignalWireCallbacks) {
+    this.onIncomingCall = callbacks.onIncomingCall || null;
+    this.onIncomingCallAutoRejected = callbacks.onIncomingCallAutoRejected || null;
+    this.onCallReattached = callbacks.onCallReattached || null;
+    this.onCallEnded = callbacks.onCallEnded || null;
+    this.onCallConnected = callbacks.onCallConnected || null;
+    this.onCallStatusChange = callbacks.onCallStatusChange || null;
+    this.onRemoteVideoChange = callbacks.onRemoteVideoChange || null;
+    this.onReadyChange = callbacks.onReadyChange || null;
+    this.onClientError = callbacks.onClientError || null;
+    this.onCanScreenShareChange = callbacks.onCanScreenShareChange || null;
+    this.onScreenShareStatusChange = callbacks.onScreenShareStatusChange || null;
+    this.onAudioProcessingChange = callbacks.onAudioProcessingChange || null;
+    this.onQualityChange = callbacks.onQualityChange || null;
+    this.onCallMediaError = callbacks.onCallMediaError || null;
+    this.onRemoteAudioBlocked = callbacks.onRemoteAudioBlocked || null;
+    this.onRecoveryStateChange = callbacks.onRecoveryStateChange || null;
+    this.onMediaDisruptionChange = callbacks.onMediaDisruptionChange || null;
+    this.onRegisteredChange = callbacks.onRegisteredChange || null;
+    this.onClientNotice = callbacks.onClientNotice || null;
+  }
+
   async initialize(callbacks: SignalWireCallbacks = {}) {
     if (this.isInitializing || this.isInitialized) {
       log.debug('SignalWire initialization already in progress or completed, skipping...');
@@ -328,25 +353,7 @@ class SignalWireService {
     log.debug('Starting SignalWire initialization...');
 
     try {
-      this.onIncomingCall = callbacks.onIncomingCall || null;
-      this.onIncomingCallAutoRejected = callbacks.onIncomingCallAutoRejected || null;
-      this.onCallReattached = callbacks.onCallReattached || null;
-      this.onCallEnded = callbacks.onCallEnded || null;
-      this.onCallConnected = callbacks.onCallConnected || null;
-      this.onCallStatusChange = callbacks.onCallStatusChange || null;
-      this.onRemoteVideoChange = callbacks.onRemoteVideoChange || null;
-      this.onReadyChange = callbacks.onReadyChange || null;
-      this.onClientError = callbacks.onClientError || null;
-      this.onCanScreenShareChange = callbacks.onCanScreenShareChange || null;
-      this.onScreenShareStatusChange = callbacks.onScreenShareStatusChange || null;
-      this.onAudioProcessingChange = callbacks.onAudioProcessingChange || null;
-      this.onQualityChange = callbacks.onQualityChange || null;
-      this.onCallMediaError = callbacks.onCallMediaError || null;
-      this.onRemoteAudioBlocked = callbacks.onRemoteAudioBlocked || null;
-      this.onRecoveryStateChange = callbacks.onRecoveryStateChange || null;
-      this.onMediaDisruptionChange = callbacks.onMediaDisruptionChange || null;
-      this.onRegisteredChange = callbacks.onRegisteredChange || null;
-      this.onClientNotice = callbacks.onClientNotice || null;
+      this.setCallbacks(callbacks);
 
       // Create credential provider with automatic refresh
       const credentialProvider = {
