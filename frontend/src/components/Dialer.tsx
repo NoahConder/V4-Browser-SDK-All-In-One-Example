@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Activity, AtSign, List, Phone, Slash, SlidersHorizontal, User, Video, VideoOff, X } from 'lucide-react';
 import DialPad from './DialPad';
+import StatusBar from './StatusBar';
 import CallScreen from './CallScreen';
 import IncomingCall from './IncomingCall';
 import DialableResourcesPanel from './DialableResourcesPanel';
@@ -10,20 +11,16 @@ import SubscriberPicker from './SubscriberPicker';
 import ErrorBanner from './ErrorBanner';
 import { useCallStore } from '../hooks/useCallStore';
 import { useSignalWire } from '../hooks/useSignalWire';
+import { type DialAddressType, formatPhoneNumber, getDialAddressType, isDialAddress } from '../utils/address';
 
-type DialAddressType = 'phone' | 'sip' | 'fabric';
+type HeaderPanel = 'devices' | 'diagnostics' | 'resources' | 'subscriber';
 
-// SIP URIs (sip:user@domain) and Fabric addresses (/public/room-name) are
-// dialed as-is instead of being formatted/validated like a phone number.
-// Keep in sync with signalwire.ts's makeCall and backend's is_dial_address().
-const getDialAddressType = (value: string): DialAddressType => {
-  const trimmed = value.trim();
-  if (/^sip:/i.test(trimmed) || trimmed.includes('@')) return 'sip';
-  if (trimmed.startsWith('/')) return 'fabric';
-  return 'phone';
-};
-
-const isDialAddress = (value: string): boolean => getDialAddressType(value) !== 'phone';
+const HEADER_PANEL_BUTTONS: Array<{ panel: HeaderPanel; label: string; icon: typeof Phone }> = [
+  { panel: 'devices', label: 'Audio & Video Devices', icon: SlidersHorizontal },
+  { panel: 'diagnostics', label: 'Diagnostics', icon: Activity },
+  { panel: 'resources', label: 'Dialable Resources', icon: List },
+  { panel: 'subscriber', label: 'Subscriber', icon: User },
+];
 
 const DIAL_ADDRESS_META: Record<DialAddressType, { icon: typeof Phone; label: string; badgeClass: string }> = {
   phone: { icon: Phone, label: 'Phone number', badgeClass: 'bg-white/10 text-gray-300' },
@@ -31,20 +28,26 @@ const DIAL_ADDRESS_META: Record<DialAddressType, { icon: typeof Phone; label: st
   fabric: { icon: Slash, label: 'Fabric address', badgeClass: 'bg-purple-500/15 text-purple-400' },
 };
 
-// iOS-style auto-shrink: the dial-pad input starts at its normal large size for
-// a phone number, then steps down as the value grows past that -- SWML/SIP
-// resource addresses (full URLs with a `?channel=...` query string) run far
-// longer than any phone number.
-const ADDRESS_INPUT_SIZE_STEPS: Array<{ maxLength: number; className: string }> = [
-  { maxLength: 18, className: 'text-xl sm:text-2xl' },
-  { maxLength: 28, className: 'text-lg sm:text-xl' },
-  { maxLength: 40, className: 'text-base sm:text-lg' },
-  { maxLength: 60, className: 'text-sm sm:text-base' },
-];
-const SMALLEST_ADDRESS_INPUT_SIZE = 'text-xs sm:text-sm';
+// iOS-style auto-shrink: the largest of these sizes at which the value (or the
+// placeholder, when empty) fits the input's actual width. Measured rather than
+// guessed from the length, so a phone number stays large on a wide screen yet
+// still fits a 320px one; SWML/SIP resource addresses (full URLs with a
+// `?channel=...` query string) bottom out at the smallest size and scroll.
+const ADDRESS_FONT_SIZES_PX = [24, 20, 18, 16, 14, 12];
 
-const getAddressInputSizeClass = (value: string): string =>
-  ADDRESS_INPUT_SIZE_STEPS.find((step) => value.length <= step.maxLength)?.className ?? SMALLEST_ADDRESS_INPUT_SIZE;
+let measureContext: CanvasRenderingContext2D | null = null;
+
+const fitAddressFontSize = (input: HTMLInputElement, text: string): number => {
+  measureContext ??= document.createElement('canvas').getContext('2d');
+  const style = getComputedStyle(input);
+  const available = input.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+  if (!measureContext || available <= 0) return ADDRESS_FONT_SIZES_PX[0];
+  for (const size of ADDRESS_FONT_SIZES_PX) {
+    measureContext.font = `${style.fontWeight} ${size}px ${style.fontFamily}`;
+    if (measureContext.measureText(text).width <= available) return size;
+  }
+  return ADDRESS_FONT_SIZES_PX[ADDRESS_FONT_SIZES_PX.length - 1];
+};
 
 const Dialer: React.FC = () => {
   const [phoneNumber, setPhoneNumber] = useState('');
@@ -54,15 +57,15 @@ const Dialer: React.FC = () => {
   // Only one header panel (device picker, diagnostics, dialable resources, subscriber
   // picker) may be open at a time -- opening any of them covers the center dial pad,
   // so keep them mutually exclusive instead of letting all four stack.
-  const [activeHeaderPanel, setActiveHeaderPanel] = useState<
-    'devices' | 'diagnostics' | 'resources' | 'subscriber' | null
-  >(null);
+  const [activeHeaderPanel, setActiveHeaderPanel] = useState<HeaderPanel | null>(null);
   const isDevicePickerOpen = activeHeaderPanel === 'devices';
   const isDiagnosticsPanelOpen = activeHeaderPanel === 'diagnostics';
   const isResourcesPanelOpen = activeHeaderPanel === 'resources';
   const isSubscriberPanelOpen = activeHeaderPanel === 'subscriber';
-  const toggleHeaderPanel = (panel: 'devices' | 'diagnostics' | 'resources' | 'subscriber') =>
+  const toggleHeaderPanel = (panel: HeaderPanel) =>
     setActiveHeaderPanel((prev) => (prev === panel ? null : panel));
+  const addressInputRef = useRef<HTMLInputElement>(null);
+  const [addressFontSize, setAddressFontSize] = useState(ADDRESS_FONT_SIZES_PX[0]);
   const [lastDialedNumber, setLastDialedNumber] = useState(() => {
     // Load last dialed number from localStorage
     return localStorage.getItem('lastDialedNumber') || '';
@@ -72,7 +75,6 @@ const Dialer: React.FC = () => {
   // when a field it actually reads changes -- not on every call-quality tick
   // (qualityLevel/qualityScore/networkIssueCount update ~1/sec during a call
   // via signalwire.ts's qualitySub). Matches CallScreen.tsx's pattern.
-  const activeSubscriberName = useCallStore((s) => s.activeSubscriberName);
   const isInCall = useCallStore((s) => s.isInCall);
   const isIncoming = useCallStore((s) => s.isIncoming);
   const remoteNumber = useCallStore((s) => s.remoteNumber);
@@ -199,11 +201,22 @@ const Dialer: React.FC = () => {
   // the address input is focused, since 'keydown' bubbles up to window).
   // Typing itself is handled by the address input's native onChange, and by
   // DialPad's onKeyPress -- not here, to avoid double-inserting characters.
+  // Not from other fields (Enter in the Diagnostics test input would otherwise
+  // dial the pad's number) or a focused button (Enter already activates it).
+  // Escape closes whichever header panel is open.
   useEffect(() => {
     const handleKeyboardInput = (e: KeyboardEvent) => {
       if (isInCall || isIncoming) return;
 
-      if (e.key === 'Enter') {
+      if (e.key === 'Escape') {
+        setActiveHeaderPanel(null);
+        return;
+      }
+
+      const target = e.target as HTMLElement | null;
+      const isOtherControl =
+        target !== addressInputRef.current && !!target?.closest('input, textarea, select, button');
+      if (e.key === 'Enter' && !isOtherControl) {
         handleCall();
       }
     };
@@ -216,38 +229,26 @@ const Dialer: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phoneNumber, isInCall, isIncoming]);
 
-  const formatPhoneNumber = (number: string): string => {
-    // SIP URIs and Fabric addresses aren't phone numbers -- display as typed.
-    if (isDialAddress(number)) {
-      return number;
-    }
+  const addressInputValue = isAddressInputFocused ? phoneNumber : formatPhoneNumber(phoneNumber);
+  const isDialerShown = !isInCall && !isIncoming;
 
-    // If number starts with +, keep it as international
-    if (number.startsWith('+')) {
-      return number;
-    }
-
-    // Remove all non-digit characters except + at the beginning
-    const cleaned = number.replace(/[^\d+]/g, '').replace(/\+(?!^)/g, '');
-
-    // For numbers with only digits
-    const digitsOnly = cleaned.replace(/^\+/, '');
-
-    if (digitsOnly.length === 10) {
-      return `(${digitsOnly.slice(0, 3)}) ${digitsOnly.slice(3, 6)}-${digitsOnly.slice(6)}`;
-    } else if (digitsOnly.length === 11 && digitsOnly[0] === '1') {
-      return `+1 (${digitsOnly.slice(1, 4)}) ${digitsOnly.slice(4, 7)}-${digitsOnly.slice(7)}`;
-    }
-
-    // Return as-is for other formats (including * and #)
-    return number;
-  };
+  // Re-fit on every value change and whenever the input's width changes
+  // (rotation, an error banner, the clear button appearing).
+  useLayoutEffect(() => {
+    const input = addressInputRef.current;
+    if (!input) return;
+    const fit = () => setAddressFontSize(fitAddressFontSize(input, input.value || input.placeholder));
+    fit();
+    const observer = new ResizeObserver(fit);
+    observer.observe(input);
+    return () => observer.disconnect();
+  }, [addressInputValue, isDialerShown]);
 
   // Show incoming call modal
   if (isIncoming && !isInCall) {
     return (
       <IncomingCall
-        phoneNumber={remoteNumber}
+        phoneNumber={formatPhoneNumber(remoteNumber)}
         isVideoCall={isVideoCall}
         onAnswer={answerCall}
         onReject={rejectCall}
@@ -259,7 +260,7 @@ const Dialer: React.FC = () => {
   if (isInCall) {
     return (
       <CallScreen
-        phoneNumber={remoteNumber || phoneNumber}
+        phoneNumber={formatPhoneNumber(remoteNumber || phoneNumber)}
         onEndCall={handleEndCall}
         isMuted={isMuted}
         isSpeakerOn={isSpeakerOn}
@@ -276,7 +277,6 @@ const Dialer: React.FC = () => {
   const addressType = getDialAddressType(phoneNumber);
   const addressMeta = DIAL_ADDRESS_META[addressType];
   const AddressIcon = addressMeta.icon;
-  const addressInputValue = isAddressInputFocused ? phoneNumber : formatPhoneNumber(phoneNumber);
 
   // Show dialer
   return (
@@ -284,64 +284,26 @@ const Dialer: React.FC = () => {
       {/* Status Bar + header panels. z-30 so the panels (positioned absolutely
           just below the bar) overlay the dial pad instead of pushing it down. */}
       <div className="relative z-30">
-        <div className="glass-bar relative flex items-center justify-between px-4 py-1 text-sm sm:px-6">
-          <span className="text-ios-green">●</span>
-          {/* Hidden on phones: centered, it collides with the four header icons
-              and swallows taps meant for them. */}
-          <span className="pointer-events-none absolute left-1/2 hidden -translate-x-1/2 font-medium tracking-wide text-gray-400 sm:block">SignalWire</span>
-          <div className="flex items-center">
-            <button
-              type="button"
-              onClick={() => toggleHeaderPanel('devices')}
-              aria-label="Audio & Video Devices"
-              aria-pressed={isDevicePickerOpen}
-              className={`flex h-10 w-10 items-center justify-center rounded-full transition-colors hover:bg-white/10 hover:text-white ${
-                isDevicePickerOpen ? 'text-white' : 'text-gray-400'
-              }`}
-            >
-              <SlidersHorizontal size={18} />
-            </button>
-            <button
-              type="button"
-              onClick={() => toggleHeaderPanel('diagnostics')}
-              aria-label="Diagnostics"
-              aria-pressed={isDiagnosticsPanelOpen}
-              className={`flex h-10 w-10 items-center justify-center rounded-full transition-colors hover:bg-white/10 hover:text-white ${
-                isDiagnosticsPanelOpen ? 'text-white' : 'text-gray-400'
-              }`}
-            >
-              <Activity size={18} />
-            </button>
-            <button
-              type="button"
-              onClick={() => toggleHeaderPanel('resources')}
-              aria-label="Dialable Resources"
-              aria-pressed={isResourcesPanelOpen}
-              className={`flex h-10 w-10 items-center justify-center rounded-full transition-colors hover:bg-white/10 hover:text-white ${
-                isResourcesPanelOpen ? 'text-white' : 'text-gray-400'
-              }`}
-            >
-              <List size={18} />
-            </button>
-            <button
-              type="button"
-              onClick={() => toggleHeaderPanel('subscriber')}
-              aria-label="Subscriber"
-              aria-pressed={isSubscriberPanelOpen}
-              className={`flex h-10 w-10 items-center justify-center rounded-full transition-colors hover:bg-white/10 hover:text-white ${
-                isSubscriberPanelOpen ? 'text-white' : 'text-gray-400'
-              }`}
-            >
-              <User size={18} />
-            </button>
-            <div className="ml-1 flex flex-col items-end leading-tight">
-              <span className="text-gray-400">{new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-              {activeSubscriberName && (
-                <span className="max-w-24 truncate text-[10px] text-gray-500">{activeSubscriberName}</span>
-              )}
-            </div>
-          </div>
-        </div>
+        <StatusBar hasIcons>
+          {HEADER_PANEL_BUTTONS.map(({ panel, label, icon: Icon }) => {
+            const isOpen = activeHeaderPanel === panel;
+            return (
+              <button
+                key={panel}
+                type="button"
+                onClick={() => toggleHeaderPanel(panel)}
+                aria-label={label}
+                title={label}
+                aria-pressed={isOpen}
+                className={`flex h-10 w-10 items-center justify-center rounded-full transition-colors hover:bg-white/10 hover:text-white ${
+                  isOpen ? 'bg-white/10 text-white' : 'text-gray-400'
+                }`}
+              >
+                <Icon size={18} />
+              </button>
+            );
+          })}
+        </StatusBar>
 
         <div className="absolute inset-x-0 top-full">
           {/* Dims the dial pad behind an open panel; tap outside to close. -z-10
@@ -373,7 +335,7 @@ const Dialer: React.FC = () => {
           outgrows the screen; side-by-side on short (landscape phone) screens. */}
       <div className="flex-1 flex flex-col min-h-0 overflow-y-auto short:flex-row short:items-center">
         {/* To Address Input -- type a number, SIP URI, or Fabric address directly */}
-        <div className="flex-1 flex flex-col items-center justify-center px-6 py-4 short:px-4">
+        <div className="flex-1 flex flex-col items-center justify-center px-4 py-4 min-[360px]:px-6 short:px-4">
           {/* In this column (not a full-width row above it) so it takes space
               from the address area rather than pushing the dial pad off small
               and landscape screens. */}
@@ -385,15 +347,19 @@ const Dialer: React.FC = () => {
             />
           )}
           <div
-            className={`glass-panel flex w-full max-w-sm items-center gap-3 rounded-2xl px-4 py-3 transition-colors ${
+            className={`glass-panel flex w-full max-w-sm items-center gap-2 rounded-2xl px-3 min-[360px]:gap-3 min-[360px]:px-4 py-3 transition-colors ${
               isAddressInputFocused ? 'border-white/25 bg-white/[0.07]' : ''
             }`}
           >
-            <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-colors ${addressMeta.badgeClass}`}>
+            <span
+              title={addressMeta.label}
+              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-colors ${addressMeta.badgeClass}`}
+            >
               <AddressIcon size={18} />
             </span>
 
             <input
+              ref={addressInputRef}
               type="text"
               inputMode="text"
               autoComplete="off"
@@ -407,7 +373,9 @@ const Dialer: React.FC = () => {
               onBlur={() => setIsAddressInputFocused(false)}
               disabled={isInCall || isCallingInProgress}
               placeholder="Number or address"
-              className={`w-full min-w-0 bg-transparent font-light text-white outline-hidden border-none placeholder:text-gray-500 disabled:opacity-50 [@media(max-width:359px)]:placeholder-shown:text-sm ${getAddressInputSizeClass(addressInputValue)}`}
+              aria-label="Number or address"
+              style={{ fontSize: addressFontSize }}
+              className="w-full min-w-0 bg-transparent font-light text-white outline-hidden border-none placeholder:text-gray-500 disabled:opacity-50"
             />
 
             {phoneNumber && !isInCall && !isCallingInProgress && (
@@ -427,6 +395,7 @@ const Dialer: React.FC = () => {
               onClick={() => setWantsVideo((prev) => !prev)}
               disabled={isInCall || isCallingInProgress}
               aria-label={wantsVideo ? 'Video call on' : 'Video call off'}
+              title={wantsVideo ? 'Video call on' : 'Video call off'}
               aria-pressed={wantsVideo}
               className={`shrink-0 flex h-9 w-9 items-center justify-center rounded-full border transition-colors disabled:opacity-50 ${
                 wantsVideo
@@ -438,7 +407,10 @@ const Dialer: React.FC = () => {
             </button>
           </div>
 
-          {phoneNumber && (
+          {/* Dropped while an error is showing: the badge icon already says the
+              same thing, and on small phones the banner plus this label push
+              the Call button off-screen. */}
+          {phoneNumber && !callError && (
             <div className="mt-3 text-xs font-medium uppercase tracking-wider text-gray-500">
               {addressMeta.label}
             </div>

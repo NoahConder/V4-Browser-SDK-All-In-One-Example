@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
 import { describeCallError } from '../hooks/useSignalWire';
 
@@ -13,13 +13,25 @@ const TransferModal: React.FC<TransferModalProps> = ({ isOpen, onClose, onTransf
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  if (!isOpen) return null;
-
   const handleClose = () => {
     setDestination('');
     setError(null);
     onClose();
   };
+
+  // Escape cancels, unless a transfer is mid-flight.
+  useEffect(() => {
+    if (!isOpen || isSubmitting) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') handleClose();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+    // handleClose only clears local state and calls onClose.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, isSubmitting]);
+
+  if (!isOpen) return null;
 
   const handleTransfer = async () => {
     const trimmed = destination.trim();

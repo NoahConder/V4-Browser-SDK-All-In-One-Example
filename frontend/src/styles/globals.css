@@ -85,4 +85,15 @@
     height: 100vh;
     height: 100dvh;
   }
+
+  /* Desktop / tablet: a phone-width column, so the header controls sit next to
+     the dial pad instead of in the far corner of a wide window. Not on phones
+     in landscape (the `short` layouts need the full width). */
+  @media (min-width: 640px) and (min-height: 501px) {
+    #root {
+      max-width: 30rem;
+      margin-inline: auto;
+      border-inline: 1px solid rgb(255 255 255 / 0.06);
+    }
+  }
 }

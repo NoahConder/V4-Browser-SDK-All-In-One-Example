@@ -1,16 +1,23 @@
 import React, { useRef, useState } from 'react';
-import { Phone, Delete } from 'lucide-react';
+import { Phone, PhoneOff, Delete } from 'lucide-react';
 import { DialPadKey } from '../types';
+
+// Clicking a key shouldn't pull focus off the address input: the caret stays
+// put for typing, and Enter-to-call keeps working instead of re-pressing the
+// last key the mouse focused.
+const keepFocus = (e: React.MouseEvent) => e.preventDefault();
 
 interface DialPadProps {
   onKeyPress: (key: string) => void;
   onCall: () => void;
-  onDelete: () => void;
+  onDelete?: () => void;
   onClearAll?: () => void; // Optional callback for clearing all
-  hasNumber: boolean;
+  hasNumber?: boolean;
   disabled?: boolean;
-  hideText?: string; // Optional text to show instead of delete icon
-  callButtonText?: string; // Optional text to show on call button instead of phone icon
+  // In-call (DTMF) keypad, like iOS: the bottom row becomes [ ][End][Hide] --
+  // onCall is the red End button, and there's no delete since every digit has
+  // already been sent.
+  onHide?: () => void;
 }
 
 const dialPadKeys: DialPadKey[][] = [
@@ -43,8 +50,7 @@ const DialPad: React.FC<DialPadProps> = ({
   onClearAll,
   hasNumber,
   disabled = false,
-  hideText,
-  callButtonText
+  onHide,
 }) => {
   const [isLongPressing, setIsLongPressing] = useState(false);
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -66,7 +72,7 @@ const DialPad: React.FC<DialPadProps> = ({
         onClearAll();
       } else {
         // If no clear all callback, repeatedly delete
-        onDelete();
+        onDelete?.();
       }
       // Visual/haptic feedback could go here
     }, 2000);
@@ -81,7 +87,7 @@ const DialPad: React.FC<DialPadProps> = ({
 
     // If it wasn't a long press, do a normal delete
     if (!isLongPressing) {
-      onDelete();
+      onDelete?.();
     }
 
     setIsLongPressing(false);
@@ -152,6 +158,7 @@ const DialPad: React.FC<DialPadProps> = ({
                 key={key.number}
                 className="dial-button bg-white/6 border border-white/10 backdrop-blur-md hover:bg-white/10 disabled:opacity-40 disabled:active:scale-100"
                 onClick={() => handleKeyPress(key.number)}
+                onMouseDown={keepFocus}
                 disabled={disabled}
               >
                 {key.special ? (
@@ -176,43 +183,57 @@ const DialPad: React.FC<DialPadProps> = ({
           </React.Fragment>
         ))}
 
-        {/* Bottom Row: Empty, Call Button, Delete */}
+        {/* Bottom Row: Empty, Call (or End), Delete (or Hide) */}
         <div className="dial-button invisible"></div>
 
-        <button
-          onClick={onCall}
-          disabled={disabled}
-          aria-label={callButtonText ? undefined : 'Call'}
-          className="dial-button bg-linear-to-b from-emerald-400 to-ios-green shadow-[0_4px_16px_rgba(52,199,89,0.35)] hover:brightness-110 disabled:opacity-40 disabled:active:scale-100"
-        >
-          {callButtonText ? (
-            <span className="text-lg font-normal">{callButtonText}</span>
-          ) : (
+        {onHide ? (
+          <button
+            onClick={onCall}
+            onMouseDown={keepFocus}
+            aria-label="End call"
+            className="dial-button bg-linear-to-b from-red-500 to-ios-red shadow-[0_4px_16px_rgba(255,59,48,0.35)] hover:brightness-110"
+          >
+            <PhoneOff size={32} fill="white" />
+          </button>
+        ) : (
+          <button
+            onClick={onCall}
+            onMouseDown={keepFocus}
+            disabled={disabled}
+            aria-label="Call"
+            className="dial-button bg-linear-to-b from-emerald-400 to-ios-green shadow-[0_4px_16px_rgba(52,199,89,0.35)] hover:brightness-110 disabled:opacity-40 disabled:active:scale-100"
+          >
             <Phone size={32} fill="white" />
-          )}
-        </button>
+          </button>
+        )}
 
-        {hasNumber ? (
+        {onHide ? (
+          <button
+            onClick={onHide}
+            onMouseDown={keepFocus}
+            className="dial-button text-base text-gray-300 transition-colors hover:text-white shadow-none"
+          >
+            Hide
+          </button>
+        ) : hasNumber ? (
           <button
             ref={deleteButtonRef}
-            aria-label={hideText ? undefined : 'Delete'}
-            onMouseDown={handleDeleteMouseDown}
-            onMouseUp={handleDeleteMouseUp}
-            onMouseLeave={handleDeleteMouseLeave}
-            onTouchStart={handleDeleteMouseDown}
-            onTouchEnd={handleDeleteMouseUp}
-            onTouchCancel={handleDeleteMouseLeave}
+            aria-label="Delete"
+            // Pointer (not mouse + touch) events: a tap fires touchend and then
+            // the compatibility mousedown/mouseup, which deleted two characters.
+            onPointerDown={handleDeleteMouseDown}
+            onPointerUp={handleDeleteMouseUp}
+            onPointerLeave={handleDeleteMouseLeave}
+            onPointerCancel={handleDeleteMouseLeave}
+            onMouseDown={keepFocus}
+            onContextMenu={(e) => e.preventDefault()}
             className={`dial-button border transition-colors ${
               isLongPressing
                 ? 'bg-red-500/80 border-red-400/50'
                 : 'bg-white/6 border-white/10 backdrop-blur-md hover:bg-white/10'
             }`}
           >
-            {hideText ? (
-              <span className="text-sm text-gray-300">{hideText}</span>
-            ) : (
-              <Delete size={24} className={isLongPressing ? 'text-white animate-pulse' : 'text-gray-300'} />
-            )}
+            <Delete size={24} className={isLongPressing ? 'text-white animate-pulse' : 'text-gray-300'} />
           </button>
         ) : (
           <div className="dial-button invisible"></div>

@@ -61,7 +61,8 @@ const SheetSwitch: React.FC<SheetSwitchProps> = ({ label, checked, onChange }) =
   <button
     type="button"
     onClick={onChange}
-    aria-pressed={checked}
+    role="switch"
+    aria-checked={checked}
     className="flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-white/10"
   >
     <span className="text-sm text-white">{label}</span>

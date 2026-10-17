@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Phone, PhoneOff, Mic, MicOff, Volume2, VolumeX, Keyboard, Video, VideoOff, MoreHorizontal } from 'lucide-react';
+import { Phone, PhoneOff, MicOff, Volume2, Keyboard, Video, MoreHorizontal } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import DialPad from './DialPad';
 import ErrorBanner from './ErrorBanner';
+import StatusBar from './StatusBar';
 import CallControlsSheet from './CallControlsSheet';
 import TransferModal from './TransferModal';
 import DevicePicker from './DevicePicker';
@@ -22,6 +24,40 @@ interface CallScreenProps {
   onToggleSpeaker: () => void;
   onToggleCamera: () => void;
 }
+
+interface CallControlProps {
+  icon: LucideIcon;
+  label: string;
+  // Accessible name when the short visible label isn't descriptive enough.
+  ariaLabel?: string;
+  onClick: () => void;
+  // Toggles: highlighted (white) while the feature is on. The icon stays the
+  // same either way, like iOS -- swapping it (Mic/MicOff, Volume2/VolumeX) made
+  // the off state read as "muted".
+  active?: boolean;
+  danger?: boolean;
+}
+
+const CallControl: React.FC<CallControlProps> = ({ icon: Icon, label, ariaLabel, onClick, active, danger }) => (
+  <div className="flex flex-col items-center gap-1.5 short:gap-0.5">
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={ariaLabel ?? label}
+      aria-pressed={active}
+      className={`dial-button transition-all ${
+        danger
+          ? 'bg-linear-to-b from-red-500 to-ios-red shadow-[0_4px_16px_rgba(255,59,48,0.35)] hover:brightness-110'
+          : active
+            ? 'border border-white bg-white text-black'
+            : 'border border-white/10 bg-white/6 text-white backdrop-blur-md hover:bg-white/10'
+      }`}
+    >
+      {danger ? <Icon size={32} fill="white" /> : <Icon size={24} />}
+    </button>
+    <span aria-hidden className="text-xs text-gray-300 short:text-[10px]">{label}</span>
+  </div>
+);
 
 const CallScreen: React.FC<CallScreenProps> = ({
   phoneNumber,
@@ -61,7 +97,6 @@ const CallScreen: React.FC<CallScreenProps> = ({
   const isEchoCancellationOn = useCallStore((s) => s.isEchoCancellationOn);
   const isAutoGainOn = useCallStore((s) => s.isAutoGainOn);
   const isNoiseSuppressionOn = useCallStore((s) => s.isNoiseSuppressionOn);
-  const activeSubscriberName = useCallStore((s) => s.activeSubscriberName);
   const setCallState = useCallStore((s) => s.setCallState);
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
@@ -86,9 +121,19 @@ const CallScreen: React.FC<CallScreenProps> = ({
     return () => clearInterval(interval);
   }, []);
 
-  // Handle keyboard input for DTMF during calls
+  // Handle keyboard input for DTMF during calls. Escape closes the sheet /
+  // device picker (TransferModal handles its own).
   useEffect(() => {
     const handleKeyboardInput = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsControlsSheetOpen(false);
+        setIsDevicePickerOpen(false);
+        return;
+      }
+      // Not while typing in a field (e.g. the Transfer destination -- those
+      // digits were being sent to the far end as DTMF), or for shortcuts.
+      if ((e.target as HTMLElement | null)?.closest('input, textarea, select')) return;
+      if (e.ctrlKey || e.metaKey || e.altKey || e.repeat) return;
       // Only handle DTMF keys during active call
       if ((e.key >= '0' && e.key <= '9') || e.key === '*' || e.key === '#') {
         handleDialPadKey(e.key);
@@ -122,23 +167,7 @@ const CallScreen: React.FC<CallScreenProps> = ({
   return (
     <div className="app-shell flex flex-col h-dvh">
       {/* Status Bar - always visible */}
-      <div className="glass-bar relative flex items-center justify-between px-4 py-2 text-sm sm:px-6">
-        <span className="text-ios-green">●</span>
-        <span className="pointer-events-none absolute left-1/2 -translate-x-1/2 font-medium tracking-wide text-gray-400">
-          SignalWire
-        </span>
-        <div className="flex items-center gap-2">
-          {callStatus === 'connected' && <CallQualityBadge />}
-          <div className="flex flex-col items-end leading-tight">
-            <span className="text-gray-400">
-              {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-            </span>
-            {activeSubscriberName && (
-              <span className="max-w-24 truncate text-[10px] text-gray-500">{activeSubscriberName}</span>
-            )}
-          </div>
-        </div>
-      </div>
+      <StatusBar>{callStatus === 'connected' && <CallQualityBadge />}</StatusBar>
 
       {/* Main Content Container */}
       <div className="relative flex-1 flex flex-col min-h-0 overflow-hidden">
@@ -180,16 +209,12 @@ const CallScreen: React.FC<CallScreenProps> = ({
               </div>
             </div>
 
-            {/* Dial Pad with Hide button */}
+            {/* Dial Pad with End and Hide buttons */}
             <div className="pb-6 sm:pb-8 short:flex-1 short:py-2">
               <DialPad
                 onKeyPress={handleDialPadKey}
-                onCall={() => setShowDialPad(false)} // Hide button
-                onDelete={() => setDialPadInput(prev => prev.slice(0, -1))} // Delete functionality
-                onClearAll={() => setDialPadInput('')} // Clear all functionality
-                hasNumber={true}
-                disabled={false}
-                callButtonText="Hide"
+                onCall={onEndCall}
+                onHide={() => setShowDialPad(false)}
               />
             </div>
           </div>
@@ -224,74 +249,17 @@ const CallScreen: React.FC<CallScreenProps> = ({
             <div className="pb-6 sm:pb-8 short:flex-1 short:py-2">
               <div className="flex justify-center items-center w-full px-4">
                 <div className="grid grid-cols-3 gap-3 sm:gap-4 short:gap-2" style={{ maxWidth: '260px' }}>
-                  {/* Mute Button */}
-                  <button
-                    onClick={onToggleMute}
-                    aria-label={isMuted ? 'Unmute' : 'Mute'}
-                    aria-pressed={isMuted}
-                    className={`dial-button border transition-all ${
-                      isMuted
-                        ? 'bg-white text-black border-white'
-                        : 'bg-white/6 text-white border-white/10 backdrop-blur-md hover:bg-white/10'
-                    }`}
-                  >
-                    {isMuted ? <MicOff size={24} /> : <Mic size={24} />}
-                  </button>
-
-                  {/* Keypad Button */}
-                  <button
-                    onClick={() => setShowDialPad(true)}
-                    aria-label="Keypad"
-                    className="dial-button border border-white/10 bg-white/6 backdrop-blur-md hover:bg-white/10"
-                  >
-                    <Keyboard size={24} />
-                  </button>
-
-                  {/* Speaker Button */}
-                  <button
-                    onClick={onToggleSpeaker}
-                    aria-label="Speaker"
-                    aria-pressed={isSpeakerOn}
-                    className={`dial-button border transition-all ${
-                      isSpeakerOn
-                        ? 'bg-white text-black border-white'
-                        : 'bg-white/6 text-white border-white/10 backdrop-blur-md hover:bg-white/10'
-                    }`}
-                  >
-                    {isSpeakerOn ? <Volume2 size={24} /> : <VolumeX size={24} />}
-                  </button>
-
-                  {/* Camera Button */}
-                  <button
-                    onClick={onToggleCamera}
-                    aria-label={isCameraOn ? 'Turn camera off' : 'Turn camera on'}
-                    aria-pressed={isCameraOn}
-                    className={`dial-button border transition-all ${
-                      isCameraOn
-                        ? 'bg-white text-black border-white'
-                        : 'bg-white/6 text-white border-white/10 backdrop-blur-md hover:bg-white/10'
-                    }`}
-                  >
-                    {isCameraOn ? <Video size={24} /> : <VideoOff size={24} />}
-                  </button>
-
-                  {/* End Call Button */}
-                  <button
-                    onClick={onEndCall}
-                    aria-label="End call"
-                    className="dial-button bg-linear-to-b from-red-500 to-ios-red shadow-[0_4px_16px_rgba(255,59,48,0.35)] hover:brightness-110"
-                  >
-                    <PhoneOff size={32} fill="white" />
-                  </button>
-
-                  {/* More Button */}
-                  <button
+                  <CallControl icon={MicOff} label="Mute" active={isMuted} onClick={onToggleMute} />
+                  <CallControl icon={Keyboard} label="Keypad" onClick={() => setShowDialPad(true)} />
+                  <CallControl icon={Volume2} label="Speaker" active={isSpeakerOn} onClick={onToggleSpeaker} />
+                  <CallControl icon={Video} label="Camera" active={isCameraOn} onClick={onToggleCamera} />
+                  <CallControl icon={PhoneOff} label="End" ariaLabel="End call" danger onClick={onEndCall} />
+                  <CallControl
+                    icon={MoreHorizontal}
+                    label="More"
+                    ariaLabel="More call controls"
                     onClick={() => setIsControlsSheetOpen(true)}
-                    aria-label="More call controls"
-                    className="dial-button border border-white/10 bg-white/6 backdrop-blur-md hover:bg-white/10"
-                  >
-                    <MoreHorizontal size={24} />
-                  </button>
+                  />
                 </div>
               </div>
             </div>
