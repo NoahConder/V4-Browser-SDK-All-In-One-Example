@@ -2,7 +2,8 @@ export type DialAddressType = 'phone' | 'sip' | 'fabric';
 
 // SIP URIs (sip:user@domain) and Fabric addresses (/public/room-name) are
 // dialed as-is instead of being formatted/validated like a phone number.
-// Keep in sync with signalwire.ts's makeCall and backend's is_dial_address().
+// Used by both the dialer UI and signalwire.ts's normalizeDestination(); keep
+// in sync with is_dial_address() in backend/utils/signalwire.py.
 export const getDialAddressType = (value: string): DialAddressType => {
   const trimmed = value.trim();
   if (/^sip:/i.test(trimmed) || trimmed.includes('@')) return 'sip';
@@ -11,6 +12,10 @@ export const getDialAddressType = (value: string): DialAddressType => {
 };
 
 export const isDialAddress = (value: string): boolean => getDialAddressType(value) !== 'phone';
+
+// How many digits a phone-number-looking input holds, ignoring formatting
+// such as spaces, dashes and parentheses.
+export const countDigits = (value: string): number => (value.match(/\d/g) ?? []).length;
 
 // Display-only formatting (the dial path normalizes separately, to E.164).
 // US numbers get (555) 123-4567; anything else is shown as typed.

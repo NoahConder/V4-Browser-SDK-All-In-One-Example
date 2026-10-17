@@ -180,10 +180,16 @@ export const useSignalWire = () => {
         // The backend resolves this from the reference actually used to mint
         // the token (see auth.py's _resolve_reference) -- already present on
         // currentToken by the time initialize() resolves, no extra request needed.
-        setCallState({ activeSubscriberName: signalWireService.getActiveSubscriberDisplayName() ?? null });
+        setCallState({
+          activeSubscriberName: signalWireService.getActiveSubscriberDisplayName() ?? null,
+          canSelectAudioOutput: signalWireService.canSelectAudioOutput(),
+        });
       } catch (err) {
         console.error('Failed to initialize SignalWire:', err);
         setError('Failed to connect to SignalWire');
+        // App.tsx shows the error screen only once initialization has
+        // settled; without this it would show the connecting spinner forever.
+        setIsInitialized(true);
         setCallState({ isConnected: false });
       }
     };
@@ -331,7 +337,8 @@ export const useSignalWire = () => {
     try {
       await signalWireService.toggleCamera(newCameraState);
     } catch (err) {
-      console.warn('Camera toggle warning:', err);
+      console.warn('Camera toggle failed:', err);
+      setCallState({ isCameraOn: !newCameraState, callError: describeCallError(err) });
     }
   };
 
@@ -345,7 +352,9 @@ export const useSignalWire = () => {
         setCallState({ isSpeakerOn: newSpeakerState, callError: null });
       } else {
         setCallState({
-          callError: "Switching audio output isn't supported in this browser, or no output device is selected.",
+          // Browsers without setSinkId never get here (the control is
+          // disabled), so the remaining cause is that no speaker was picked.
+          callError: 'Pick a speaker in More → Audio & Video Devices first.',
         });
       }
     } catch (err) {

@@ -83,7 +83,9 @@ function App() {
     );
   }
 
-  if (!isInitialized) {
+  // A failed start must fall through to the error screen below, not sit on
+  // the spinner.
+  if (!isInitialized && !error) {
     return (
       <div className="app-shell flex flex-col h-dvh items-center justify-center">
         <div className="text-center">

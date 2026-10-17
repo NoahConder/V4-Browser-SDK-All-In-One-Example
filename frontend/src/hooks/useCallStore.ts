@@ -9,6 +9,7 @@ interface CallStore extends CallState {
 const initialState: CallState = {
   isConnected: false,  // Keep false - connection status shouldn't change
   isClientReady: false,  // Preserved across resets, same as isConnected -- see resetCallState
+  canSelectAudioOutput: true,  // Session fact (platformCapabilities), preserved like isClientReady
   callError: null,
   isInCall: false,
   isIncoming: false,
@@ -50,6 +51,7 @@ export const useCallStore = create<CallStore>((set) => ({
         ...initialState,
         isConnected: state.isConnected,  // Preserve connection status
         isClientReady: state.isClientReady,  // Preserve live readiness across call resets
+        canSelectAudioOutput: state.canSelectAudioOutput,  // Browser capability, not call state
         activeSubscriberName: state.activeSubscriberName,  // Session identity, not call state
         // Preserve callError -- a failed call attempt resets straight back to
         // idle (see Dialer.tsx's handleCall), and the whole point of the error

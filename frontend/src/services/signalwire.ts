@@ -21,8 +21,10 @@ import type {
 import { combineLatest, distinctUntilChanged, of, switchMap } from 'rxjs';
 import type { Observable, Subscription } from 'rxjs';
 import type { TokenData } from '../types';
+import axios from 'axios';
 import { authAPI } from './api';
 import { toneService } from './tones';
+import { isDialAddress } from '../utils/address';
 
 // Thrown by makeCall()/answerCall() when client.ready$ is currently false --
 // e.g. right after a token refresh or network blip, not just at first mount
@@ -241,7 +243,7 @@ class SignalWireService {
           // fingerprint at all in this browser/version. See CLAUDE.md's Client
           // Bound SAT note.
           console.log('[SAT] authenticate() context.fingerprint:', context?.fingerprint ?? '(none)');
-          const tokenData = await authAPI.getToken(getSelectedSubscriberId());
+          const tokenData = await this.fetchTokenForSelectedSubscriber();
           this.currentToken = tokenData;
           return {
             token: tokenData.token,
@@ -334,8 +336,10 @@ class SignalWireService {
         const ringingCall = calls.find(c => c.status === 'ringing' || c.status === 'new');
         if (!ringingCall) return;
 
-        // Auto-reject if already in a call
-        if (this.currentCall) {
+        // Auto-reject if already in a call -- or still placing one: while
+        // dial() is in flight currentCall isn't set yet, but the UI is already
+        // on the call screen, so a ringing pendingCall would be unreachable.
+        if (this.currentCall || this.isDialing) {
           console.log('Already in a call - auto-rejecting incoming call');
           ringingCall.reject();
           return;
@@ -456,6 +460,33 @@ class SignalWireService {
   // permanent "who am I" indicator.
   getActiveSubscriberDisplayName(): string | undefined {
     return this.currentToken?.subscriber_display_name;
+  }
+
+  // Whether this browser can route audio to a chosen output device at all
+  // (HTMLMediaElement.setSinkId -- missing on Firefox and Safari). Read once
+  // after initialize(); the Speaker control is disabled when false.
+  canSelectAudioOutput(): boolean {
+    return this.client?.platformCapabilities.audioOutputSelection ?? false;
+  }
+
+  // A saved subscriber choice can go stale (the subscriber was deleted since
+  // it was picked). The backend then answers 400 "Unknown subscriber", and
+  // because the id is resent on every start and Retry just reloads, the app
+  // could never start again without clearing localStorage by hand. Fall back
+  // to the default subscriber once and forget the saved id.
+  private async fetchTokenForSelectedSubscriber(): Promise<TokenData> {
+    const selectedId = getSelectedSubscriberId();
+    try {
+      return await authAPI.getToken(selectedId);
+    } catch (error) {
+      if (!selectedId || !axios.isAxiosError(error) || error.response?.status !== 400) {
+        throw error;
+      }
+      console.warn('Saved subscriber was rejected by the backend - falling back to the default subscriber');
+      localStorage.removeItem(SELECTED_SUBSCRIBER_KEY);
+      this.onClientError?.('Your saved subscriber no longer exists, so you were connected as the default subscriber.');
+      return authAPI.getToken(undefined);
+    }
   }
 
   private setupCallSubscriptions(call: Call) {
@@ -765,29 +796,25 @@ class SignalWireService {
   }
 
   // SIP URIs (sip:user@domain) and Fabric addresses (/public/room-name) are
-  // dialed as-is. Only bare phone numbers get E.164 normalization. Keep this
-  // check in sync with is_dial_address() in backend/utils/signalwire.py.
+  // dialed as-is (isDialAddress in utils/address.ts). Only bare phone numbers
+  // get E.164 normalization, and formatting characters are stripped first so
+  // a pasted "(555) 123-4567" or "+1 555-123-4567" dials correctly. Keep in
+  // sync with format_phone_number() in backend/utils/signalwire.py.
   // Shared by makeCall() and transferCall() -- a transfer destination is
   // normalized exactly like a dialed one.
   private normalizeDestination(value: string): string {
-    const isDialAddress =
-      /^sip:/i.test(value.trim()) ||
-      value.trim().startsWith('/') ||
-      value.includes('@');
-
-    if (isDialAddress) {
+    if (isDialAddress(value)) {
       return value.trim();
     }
-    if (value.startsWith('+')) {
-      return value;
+    // Keep only digits and a leading '+'.
+    const digits = value.replace(/[^\d+]/g, '').replace(/(?!^)\+/g, '');
+    if (digits.startsWith('+')) {
+      return digits;
     }
-    if (value.length === 10) {
-      return '+1' + value;
+    if (digits.length === 10) {
+      return '+1' + digits;
     }
-    if (value.length === 11 && value.startsWith('1')) {
-      return '+' + value;
-    }
-    return '+' + value;
+    return '+' + digits;
   }
 
   // Passing `{ video: true }` to dial()'s media options alone isn't enough to
@@ -899,6 +926,17 @@ class SignalWireService {
       throw new Error('No incoming call to answer');
     }
     if (!this.isReady) {
+      // The hook sends the UI back to the dialer on this error, so the call
+      // must not be left behind still ringing with no screen to answer or
+      // decline it from.
+      toneService.stopIncomingCallTone();
+      const unanswerable = this.pendingCall;
+      this.pendingCall = null;
+      try {
+        unanswerable.reject();
+      } catch (error) {
+        console.debug('Rejecting unanswerable call (ignored):', error);
+      }
       throw new ClientNotReadyError();
     }
 
@@ -986,26 +1024,23 @@ class SignalWireService {
       return;
     }
 
-    try {
-      const self = this.currentCall.self;
-      if (!self) {
-        console.warn('Self participant not available yet');
-        return;
-      }
-
-      const hasLocalVideoTrack = !!this.currentCall.localStream?.getVideoTracks().length;
-
-      if (cameraOn && !hasLocalVideoTrack) {
-        await self.addVideoInputDevice();
-      } else if (cameraOn) {
-        await self.unmuteVideo();
-      } else {
-        await self.muteVideo();
-      }
-      console.log(`Camera ${cameraOn ? 'enabled' : 'disabled'}`);
-    } catch (error) {
-      console.error('Error toggling camera:', error);
+    // Errors propagate: the hook applied the new camera state optimistically
+    // and reverts it (and says why) when this throws.
+    const self = this.currentCall.self;
+    if (!self) {
+      throw new Error('The call is still being set up - try the camera again in a moment.');
     }
+
+    const hasLocalVideoTrack = !!this.currentCall.localStream?.getVideoTracks().length;
+
+    if (cameraOn && !hasLocalVideoTrack) {
+      await self.addVideoInputDevice();
+    } else if (cameraOn) {
+      await self.unmuteVideo();
+    } else {
+      await self.muteVideo();
+    }
+    console.log(`Camera ${cameraOn ? 'enabled' : 'disabled'}`);
   }
 
   // No held$/isOnHold observable exists on Call -- the caller tracks hold
@@ -1204,11 +1239,21 @@ class SignalWireService {
       return false;
     }
 
-    this.client.selectAudioOutputDevice(speakerOn ? this.preferredOutputDevice : null);
-
     try {
+      if (!speakerOn) {
+        // "Off" means back to the browser's default output. The SDK's
+        // applySelectedAudioOutputDevice() returns false when no device is
+        // selected instead of resetting the sink, so reset it directly.
+        this.client.selectAudioOutputDevice(null);
+        if (typeof sinkEl.setSinkId !== 'function') return false;
+        await sinkEl.setSinkId('');
+        console.log('Speaker off (default output)');
+        return true;
+      }
+
+      this.client.selectAudioOutputDevice(this.preferredOutputDevice);
       const applied = await this.client.applySelectedAudioOutputDevice(sinkEl);
-      console.log(`Speaker ${speakerOn ? 'on' : 'off'}, applied:`, applied);
+      console.log('Speaker on, applied:', applied);
       return applied;
     } catch (error) {
       console.error('Error applying audio output device:', error);

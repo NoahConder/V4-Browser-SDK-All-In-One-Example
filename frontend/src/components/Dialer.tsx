@@ -11,7 +11,7 @@ import SubscriberPicker from './SubscriberPicker';
 import ErrorBanner from './ErrorBanner';
 import { useCallStore } from '../hooks/useCallStore';
 import { useSignalWire } from '../hooks/useSignalWire';
-import { type DialAddressType, formatPhoneNumber, getDialAddressType, isDialAddress } from '../utils/address';
+import { type DialAddressType, countDigits, formatPhoneNumber, getDialAddressType, isDialAddress } from '../utils/address';
 
 type HeaderPanel = 'devices' | 'diagnostics' | 'resources' | 'subscriber';
 
@@ -130,8 +130,8 @@ const Dialer: React.FC = () => {
 
     // If a number is entered, dial it. SIP URIs and Fabric addresses can be
     // shorter than a phone number, so only phone-number-looking input needs
-    // the length-7 sanity check.
-    if (phoneNumber && (isDialAddress(phoneNumber) || phoneNumber.length >= 7)) {
+    // the 7-digit sanity check (digits only -- "555-1234" has 7).
+    if (phoneNumber && (isDialAddress(phoneNumber) || countDigits(phoneNumber) >= 7)) {
       console.log('📞 Dialing:', phoneNumber);
       setLastDialedNumber(phoneNumber);
       setIsCallingInProgress(true);

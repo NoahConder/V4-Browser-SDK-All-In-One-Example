@@ -174,8 +174,9 @@ class SignalWireClient:
         Check whether a dial destination is a SIP URI (sip:user@domain) or a
         Fabric address (/public/room-name) rather than a bare phone number.
         Both are passed through untouched -- only phone numbers get E.164
-        normalization. Keep in sync with makeCall's formattedNumber logic in
-        frontend/src/services/signalwire.ts.
+        normalization. Keep in sync with isDialAddress() in
+        frontend/src/utils/address.ts (used by normalizeDestination() in
+        frontend/src/services/signalwire.ts).
         """
         destination = destination.strip()
         return (

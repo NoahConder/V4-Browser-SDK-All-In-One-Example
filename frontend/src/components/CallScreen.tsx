@@ -36,16 +36,30 @@ interface CallControlProps {
   // the off state read as "muted".
   active?: boolean;
   danger?: boolean;
+  disabled?: boolean;
+  // Tooltip, mainly to explain a disabled control.
+  title?: string;
 }
 
-const CallControl: React.FC<CallControlProps> = ({ icon: Icon, label, ariaLabel, onClick, active, danger }) => (
+const CallControl: React.FC<CallControlProps> = ({
+  icon: Icon,
+  label,
+  ariaLabel,
+  onClick,
+  active,
+  danger,
+  disabled,
+  title,
+}) => (
   <div className="flex flex-col items-center gap-1.5 short:gap-0.5">
     <button
       type="button"
       onClick={onClick}
+      disabled={disabled}
+      title={title}
       aria-label={ariaLabel ?? label}
       aria-pressed={active}
-      className={`dial-button transition-all ${
+      className={`dial-button transition-all disabled:opacity-40 disabled:active:scale-100 ${
         danger
           ? 'bg-linear-to-b from-red-500 to-ios-red shadow-[0_4px_16px_rgba(255,59,48,0.35)] hover:brightness-110'
           : active
@@ -97,6 +111,7 @@ const CallScreen: React.FC<CallScreenProps> = ({
   const isEchoCancellationOn = useCallStore((s) => s.isEchoCancellationOn);
   const isAutoGainOn = useCallStore((s) => s.isAutoGainOn);
   const isNoiseSuppressionOn = useCallStore((s) => s.isNoiseSuppressionOn);
+  const canSelectAudioOutput = useCallStore((s) => s.canSelectAudioOutput);
   const setCallState = useCallStore((s) => s.setCallState);
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
@@ -251,7 +266,14 @@ const CallScreen: React.FC<CallScreenProps> = ({
                 <div className="grid grid-cols-3 gap-3 sm:gap-4 short:gap-2" style={{ maxWidth: '260px' }}>
                   <CallControl icon={MicOff} label="Mute" active={isMuted} onClick={onToggleMute} />
                   <CallControl icon={Keyboard} label="Keypad" onClick={() => setShowDialPad(true)} />
-                  <CallControl icon={Volume2} label="Speaker" active={isSpeakerOn} onClick={onToggleSpeaker} />
+                  <CallControl
+                    icon={Volume2}
+                    label="Speaker"
+                    active={isSpeakerOn}
+                    onClick={onToggleSpeaker}
+                    disabled={!canSelectAudioOutput}
+                    title={canSelectAudioOutput ? undefined : 'Choosing an audio output is not supported in this browser'}
+                  />
                   <CallControl icon={Video} label="Camera" active={isCameraOn} onClick={onToggleCamera} />
                   <CallControl icon={PhoneOff} label="End" ariaLabel="End call" danger onClick={onEndCall} />
                   <CallControl
