@@ -19,6 +19,8 @@ const initialState: CallState = {
   remoteNumber: '',
   callDirection: null,
   callStatus: 'idle',
+  connectedAt: null,
+  needsAudioUnlock: false,
   isVideoCall: false,
   isCameraOn: false,
   remoteHasVideo: false,

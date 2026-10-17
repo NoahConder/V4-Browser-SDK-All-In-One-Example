@@ -1,11 +1,68 @@
 import React, { useRef, useState } from 'react';
 import { Phone, PhoneOff, Delete } from 'lucide-react';
 import { DialPadKey } from '../types';
+import { toneService } from '../services/tones';
 
 // Clicking a key shouldn't pull focus off the address input: the caret stays
 // put for typing, and Enter-to-call keeps working instead of re-pressing the
 // last key the mouse focused.
 const keepFocus = (e: React.MouseEvent) => e.preventDefault();
+
+interface LongPressOptions {
+  holdMs: number;
+  onTap: () => void;
+  onHold: () => void;
+  disabled?: boolean;
+}
+
+// Tap vs. hold on one key (Delete: delete / clear all; 0: '0' / '+').
+// Pointer (not mouse + touch) events: a tap fires touchend and then the
+// compatibility mousedown/mouseup, which used to delete two characters.
+function useLongPress({ holdMs, onTap, onHold, disabled }: LongPressOptions) {
+  const [isHolding, setIsHolding] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fired = useRef(false);
+
+  const cancel = () => {
+    if (timer.current) {
+      clearTimeout(timer.current);
+      timer.current = null;
+    }
+    setIsHolding(false);
+  };
+
+  return {
+    isHolding,
+    handlers: {
+      onPointerDown: () => {
+        if (disabled) return;
+        fired.current = false;
+        timer.current = setTimeout(() => {
+          fired.current = true;
+          setIsHolding(true);
+          onHold();
+        }, holdMs);
+      },
+      onPointerUp: () => {
+        const wasHold = fired.current;
+        cancel();
+        fired.current = false;
+        if (!wasHold && !disabled) onTap();
+      },
+      onPointerLeave: cancel,
+      onPointerCancel: cancel,
+      // Keyboard activation of a focused key still types once.
+      onKeyDown: (e: React.KeyboardEvent) => {
+        if ((e.key === 'Enter' || e.key === ' ') && !disabled) {
+          e.preventDefault();
+          onTap();
+        }
+      },
+      onMouseDown: keepFocus,
+      onContextMenu: (e: React.MouseEvent) => e.preventDefault(),
+    },
+  };
+}
 
 interface DialPadProps {
   onKeyPress: (key: string) => void;
@@ -52,100 +109,30 @@ const DialPad: React.FC<DialPadProps> = ({
   disabled = false,
   onHide,
 }) => {
-  const [isLongPressing, setIsLongPressing] = useState(false);
-  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const deleteButtonRef = useRef<HTMLButtonElement>(null);
   const handleKeyPress = (key: string) => {
     if (!disabled) {
       onKeyPress(key);
-      // Play DTMF tone here if needed
-      playDTMFTone(key);
+      toneService.playDtmf(key);
     }
   };
 
-  const handleDeleteMouseDown = () => {
-    // Start timer for long press (2 seconds)
-    longPressTimer.current = setTimeout(() => {
-      setIsLongPressing(true);
-      // Trigger clear all if callback provided
-      if (onClearAll) {
-        onClearAll();
-      } else {
-        // If no clear all callback, repeatedly delete
-        onDelete?.();
-      }
-      // Visual/haptic feedback could go here
-    }, 2000);
-  };
-
-  const handleDeleteMouseUp = () => {
-    // Clear the timer
-    if (longPressTimer.current) {
-      clearTimeout(longPressTimer.current);
-      longPressTimer.current = null;
-    }
-
-    // If it wasn't a long press, do a normal delete
-    if (!isLongPressing) {
-      onDelete?.();
-    }
-
-    setIsLongPressing(false);
-  };
-
-  const handleDeleteMouseLeave = () => {
-    // Cancel long press if mouse/finger leaves button
-    if (longPressTimer.current) {
-      clearTimeout(longPressTimer.current);
-      longPressTimer.current = null;
-    }
-    setIsLongPressing(false);
-  };
-
-  const playDTMFTone = (key: string) => {
-    // Simple tone generation using Web Audio API
-    const audioContext = new (window.AudioContext ||
-      (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext)();
-    const oscillator1 = audioContext.createOscillator();
-    const oscillator2 = audioContext.createOscillator();
-    const gainNode = audioContext.createGain();
-
-    // DTMF frequencies
-    const frequencies: { [key: string]: [number, number] } = {
-      '1': [697, 1209],
-      '2': [697, 1336],
-      '3': [697, 1477],
-      '4': [770, 1209],
-      '5': [770, 1336],
-      '6': [770, 1477],
-      '7': [852, 1209],
-      '8': [852, 1336],
-      '9': [852, 1477],
-      '*': [941, 1209],
-      '0': [941, 1336],
-      '#': [941, 1477],
-    };
-
-    if (frequencies[key]) {
-      oscillator1.frequency.value = frequencies[key][0];
-      oscillator2.frequency.value = frequencies[key][1];
-
-      oscillator1.connect(gainNode);
-      oscillator2.connect(gainNode);
-      gainNode.connect(audioContext.destination);
-
-      gainNode.gain.value = 0.1;
-
-      oscillator1.start();
-      oscillator2.start();
-
-      setTimeout(() => {
-        oscillator1.stop();
-        oscillator2.stop();
-        audioContext.close();
-      }, 200);
-    }
-  };
+  // Hold Delete 2 s to clear everything. Hold 0 to type '+' (idle dialer
+  // only -- there's no '+' in DTMF), as the key's label advertises.
+  const deleteHold = useLongPress({
+    holdMs: 2000,
+    onTap: () => onDelete?.(),
+    onHold: () => (onClearAll ? onClearAll() : onDelete?.()),
+  });
+  const zeroHold = useLongPress({
+    holdMs: 600,
+    disabled,
+    onTap: () => handleKeyPress('0'),
+    onHold: () => {
+      onKeyPress('+');
+      toneService.playDtmf('0');
+    },
+  });
+  const isLongPressing = deleteHold.isHolding;
 
   return (
     <div className="flex justify-center items-center w-full px-4">
@@ -157,9 +144,11 @@ const DialPad: React.FC<DialPadProps> = ({
               <button
                 key={key.number}
                 className="dial-button bg-white/6 border border-white/10 backdrop-blur-md hover:bg-white/10 disabled:opacity-40 disabled:active:scale-100"
-                onClick={() => handleKeyPress(key.number)}
-                onMouseDown={keepFocus}
+                aria-label={key.number === '0' && !onHide ? '0, hold for +' : undefined}
                 disabled={disabled}
+                {...(key.number === '0' && !onHide
+                  ? zeroHold.handlers
+                  : { onClick: () => handleKeyPress(key.number), onMouseDown: keepFocus })}
               >
                 {key.special ? (
                   // Special characters with different sizes and positioning
@@ -217,16 +206,8 @@ const DialPad: React.FC<DialPadProps> = ({
           </button>
         ) : hasNumber ? (
           <button
-            ref={deleteButtonRef}
             aria-label="Delete"
-            // Pointer (not mouse + touch) events: a tap fires touchend and then
-            // the compatibility mousedown/mouseup, which deleted two characters.
-            onPointerDown={handleDeleteMouseDown}
-            onPointerUp={handleDeleteMouseUp}
-            onPointerLeave={handleDeleteMouseLeave}
-            onPointerCancel={handleDeleteMouseLeave}
-            onMouseDown={keepFocus}
-            onContextMenu={(e) => e.preventDefault()}
+            {...deleteHold.handlers}
             className={`dial-button border transition-colors ${
               isLongPressing
                 ? 'bg-red-500/80 border-red-400/50'

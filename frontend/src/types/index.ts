@@ -13,7 +13,17 @@ export interface CallState {
   callDuration: number;
   remoteNumber: string;
   callDirection: 'inbound' | 'outbound' | null;
-  callStatus: 'idle' | 'connecting' | 'dialing' | 'ringing' | 'connected' | 'ended';
+  // 'connecting' from the moment Call is tapped (and for the SDK's
+  // trying/connecting statuses), 'ringing' once the SDK reports the far end
+  // ringing, 'connected' when answered.
+  callStatus: 'idle' | 'connecting' | 'ringing' | 'connected';
+  // When the call was answered (Date.now()), for the in-call timer. Set once
+  // per call, so an ICE restart re-emitting 'connected' doesn't reset it.
+  connectedAt: number | null;
+  // Remote audio playback was refused by the browser's autoplay policy (no
+  // user gesture on this page yet -- e.g. a call reattached after a reload).
+  // The call screen shows a tap-to-enable control until the user taps it.
+  needsAudioUnlock: boolean;
   isVideoCall: boolean;
   isCameraOn: boolean;
   remoteHasVideo: boolean;

@@ -130,7 +130,18 @@ export const useSignalWire = () => {
           },
           onCallConnected: () => {
             console.log('🔔 Call connected');
-            setCallState({ callStatus: 'connected' });
+            // connectedAt is set once: status$ re-emits 'connected' after a
+            // successful ICE restart, which must not restart the timer.
+            setCallState({
+              callStatus: 'connected',
+              connectedAt: useCallStore.getState().connectedAt ?? Date.now(),
+            });
+          },
+          onCallStatusChange: (status) => {
+            setCallState({ callStatus: status });
+          },
+          onRemoteAudioBlocked: () => {
+            setCallState({ needsAudioUnlock: true });
           },
           onRemoteVideoChange: (hasVideo: boolean) => {
             setCallState({ remoteHasVideo: hasVideo });
@@ -230,11 +241,8 @@ export const useSignalWire = () => {
       // The user hung up while the dial was in flight; the UI already reset.
       if (!call) return;
 
-      // Call has been placed, waiting for remote to answer
-      // Actual 'connected' status will come via onCallConnected callback
-      setCallState({
-        callStatus: 'ringing',
-      });
+      // From here call.status$ drives callStatus: 'ringing' once the far end
+      // rings (onCallStatusChange), 'connected' when it answers.
 
       console.log('✅ Call state updated, call should be active');
     } catch (err) {
@@ -280,6 +288,7 @@ export const useSignalWire = () => {
         isInCall: true,
         isIncoming: false,
         callStatus: 'connected',
+        connectedAt: Date.now(),
         isCameraOn: isVideoCall,
       });
     } catch (err) {

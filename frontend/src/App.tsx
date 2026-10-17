@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import Dialer from './components/Dialer';
 import { useSignalWire } from './hooks/useSignalWire';
 import { signalWireService } from './services/signalwire';
+import { toneService } from './services/tones';
 
 function App() {
   const { isInitialized, error } = useSignalWire();
@@ -35,6 +36,10 @@ function App() {
 
     // Only add the listener, don't call the function
     window.addEventListener('beforeunload', handleBeforeUnload);
+
+    // Lets the ringtone and key tones play before the user has tapped
+    // anything else that would unlock audio (see tones.ts).
+    toneService.primeOnFirstGesture();
 
     // Request microphone permissions on load
     const requestPermissions = async () => {

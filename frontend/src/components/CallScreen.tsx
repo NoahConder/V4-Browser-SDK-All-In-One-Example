@@ -85,7 +85,7 @@ const CallScreen: React.FC<CallScreenProps> = ({
   onToggleSpeaker,
   onToggleCamera,
 }) => {
-  const [callDuration, setCallDuration] = useState(0);
+  const [now, setNow] = useState(() => Date.now());
   const [showDialPad, setShowDialPad] = useState(false);
   const [dialPadInput, setDialPadInput] = useState('');
   const [isControlsSheetOpen, setIsControlsSheetOpen] = useState(false);
@@ -112,6 +112,8 @@ const CallScreen: React.FC<CallScreenProps> = ({
   const isAutoGainOn = useCallStore((s) => s.isAutoGainOn);
   const isNoiseSuppressionOn = useCallStore((s) => s.isNoiseSuppressionOn);
   const canSelectAudioOutput = useCallStore((s) => s.canSelectAudioOutput);
+  const connectedAt = useCallStore((s) => s.connectedAt);
+  const needsAudioUnlock = useCallStore((s) => s.needsAudioUnlock);
   const setCallState = useCallStore((s) => s.setCallState);
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
@@ -128,13 +130,15 @@ const CallScreen: React.FC<CallScreenProps> = ({
     };
   }, []);
 
+  // The timer runs from connectedAt (not from mount), so it starts at 00:00
+  // when the far end answers and survives a reattach/re-mount mid-call.
   useEffect(() => {
-    const interval = setInterval(() => {
-      setCallDuration((prev) => prev + 1);
-    }, 1000);
-
+    if (!connectedAt) return;
+    setNow(Date.now());
+    const interval = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(interval);
-  }, []);
+  }, [connectedAt]);
+  const callDuration = connectedAt ? Math.max(0, Math.floor((now - connectedAt) / 1000)) : 0;
 
   // Handle keyboard input for DTMF during calls. Escape closes the sheet /
   // device picker (TransferModal handles its own).
@@ -149,7 +153,8 @@ const CallScreen: React.FC<CallScreenProps> = ({
       // digits were being sent to the far end as DTMF), or for shortcuts.
       if ((e.target as HTMLElement | null)?.closest('input, textarea, select')) return;
       if (e.ctrlKey || e.metaKey || e.altKey || e.repeat) return;
-      // Only handle DTMF keys during active call
+      // DTMF has nowhere to go until the call is connected.
+      if (useCallStore.getState().callStatus !== 'connected') return;
       if ((e.key >= '0' && e.key <= '9') || e.key === '*' || e.key === '#') {
         handleDialPadKey(e.key);
       }
@@ -209,6 +214,21 @@ const CallScreen: React.FC<CallScreenProps> = ({
           <ErrorBanner message={callError} onDismiss={() => setCallState({ callError: null })} />
         )}
 
+        {/* The browser refused to start remote audio without a gesture (see
+            onRemoteAudioBlocked); this tap is that gesture. */}
+        {needsAudioUnlock && (
+          <button
+            type="button"
+            onClick={() => {
+              signalWireService.resumeRemoteAudio();
+              setCallState({ needsAudioUnlock: false });
+            }}
+            className="glass-panel relative z-10 mx-auto mt-2 flex w-[calc(100%-2rem)] max-w-sm items-center justify-center gap-2 rounded-2xl px-4 py-3 text-sm font-medium text-white transition-colors hover:bg-white/10"
+          >
+            <Volume2 size={16} /> Tap to enable audio
+          </button>
+        )}
+
         {showDialPad ? (
           <div className="relative z-10 flex flex-1 flex-col min-h-0 overflow-y-auto short:flex-row short:items-center">
             {/* DTMF Display - matches idle dialer's address input styling */}
@@ -219,7 +239,9 @@ const CallScreen: React.FC<CallScreenProps> = ({
                     {dialPadInput}
                   </div>
                 ) : (
-                  <div className="text-lg sm:text-xl text-gray-500">Enter a number</div>
+                  <div className="text-lg sm:text-xl text-gray-500">
+                    {callStatus === 'connected' ? 'Enter digits to send' : 'Keypad available once connected'}
+                  </div>
                 )}
               </div>
             </div>
@@ -230,6 +252,7 @@ const CallScreen: React.FC<CallScreenProps> = ({
                 onKeyPress={handleDialPadKey}
                 onCall={onEndCall}
                 onHide={() => setShowDialPad(false)}
+                disabled={callStatus !== 'connected'}
               />
             </div>
           </div>
@@ -249,14 +272,23 @@ const CallScreen: React.FC<CallScreenProps> = ({
               >
                 <div className="mb-2 inline-flex items-center gap-2 text-sm text-gray-400">
                   {callStatus !== 'connected' && (
-                    <span className="h-1.5 w-1.5 rounded-full bg-ios-green animate-pulse" />
+                    <span className="h-1.5 w-1.5 rounded-full bg-ios-green motion-safe:animate-pulse" />
                   )}
-                  {isOnHold ? 'On Hold' : callStatus === 'connected' ? 'Connected' : 'Calling…'}
+                  {isOnHold
+                    ? 'On Hold'
+                    : callStatus === 'connected'
+                      ? 'Connected'
+                      : callStatus === 'ringing'
+                        ? 'Ringing…'
+                        : 'Calling…'}
                 </div>
                 <div className="text-2xl sm:text-3xl font-light mb-4 wrap-anywhere">{phoneNumber}</div>
-                <div className="inline-block rounded-full bg-white/5 px-3 py-1 text-lg sm:text-xl text-gray-300 tabular-nums">
-                  {formatDuration(callDuration)}
-                </div>
+                {/* Like iOS, the timer appears once the call is answered. */}
+                {connectedAt && (
+                  <div className="inline-block rounded-full bg-white/5 px-3 py-1 text-lg sm:text-xl text-gray-300 tabular-nums">
+                    {formatDuration(callDuration)}
+                  </div>
+                )}
               </div>
             </div>
 

@@ -9,6 +9,10 @@ interface State {
 }
 
 class ErrorBoundary extends Component<Props, State> {
+  // The DOM-error auto-retry below runs once per mount; a second failure
+  // falls through to the reload card instead of looping.
+  private retriedDomError = false;
+
   constructor(props: Props) {
     super(props);
     this.state = { hasError: false };
@@ -23,10 +27,12 @@ class ErrorBoundary extends Component<Props, State> {
     // Log error details for debugging
     console.error('ErrorBoundary caught:', error, errorInfo);
 
-    // If it's a DOM manipulation error, try to recover
-    if (error.message.includes('removeChild') || error.message.includes('Node')) {
+    // A DOM-manipulation error (e.g. a media element removed out from under
+    // React) usually clears on re-render -- retry once.
+    const isDomError = error.message.includes('removeChild') || error.message.includes('Node');
+    if (isDomError && !this.retriedDomError) {
+      this.retriedDomError = true;
       console.log('DOM manipulation error detected, attempting recovery...');
-      // Reset the error state after a brief delay to retry
       setTimeout(() => {
         this.setState({ hasError: false });
       }, 100);
@@ -35,12 +41,19 @@ class ErrorBoundary extends Component<Props, State> {
 
   render() {
     if (this.state.hasError) {
-      // Fallback UI - just show loading briefly
+      // Same card as App.tsx's connection-error screen.
       return (
-        <div className="flex flex-col h-dvh bg-black items-center justify-center">
-          <div className="text-center">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-ios-green mb-4 mx-auto"></div>
-            <p className="text-gray-400">Recovering...</p>
+        <div className="app-shell flex flex-col h-dvh items-center justify-center p-8">
+          <div className="glass-panel w-full max-w-sm rounded-2xl p-8 text-center">
+            <h1 className="text-2xl font-semibold mb-4 text-red-400">Something went wrong</h1>
+            <p className="text-gray-400 mb-8">The dialer hit an unexpected error. Reload to start over.</p>
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="w-full rounded-xl border border-white/10 bg-white/6 px-6 py-3 font-medium text-white backdrop-blur-md transition-all hover:bg-white/10 active:scale-[0.98]"
+            >
+              Reload
+            </button>
           </div>
         </div>
       );

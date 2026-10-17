@@ -20,14 +20,14 @@ const IncomingCall: React.FC<IncomingCallProps> = ({
       <div className="flex-1 flex flex-col justify-center items-center px-6 short:self-stretch">
         <div className="max-w-full text-center">
           <div className="mb-4 inline-flex items-center gap-2 text-sm text-gray-400">
-            <span className="h-1.5 w-1.5 rounded-full bg-ios-green animate-pulse" />
+            <span className="h-1.5 w-1.5 rounded-full bg-ios-green motion-safe:animate-pulse" />
             {isVideoCall ? 'Incoming video call' : 'Incoming call'}
           </div>
           <div className="text-3xl font-light mb-8 wrap-anywhere short:mb-0">{phoneNumber}</div>
 
           {/* Avatar placeholder */}
           <div className="relative mx-auto mb-8 flex h-32 w-32 short:hidden items-center justify-center rounded-full bg-linear-to-b from-white/10 to-white/2 ring-1 ring-white/10 shadow-[0_8px_24px_rgba(0,0,0,0.4)]">
-            <span className="absolute inset-0 rounded-full ring-1 ring-ios-green/30 animate-ping" />
+            <span className="absolute inset-0 rounded-full ring-1 ring-ios-green/30 motion-safe:animate-ping" />
             {isVideoCall ? <Video size={48} className="text-gray-300" /> : <Phone size={48} className="text-gray-300" />}
           </div>
         </div>
@@ -51,7 +51,7 @@ const IncomingCall: React.FC<IncomingCallProps> = ({
           {/* Answer Button */}
           <div className="flex flex-col items-center">
             <div className="relative">
-              <span className="absolute inset-0 rounded-full bg-ios-green/40 animate-ping" />
+              <span className="absolute inset-0 rounded-full bg-ios-green/40 motion-safe:animate-ping" />
               <button
                 onClick={onAnswer}
                 aria-label="Accept"

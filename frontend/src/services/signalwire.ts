@@ -87,6 +87,10 @@ export interface SignalWireCallbacks {
   onCallReattached?: (remoteNumber: string, hasVideo: boolean) => void;
   onCallEnded?: (wasIncoming: boolean) => void;
   onCallConnected?: () => void;
+  // Progress of a call before it connects, from call.status$: 'ringing' once
+  // the far end is ringing (SIP 180/183), 'connecting' for the SDK's
+  // trying/connecting statuses.
+  onCallStatusChange?: (status: 'connecting' | 'ringing') => void;
   onRemoteVideoChange?: (hasVideo: boolean) => void;
   // Reflects client.ready$ for the lifetime of the connection, not just the
   // one-shot mount-time init result.
@@ -116,6 +120,10 @@ export interface SignalWireCallbacks {
   // already move status$ to 'failed', which ends the call through the
   // normal path.
   onCallMediaError?: (error: MediaAccessError | MediaTrackError) => void;
+  // The browser refused to start remote audio (autoplay policy: no user
+  // gesture on this page yet, e.g. a call reattached after a reload). The UI
+  // shows a tap-to-enable control that calls resumeRemoteAudio().
+  onRemoteAudioBlocked?: () => void;
 }
 
 // What the browser does when a constraint isn't specified (and what
@@ -200,6 +208,7 @@ class SignalWireService {
   private onCallReattached: ((remoteNumber: string, hasVideo: boolean) => void) | null = null;
   private onCallEnded: ((wasIncoming: boolean) => void) | null = null;
   private onCallConnected: (() => void) | null = null;
+  private onCallStatusChange: ((status: 'connecting' | 'ringing') => void) | null = null;
   private onRemoteVideoChange: ((hasVideo: boolean) => void) | null = null;
   private onReadyChange: ((ready: boolean) => void) | null = null;
   private onClientError: ((message: string) => void) | null = null;
@@ -208,6 +217,7 @@ class SignalWireService {
   private onAudioProcessingChange: ((state: AudioProcessingState) => void) | null = null;
   private onQualityChange: ((state: CallQualityState) => void) | null = null;
   private onCallMediaError: ((error: MediaAccessError | MediaTrackError) => void) | null = null;
+  private onRemoteAudioBlocked: (() => void) | null = null;
 
   async initialize(callbacks: SignalWireCallbacks = {}) {
     if (this.isInitializing || this.isInitialized) {
@@ -226,6 +236,7 @@ class SignalWireService {
       this.onCallReattached = callbacks.onCallReattached || null;
       this.onCallEnded = callbacks.onCallEnded || null;
       this.onCallConnected = callbacks.onCallConnected || null;
+      this.onCallStatusChange = callbacks.onCallStatusChange || null;
       this.onRemoteVideoChange = callbacks.onRemoteVideoChange || null;
       this.onReadyChange = callbacks.onReadyChange || null;
       this.onClientError = callbacks.onClientError || null;
@@ -234,6 +245,7 @@ class SignalWireService {
       this.onAudioProcessingChange = callbacks.onAudioProcessingChange || null;
       this.onQualityChange = callbacks.onQualityChange || null;
       this.onCallMediaError = callbacks.onCallMediaError || null;
+      this.onRemoteAudioBlocked = callbacks.onRemoteAudioBlocked || null;
 
       // Create credential provider with automatic refresh
       const credentialProvider = {
@@ -503,7 +515,11 @@ class SignalWireService {
         : '';
       console.log('Call status:', status + transferSuffix);
 
-      if (status === 'connected') {
+      if (status === 'trying' || status === 'connecting') {
+        this.onCallStatusChange?.('connecting');
+      } else if (status === 'ringing') {
+        this.onCallStatusChange?.('ringing');
+      } else if (status === 'connected') {
         if (this.pendingTransferDestination) {
           console.log('[transfer] Call is still connected on this leg -- the transfer did not take the call away, so it likely failed or was not accepted by the destination');
           this.pendingTransferDestination = null;
@@ -673,6 +689,9 @@ class SignalWireService {
       this.remoteVideoEl.srcObject = stream;
       this.remoteAudioRoutedToVideo = true;
       this.clearAudioSink();
+      // The autoplay attribute fails silently under the autoplay policy; an
+      // explicit play() lets the refusal be detected and surfaced.
+      this.playSink(this.remoteVideoEl);
     } else if (!this.remoteAudioRoutedToVideo) {
       this.playRemoteStream(stream);
     }
@@ -788,11 +807,30 @@ class SignalWireService {
     }
     audioEl.srcObject = stream;
     audioEl.volume = 1.0;
-    audioEl.play().catch(err => {
+    this.playSink(audioEl);
+  }
+
+  // play() on a remote-media sink, surfacing an autoplay refusal to the UI.
+  private playSink(el: HTMLMediaElement) {
+    el.play().catch((err) => {
       // A newer srcObject superseded this play() call; its own play() takes over.
       if (err instanceof DOMException && err.name === 'AbortError') return;
-      console.error('Remote audio play() failed:', err);
+      if (err instanceof DOMException && err.name === 'NotAllowedError') {
+        console.warn('Remote media playback blocked by the autoplay policy - waiting for a user gesture');
+        this.onRemoteAudioBlocked?.();
+        return;
+      }
+      console.error('Remote media play() failed:', err);
     });
+  }
+
+  // Called from a user gesture (the call screen's "Tap to enable audio"):
+  // retries playback on whichever element carries remote media, and resumes
+  // the tone service's AudioContext while the gesture is live.
+  resumeRemoteAudio() {
+    const sinkEl = this.getRemoteMediaSinkElement();
+    if (sinkEl) this.playSink(sinkEl);
+    void toneService.resume();
   }
 
   // SIP URIs (sip:user@domain) and Fabric addresses (/public/room-name) are
@@ -1343,8 +1381,10 @@ class SignalWireService {
     return document.getElementById('sw-remote-audio') as HTMLAudioElement | null;
   }
 
+  // DTMF only has somewhere to go once the call is connected (per the SDK's
+  // call-controls guide); digits tapped while it's still ringing are dropped.
   async sendDTMF(digit: string) {
-    if (this.currentCall) {
+    if (this.currentCall?.status === 'connected') {
       await this.currentCall.sendDigits(digit);
     }
   }
