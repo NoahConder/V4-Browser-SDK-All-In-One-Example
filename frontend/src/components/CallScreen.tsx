@@ -8,6 +8,8 @@ import CallControlsSheet from './CallControlsSheet';
 import TransferModal from './TransferModal';
 import DevicePicker from './DevicePicker';
 import CallQualityBadge from './CallQualityBadge';
+import CallStatsSheet from './CallStatsSheet';
+import AudioLevelMeter from './AudioLevelMeter';
 import { useSignalWire } from '../hooks/useSignalWire';
 import { useCallStore } from '../hooks/useCallStore';
 import { signalWireService } from '../services/signalwire';
@@ -91,6 +93,7 @@ const CallScreen: React.FC<CallScreenProps> = ({
   const [isControlsSheetOpen, setIsControlsSheetOpen] = useState(false);
   const [isTransferModalOpen, setIsTransferModalOpen] = useState(false);
   const [isDevicePickerOpen, setIsDevicePickerOpen] = useState(false);
+  const [isStatsSheetOpen, setIsStatsSheetOpen] = useState(false);
   // Kept here (not in the sheet, which unmounts on close) so it survives
   // reopening the sheet. Best-effort: Chrome/Edge tabs and windows only.
   const [shareScreenAudio, setShareScreenAudio] = useState(false);
@@ -102,6 +105,7 @@ const CallScreen: React.FC<CallScreenProps> = ({
     toggleEchoCancellation,
     toggleAutoGain,
     toggleNoiseSuppression,
+    requestIceRestart,
   } = useSignalWire();
   const callStatus = useCallStore((s) => s.callStatus);
   const callError = useCallStore((s) => s.callError);
@@ -148,6 +152,7 @@ const CallScreen: React.FC<CallScreenProps> = ({
       if (e.key === 'Escape') {
         setIsControlsSheetOpen(false);
         setIsDevicePickerOpen(false);
+        setIsStatsSheetOpen(false);
         return;
       }
       // Not while typing in a field (e.g. the Transfer destination -- those
@@ -188,7 +193,11 @@ const CallScreen: React.FC<CallScreenProps> = ({
   return (
     <div className="app-shell flex flex-col h-dvh">
       {/* Status Bar - always visible */}
-      <StatusBar>{callStatus === 'connected' && <CallQualityBadge />}</StatusBar>
+      <StatusBar>
+        {(callStatus === 'connected' || isMediaDisrupted) && (
+          <CallQualityBadge onClick={() => setIsStatsSheetOpen(true)} />
+        )}
+      </StatusBar>
 
       {/* Main Content Container */}
       <div className="relative flex-1 flex flex-col min-h-0 overflow-hidden">
@@ -299,6 +308,7 @@ const CallScreen: React.FC<CallScreenProps> = ({
                     {formatDuration(callDuration)}
                   </div>
                 )}
+                {callStatus === 'connected' && <AudioLevelMeter isMuted={isMuted} />}
               </div>
             </div>
 
@@ -343,6 +353,10 @@ const CallScreen: React.FC<CallScreenProps> = ({
             setIsControlsSheetOpen(false);
             setIsDevicePickerOpen(true);
           }}
+          onOpenStats={() => {
+            setIsControlsSheetOpen(false);
+            setIsStatsSheetOpen(true);
+          }}
           canScreenShare={canScreenShare}
           screenShareStatus={screenShareStatus}
           onToggleScreenShare={() => toggleScreenShare(shareScreenAudio)}
@@ -354,6 +368,12 @@ const CallScreen: React.FC<CallScreenProps> = ({
           onToggleNoiseSuppression={toggleNoiseSuppression}
           isAutoGainOn={isAutoGainOn}
           onToggleAutoGain={toggleAutoGain}
+        />
+
+        <CallStatsSheet
+          isOpen={isStatsSheetOpen}
+          onClose={() => setIsStatsSheetOpen(false)}
+          onRequestIceRestart={requestIceRestart}
         />
 
         <TransferModal

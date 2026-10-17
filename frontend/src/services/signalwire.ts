@@ -17,6 +17,7 @@ import type {
   SessionDiagnostics,
   QualityLevel,
   NetworkIssue,
+  NetworkMetrics,
   RecoveryEvent,
   RecoveryState,
 } from '@signalwire/js';
@@ -79,6 +80,37 @@ export interface CallQualityState {
   level: QualityLevel;
   score: number;
   networkIssues: NetworkIssue[];
+}
+
+// getStats() record shapes this TypeScript version's lib.dom doesn't declare.
+interface IceCandidateStats extends RTCStats {
+  candidateType: string;
+  protocol?: string;
+  relayProtocol?: string;
+}
+
+interface CodecStats extends RTCStats {
+  mimeType: string;
+  clockRate?: number;
+  payloadType: number;
+}
+
+// What RTCPeerConnection.getStats() says about the transport and codecs in
+// use -- see getConnectionStats().
+export interface ConnectionStatsSnapshot {
+  candidatePair: {
+    localType: string;
+    remoteType: string;
+    protocol: string | null;
+    relayProtocol: string | null;
+    currentRoundTripTimeMs: number | null;
+  } | null;
+  audioOutboundCodec: string | null;
+  audioInboundCodec: string | null;
+  videoOutboundCodec: string | null;
+  videoInboundCodec: string | null;
+  bytesSent: number;
+  bytesReceived: number;
 }
 
 export interface SignalWireCallbacks {
@@ -708,6 +740,113 @@ class SignalWireService {
   // Recent recovery events for the current call (replayed on subscribe).
   getRecoveryEvents$(): Observable<RecoveryEvent> {
     return this.recoveryEvents$.asObservable();
+  }
+
+  // Live per-call metrics for the call-stats sheet and the audio meter. Read
+  // directly by those components, not routed through the store: they tick at
+  // 1 Hz / ~30 fps and have a single, transient consumer -- see CLAUDE.md's
+  // subscription-placement note.
+  getNetworkMetrics$(): Observable<NetworkMetrics[]> {
+    return this.currentCall?.networkMetrics$ ?? of([]);
+  }
+
+  getIsNetworkHealthy$(): Observable<boolean> {
+    return this.currentCall?.isNetworkHealthy$ ?? of(true);
+  }
+
+  getLocalAudioLevel$(): Observable<number> {
+    return this.currentCall?.localAudioLevel$ ?? of(0);
+  }
+
+  getLocalSpeaking$(): Observable<boolean> {
+    return this.currentCall?.localSpeaking$ ?? of(false);
+  }
+
+  getRemoteAudioLevel$(): Observable<number> {
+    return this.currentCall?.remoteAudioLevel$ ?? of(0);
+  }
+
+  getCurrentCallId(): string | null {
+    return this.currentCall?.id ?? null;
+  }
+
+  // One standard ICE restart. The SDK ignores it while its own recovery is
+  // already in progress.
+  async requestIceRestart(): Promise<void> {
+    await this.requireCurrentCall().requestIceRestart();
+  }
+
+  // Snapshot of the selected ICE candidate pair and the negotiated codecs --
+  // what a tester wants to confirm (did the codec preference take? is media
+  // relayed through TURN?). Polled by the stats sheet while it's open.
+  async getConnectionStats(): Promise<ConnectionStatsSnapshot | null> {
+    const pc = this.currentCall?.rtcPeerConnection;
+    if (!pc) return null;
+    const report = await pc.getStats();
+    const byId = new Map<string, RTCStats>();
+    report.forEach((stat: RTCStats) => byId.set(stat.id, stat));
+
+    // The transport names the pair in use; older/other engines only mark it
+    // nominated + succeeded.
+    let pair: RTCIceCandidatePairStats | undefined;
+    for (const stat of byId.values()) {
+      if (stat.type === 'transport') {
+        const { selectedCandidatePairId } = stat as RTCTransportStats;
+        if (selectedCandidatePairId) pair = byId.get(selectedCandidatePairId) as RTCIceCandidatePairStats | undefined;
+      }
+    }
+    if (!pair) {
+      for (const stat of byId.values()) {
+        if (stat.type === 'candidate-pair') {
+          const candidate = stat as RTCIceCandidatePairStats;
+          if (candidate.nominated && candidate.state === 'succeeded') pair = candidate;
+        }
+      }
+    }
+    const local = pair ? (byId.get(pair.localCandidateId) as IceCandidateStats | undefined) : undefined;
+    const remote = pair ? (byId.get(pair.remoteCandidateId) as IceCandidateStats | undefined) : undefined;
+
+    const codecOf = (codecId?: string): string | null => {
+      const codec = codecId ? (byId.get(codecId) as CodecStats | undefined) : undefined;
+      if (!codec) return null;
+      const name = codec.mimeType.replace(/^(audio|video)\//i, '');
+      const rate = codec.clockRate ? ` ${codec.clockRate / 1000}k` : '';
+      return `${name}${rate} (pt ${codec.payloadType})`;
+    };
+
+    const snapshot: ConnectionStatsSnapshot = {
+      candidatePair:
+        pair && local && remote
+          ? {
+              localType: local.candidateType,
+              remoteType: remote.candidateType,
+              protocol: local.protocol ?? remote.protocol ?? null,
+              relayProtocol: local.relayProtocol ?? null,
+              currentRoundTripTimeMs:
+                pair.currentRoundTripTime != null ? Math.round(pair.currentRoundTripTime * 1000) : null,
+            }
+          : null,
+      audioOutboundCodec: null,
+      audioInboundCodec: null,
+      videoOutboundCodec: null,
+      videoInboundCodec: null,
+      bytesSent: 0,
+      bytesReceived: 0,
+    };
+    for (const stat of byId.values()) {
+      if (stat.type === 'outbound-rtp') {
+        const rtp = stat as RTCOutboundRtpStreamStats;
+        snapshot.bytesSent += rtp.bytesSent ?? 0;
+        if (rtp.kind === 'audio') snapshot.audioOutboundCodec = codecOf(rtp.codecId);
+        else if (rtp.kind === 'video') snapshot.videoOutboundCodec = codecOf(rtp.codecId);
+      } else if (stat.type === 'inbound-rtp') {
+        const rtp = stat as RTCInboundRtpStreamStats;
+        snapshot.bytesReceived += rtp.bytesReceived ?? 0;
+        if (rtp.kind === 'audio') snapshot.audioInboundCodec = codecOf(rtp.codecId);
+        else if (rtp.kind === 'video') snapshot.videoInboundCodec = codecOf(rtp.codecId);
+      }
+    }
+    return snapshot;
   }
 
   private setAudioProcessing(state: AudioProcessingState) {

@@ -452,6 +452,16 @@ export const useSignalWire = () => {
     }
   };
 
+  // One manual ICE restart, from the call-stats sheet.
+  const requestIceRestart = async () => {
+    try {
+      await signalWireService.requestIceRestart();
+    } catch (err) {
+      console.warn('ICE restart failed:', err);
+      setCallState({ callError: describeCallError(err) });
+    }
+  };
+
   return {
     isInitialized,
     error,
@@ -469,5 +479,6 @@ export const useSignalWire = () => {
     toggleEchoCancellation,
     toggleAutoGain,
     toggleNoiseSuppression,
+    requestIceRestart,
   };
 };
