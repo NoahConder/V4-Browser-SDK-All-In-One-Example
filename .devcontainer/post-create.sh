@@ -25,11 +25,3 @@ if [ ! -f backend/.env ]; then
   echo "Optional: PORT, FRONTEND_URL"
   echo ""
 fi
-
-if [ ! -f frontend/.env ]; then
-  echo ""
-  echo "WARNING: frontend/.env not found."
-  echo "Create frontend/.env with:"
-  echo "  VITE_DIALER_API_KEY=<same value as backend/.env's DIALER_API_KEY>"
-  echo ""
-fi

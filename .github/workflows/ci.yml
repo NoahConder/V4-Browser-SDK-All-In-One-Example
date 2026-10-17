@@ -26,8 +26,6 @@ jobs:
       # The e2e suite runs against the dev server through the `?e2e=1` seam;
       # no SignalWire credentials are needed.
       - run: npm test
-        env:
-          VITE_DIALER_API_KEY: ci
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

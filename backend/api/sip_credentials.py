@@ -1,6 +1,6 @@
 from flask import Blueprint, jsonify, request
 from utils.signalwire import get_client
-from utils.security import bounded_page
+from utils.security import gate, bounded_page
 from concurrent.futures import ThreadPoolExecutor
 import logging
 import time
@@ -42,7 +42,15 @@ def get_sip_credentials():
     List SIP credentials along with their dialable addresses, paginated so the
     frontend can render a "load more" list without fetching every credential's
     addresses up front (fetching addresses is one REST call per credential).
+
+    Gated (utils/security.gate): every listed item costs an authenticated REST
+    call to SignalWire, so left open this was a free amplifier against the
+    account's API quota. The limit is higher than the token endpoints' since
+    "load more" pages through it.
     """
+    blocked = gate(request, 'sip', limit=30)
+    if blocked:
+        return blocked
     try:
         if not get_client():
             return jsonify({

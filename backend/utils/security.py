@@ -1,15 +1,18 @@
-"""Security helpers: API-key gating, simple rate limiting for the
-token-minting endpoints, and request-parameter bounds.
+"""Security helpers: API-key gating, simple rate limiting, and
+request-parameter bounds, shared by every /api blueprint.
 
 Added to harden the demo before it is exposed publicly: the token endpoints
-mint SignalWire subscriber tokens (which can place billable calls), so they
-must not be open to the internet.
+mint SignalWire subscriber tokens (which can place billable calls), and the
+listing endpoints fan out authenticated REST calls to SignalWire per item, so
+none of them should be open to the internet.
 """
 import os
 import time
 import hmac
 import logging
 from collections import defaultdict, deque
+
+from flask import jsonify
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +66,23 @@ def api_key_ok(request) -> bool:
         return False
     provided = request.headers.get("X-API-Key", "")
     return bool(provided) and hmac.compare_digest(provided, expected)
+
+
+def gate(request, scope: str, limit: int = 10, window_sec: int = 60):
+    """Guard for every /api route: API key (fail-closed) + per-IP rate limit,
+    with the limiter keyed by `scope` so one endpoint's traffic doesn't starve
+    another's. Returns a Flask (response, status) tuple to abort with, or None
+    to proceed. Costs the frontend nothing: its axios instance sends X-API-Key
+    on every request.
+    """
+    if not api_key_ok(request):
+        if not os.getenv("DIALER_API_KEY"):
+            # Fail-closed: never serve when the gate isn't configured.
+            return jsonify({"success": False, "error": "Service not configured"}), 503
+        return jsonify({"success": False, "error": "Unauthorized"}), 401
+    if rate_limited(f"{scope}:{client_ip(request)}", limit=limit, window_sec=window_sec):
+        return jsonify({"success": False, "error": "Rate limit exceeded"}), 429
+    return None
 
 
 MAX_PAGE_LIMIT = 50

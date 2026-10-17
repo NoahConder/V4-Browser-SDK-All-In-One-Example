@@ -3,10 +3,11 @@ import type { TokenData, CallData, SwmlScript, SipCredential, Subscriber } from 
 
 const API_BASE = '/api';
 
-// Shared secret for the gated token endpoints (baked at build time). Note: in a
-// browser SPA this is discoverable by anyone who loads the page — it raises the
-// bar against direct/automated abuse of the token endpoint, not against a
-// determined user. Pair with edge auth for real protection.
+// Shared key for the gated token endpoints. vite.config.ts injects it from
+// backend/.env's DIALER_API_KEY at build/dev-server start (there is no
+// frontend/.env). Note: in a browser SPA this is discoverable by anyone who
+// loads the page — it raises the bar against direct/automated abuse of the
+// token endpoint, not against a determined user.
 const API_KEY = import.meta.env.VITE_DIALER_API_KEY as string | undefined;
 
 const api = axios.create({

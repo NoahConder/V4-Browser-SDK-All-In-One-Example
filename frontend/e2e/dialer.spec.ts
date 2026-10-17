@@ -60,7 +60,18 @@ test.describe('dial pad on a small phone', () => {
     const input = page.locator(ADDRESS_INPUT);
     await input.fill('5551234567');
     await input.press('Enter');
-    await expect.poll(() => drainLog(page)).toEqual([['makeCall', '5551234567']]);
+    await expect.poll(() => drainLog(page)).toEqual([['makeCall', '5551234567', false]]);
+  });
+
+  test('Enter honors a video toggle flipped after typing', async ({ page }) => {
+    // The Enter listener is bound once per screen state; it must read the
+    // current toggle, not the one captured when it was bound.
+    const input = page.locator(ADDRESS_INPUT);
+    await input.fill('5551234567');
+    await page.click('button[aria-label="Video call off"]');
+    await input.press('Enter');
+    await expect.poll(() => drainLog(page)).toEqual([['makeCall', '5551234567', true]]);
+    expect(await evalInApp(page, `return store.getState().isVideoCall;`)).toBe(true);
   });
 
   test('an error banner leaves the Call button on screen', async ({ page }) => {

@@ -194,6 +194,13 @@ const Dialer: React.FC = () => {
   // Not from other fields (Enter in the Diagnostics test input would otherwise
   // dial the pad's number) or a focused button (Enter already activates it).
   // Escape closes whichever header panel is open.
+  //
+  // The listener is bound once per screen state and reaches handleCall through
+  // a ref. handleCall closes over the field value, the video toggle and the
+  // picked label, so a copy bound at effect time dialed with stale values --
+  // toggling video after typing and pressing Enter placed an audio call.
+  const handleCallRef = useRef(handleCall);
+  handleCallRef.current = handleCall;
   useEffect(() => {
     const handleKeyboardInput = (e: KeyboardEvent) => {
       if (isInCall || isIncoming) return;
@@ -207,17 +214,13 @@ const Dialer: React.FC = () => {
       const isOtherControl =
         target !== addressInputRef.current && !!target?.closest('input, textarea, select, button');
       if (e.key === 'Enter' && !isOtherControl) {
-        handleCall();
+        handleCallRef.current();
       }
     };
 
     window.addEventListener('keydown', handleKeyboardInput);
     return () => window.removeEventListener('keydown', handleKeyboardInput);
-    // Re-bind only when the values the handler gates on change. handleCall is
-    // recreated every render, so listing it would re-attach the listener on
-    // every render with no behavioral benefit.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phoneNumber, isInCall, isIncoming]);
+  }, [isInCall, isIncoming]);
 
   const addressInputValue = isAddressInputFocused ? phoneNumber : formatPhoneNumber(phoneNumber);
   const isDialerShown = !isInCall && !isIncoming;

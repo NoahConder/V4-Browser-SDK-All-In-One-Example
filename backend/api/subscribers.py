@@ -1,7 +1,6 @@
-import os
 from flask import Blueprint, jsonify, request
 from utils.signalwire import get_client
-from utils.security import api_key_ok, rate_limited, client_ip, bounded_page
+from utils.security import gate, bounded_page
 from concurrent.futures import ThreadPoolExecutor
 import logging
 import time
@@ -9,26 +8,11 @@ import time
 logger = logging.getLogger(__name__)
 subscribers_bp = Blueprint('subscribers', __name__)
 
-# Unlike the SWML/SIP resource browsers, subscriber records carry real PII
-# (email, name) rather than just resource labels, so this list is gated the
-# same way as the token endpoints instead of being left open.
+# Subscriber records carry real PII (email, name), so this list is gated like
+# the token endpoints (utils/security.gate) -- as every /api route now is.
 _subscribers_cache = {"data": None, "expires_at": 0}
 CACHE_TTL_SECONDS = 60
 ADDRESS_FETCH_WORKERS = 10
-
-
-def _gate():
-    """Same gate as auth.py's token endpoints: API key (fail-closed) + rate
-    limit. This list exposes subscriber emails/names, so it must not be an
-    open, scrapeable endpoint on the public internet.
-    """
-    if not api_key_ok(request):
-        if not os.getenv("DIALER_API_KEY"):
-            return jsonify({"success": False, "error": "Subscriber service not configured"}), 503
-        return jsonify({"success": False, "error": "Unauthorized"}), 401
-    if rate_limited(f"subscribers:{client_ip(request)}", limit=10, window_sec=60):
-        return jsonify({"success": False, "error": "Rate limit exceeded"}), 429
-    return None
 
 
 def get_subscribers_cached() -> list:
@@ -100,7 +84,7 @@ def get_subscribers():
     List subscribers in this space, paginated for a picker UI, each with its
     dialable addresses.
     """
-    blocked = _gate()
+    blocked = gate(request, 'subscribers')
     if blocked:
         return blocked
     try:

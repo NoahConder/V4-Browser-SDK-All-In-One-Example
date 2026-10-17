@@ -3,7 +3,8 @@ import react from '@vitejs/plugin-react'
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
-  // Load env file from backend directory since that's where FRONTEND_URL is defined
+  // backend/.env is the only env file: FRONTEND_URL feeds allowedHosts below and
+  // DIALER_API_KEY is baked into the bundle via `define` (there is no frontend/.env).
   const env = loadEnv(mode, '../backend', '')
 
   // Parse the hostname from FRONTEND_URL if it exists
@@ -20,6 +21,11 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [react()],
+    define: {
+      // Forward backend/.env's gate key so nothing has to be kept in sync by hand.
+      // '' when unset: api.ts then sends no X-API-Key and the backend answers 503.
+      'import.meta.env.VITE_DIALER_API_KEY': JSON.stringify(env.DIALER_API_KEY ?? ''),
+    },
     build: {
       rolldownOptions: {
         output: {

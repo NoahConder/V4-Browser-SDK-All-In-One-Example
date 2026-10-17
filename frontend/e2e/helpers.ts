@@ -42,7 +42,7 @@ export const stubCallMethods = (page: Page) =>
   evalInApp(
     page,
     `
-    s.makeCall = async (n) => { log('makeCall', n); return { id: 'sdk-call-1' }; };
+    s.makeCall = async (n, video) => { log('makeCall', n, video); return { id: 'sdk-call-1' }; };
     s.sendDTMF = async (d) => { log('dtmf', d); };
     s.endCall = async () => { log('endCall'); };
     s.answerCall = async () => { log('answer'); };
