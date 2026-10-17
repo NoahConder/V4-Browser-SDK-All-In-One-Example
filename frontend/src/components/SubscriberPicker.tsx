@@ -5,6 +5,7 @@ import { subscribersAPI } from '../services/api';
 import { signalWireService, switchSubscriber } from '../services/signalwire';
 import { useCallStore } from '../hooks/useCallStore';
 import { describeCallError } from '../hooks/useSignalWire';
+import { useDialog } from '../hooks/useDialog';
 import type { Subscriber } from '../types';
 
 interface SubscriberPickerProps {
@@ -71,6 +72,8 @@ const SubscriberPicker: React.FC<SubscriberPickerProps> = ({ isOpen, onClose }) 
     };
   }, [isOpen]);
 
+  const dialogRef = useDialog(isOpen, onClose);
+
   if (!isOpen) return null;
 
   const handleLoadMore = () => {
@@ -97,9 +100,15 @@ const SubscriberPicker: React.FC<SubscriberPickerProps> = ({ isOpen, onClose }) 
   };
 
   return (
-    <div className="glass-panel relative z-10 mx-auto mt-2 max-h-64 w-[calc(100%-2rem)] max-w-sm overflow-y-auto rounded-2xl px-2 py-2">
+    <div
+      ref={dialogRef}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="subscriber-title"
+      className="glass-panel relative z-10 mx-auto mt-2 max-h-64 w-[calc(100%-2rem)] max-w-sm overflow-y-auto rounded-2xl px-2 py-2"
+    >
       <div className="flex items-center justify-between px-3 py-2">
-        <span className="text-xs font-medium uppercase tracking-wider text-gray-400">Subscriber</span>
+        <span id="subscriber-title" className="text-xs font-medium uppercase tracking-wider text-gray-400">Subscriber</span>
         <button
           type="button"
           onClick={onClose}

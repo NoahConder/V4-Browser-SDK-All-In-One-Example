@@ -40,6 +40,17 @@
   @apply border border-white/10 bg-white/4 backdrop-blur-xl;
 }
 
+@utility pb-safe {
+  /* Bottom padding that clears the home indicator on notched phones when
+     installed/standalone (viewport-fit=cover in index.html). */
+  padding-bottom: max(1.5rem, calc(env(safe-area-inset-bottom) + 0.5rem));
+}
+
+@utility pt-safe {
+  /* Status bar top padding that clears the notch / Dynamic Island. */
+  padding-top: max(0.25rem, env(safe-area-inset-top));
+}
+
 @utility dial-button {
   @apply rounded-full flex flex-col items-center justify-center transition-all duration-150 ease-out active:scale-90 shadow-[0_2px_10px_rgba(0,0,0,0.35)];
   width: 70px;

@@ -376,7 +376,7 @@ const Dialer: React.FC = () => {
               placeholder="Number or address"
               aria-label="Number or address"
               style={{ fontSize: addressFontSize }}
-              className="w-full min-w-0 bg-transparent font-light text-white outline-hidden border-none placeholder:text-gray-500 disabled:opacity-50"
+              className="w-full min-w-0 select-text bg-transparent font-light text-white outline-hidden border-none placeholder:text-gray-500 disabled:opacity-50"
             />
 
             {phoneNumber && !isInCall && !isCallingInProgress && (
@@ -436,7 +436,7 @@ const Dialer: React.FC = () => {
         </div>
 
         {/* Dial Pad Container */}
-        <div className="pb-6 sm:pb-8 short:flex-1 short:py-2">
+        <div className="pb-safe sm:pb-8 short:flex-1 short:py-2">
           <DialPad
             onKeyPress={handleKeyInput}
             onCall={handleCall}

@@ -5,6 +5,7 @@ import { SheetSection, SheetStat, SheetSwitch } from './SheetPrimitives';
 import { signalWireService } from '../services/signalwire';
 import { downloadDiagnostics } from '../services/diagnostics';
 import { describeCallError } from '../hooks/useSignalWire';
+import { useDialog } from '../hooks/useDialog';
 import { LOG_LEVELS, loadSettings, saveSettings, type AudioCodec, type DialerSettings } from '../services/settings';
 
 interface DiagnosticsPanelProps {
@@ -33,6 +34,7 @@ const DiagnosticsPanel: React.FC<DiagnosticsPanelProps> = ({ isOpen, onClose }) 
   const [result, setResult] = useState<PreflightResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [settings, setSettings] = useState<DialerSettings>(() => loadSettings());
+  const dialogRef = useDialog(isOpen, onClose);
 
   if (!isOpen) return null;
 
@@ -73,9 +75,17 @@ const DiagnosticsPanel: React.FC<DiagnosticsPanelProps> = ({ isOpen, onClose }) 
   const sdk = signalWireService.getSdkInfo();
 
   return (
-    <div className="glass-panel mx-auto mt-2 max-h-[70dvh] w-[calc(100%-2rem)] max-w-sm overflow-y-auto rounded-2xl px-4 py-3">
+    <div
+      ref={dialogRef}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="diagnostics-title"
+      className="glass-panel mx-auto mt-2 max-h-[70dvh] w-[calc(100%-2rem)] max-w-sm overflow-y-auto rounded-2xl px-4 py-3"
+    >
       <div className="mb-2 flex items-center justify-between">
-        <span className="text-xs font-medium uppercase tracking-wider text-gray-400">Diagnostics &amp; Settings</span>
+        <span id="diagnostics-title" className="text-xs font-medium uppercase tracking-wider text-gray-400">
+          Diagnostics &amp; Settings
+        </span>
         <button
           type="button"
           onClick={onClose}

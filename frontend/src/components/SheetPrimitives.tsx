@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useId } from 'react';
 import { Copy, X } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
+import { useDialog } from '../hooks/useDialog';
 
 // Building blocks for the bottom sheets over the call screen (More controls,
 // Call statistics) and the idle-screen settings.
@@ -11,14 +12,26 @@ interface SheetShellProps {
   children: React.ReactNode;
 }
 
-// Backdrop (tap to close) plus the frosted bottom panel.
-export const SheetShell: React.FC<SheetShellProps> = ({ title, onClose, children }) => (
+// Backdrop (tap to close) plus the frosted bottom panel. Rendered only while
+// open, so the dialog behavior (focus trap, Escape, focus return) is always on.
+export const SheetShell: React.FC<SheetShellProps> = ({ title, onClose, children }) => {
+  const titleId = useId();
+  const dialogRef = useDialog(true, onClose);
+  return (
   <div className="absolute inset-0 z-20 flex flex-col justify-end">
     <div className="absolute inset-0 bg-black/60" onClick={onClose} />
 
-    <div className="glass-panel relative z-10 mx-auto mb-4 max-h-[calc(100%-2rem)] w-[calc(100%-2rem)] max-w-sm overflow-y-auto rounded-2xl px-2 py-2">
+    <div
+      ref={dialogRef}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={titleId}
+      className="glass-panel relative z-10 mx-auto mb-4 max-h-[calc(100%-2rem)] w-[calc(100%-2rem)] max-w-sm overflow-y-auto rounded-2xl px-2 py-2"
+    >
       <div className="flex items-center justify-between px-3 py-2">
-        <span className="text-xs font-medium uppercase tracking-wider text-gray-400">{title}</span>
+        <span id={titleId} className="text-xs font-medium uppercase tracking-wider text-gray-400">
+          {title}
+        </span>
         <button
           type="button"
           onClick={onClose}
@@ -31,7 +44,8 @@ export const SheetShell: React.FC<SheetShellProps> = ({ title, onClose, children
       {children}
     </div>
   </div>
-);
+  );
+};
 
 // Divider with a small caps label above a group of rows.
 export const SheetSection: React.FC<{ label: string }> = ({ label }) => (

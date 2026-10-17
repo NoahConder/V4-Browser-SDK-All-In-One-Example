@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Mic, Video, Volume2, Check, X } from 'lucide-react';
 import { signalWireService } from '../services/signalwire';
+import { useDialog } from '../hooks/useDialog';
 
 interface DevicePickerProps {
   isOpen: boolean;
@@ -75,6 +76,8 @@ const DevicePicker: React.FC<DevicePickerProps> = ({ isOpen, onClose }) => {
     return () => subs.forEach((sub) => sub.unsubscribe());
   }, [isOpen]);
 
+  const dialogRef = useDialog(isOpen, onClose);
+
   if (!isOpen) return null;
 
   const handleSelectAudioOutput = (device: MediaDeviceInfo | null) => {
@@ -84,9 +87,15 @@ const DevicePicker: React.FC<DevicePickerProps> = ({ isOpen, onClose }) => {
   };
 
   return (
-    <div className="glass-panel relative z-10 mx-auto mt-2 max-h-64 w-[calc(100%-2rem)] max-w-sm overflow-y-auto rounded-2xl px-2 py-2">
+    <div
+      ref={dialogRef}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="devices-title"
+      className="glass-panel relative z-10 mx-auto mt-2 max-h-64 w-[calc(100%-2rem)] max-w-sm overflow-y-auto rounded-2xl px-2 py-2"
+    >
       <div className="flex items-center justify-between px-3 py-2">
-        <span className="text-xs font-medium uppercase tracking-wider text-gray-400">Devices</span>
+        <span id="devices-title" className="text-xs font-medium uppercase tracking-wider text-gray-400">Devices</span>
         <button
           type="button"
           onClick={onClose}

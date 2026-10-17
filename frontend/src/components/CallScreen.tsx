@@ -124,6 +124,9 @@ const CallScreen: React.FC<CallScreenProps> = ({
   const setCallState = useCallStore((s) => s.setCallState);
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
+  // The key handler below is bound once; this keeps it on the latest prop.
+  const onToggleMuteRef = useRef(onToggleMute);
+  onToggleMuteRef.current = onToggleMute;
 
   // Hand our <video> elements to the service so it can attach the SDK's
   // local/remote MediaStreams as they arrive. Must outlive re-renders of this
@@ -161,6 +164,11 @@ const CallScreen: React.FC<CallScreenProps> = ({
       // digits were being sent to the far end as DTMF), or for shortcuts.
       if ((e.target as HTMLElement | null)?.closest('input, textarea, select')) return;
       if (e.ctrlKey || e.metaKey || e.altKey || e.repeat) return;
+      // M toggles mute.
+      if (e.key === 'm' || e.key === 'M') {
+        onToggleMuteRef.current();
+        return;
+      }
       // DTMF has nowhere to go until the call is connected.
       if (useCallStore.getState().callStatus !== 'connected') return;
       if ((e.key >= '0' && e.key <= '9') || e.key === '*' || e.key === '#') {
@@ -262,7 +270,7 @@ const CallScreen: React.FC<CallScreenProps> = ({
             </div>
 
             {/* Dial Pad with End and Hide buttons */}
-            <div className="pb-6 sm:pb-8 short:flex-1 short:py-2">
+            <div className="pb-safe sm:pb-8 short:flex-1 short:py-2">
               <DialPad
                 onKeyPress={handleDialPadKey}
                 onCall={onEndCall}
@@ -285,7 +293,7 @@ const CallScreen: React.FC<CallScreenProps> = ({
                   showVideoUI ? 'mt-auto w-full bg-linear-to-t from-black/70 to-transparent px-4 pb-4 pt-10' : ''
                 }`}
               >
-                <div className="mb-2 inline-flex items-center gap-2 text-sm text-gray-400">
+                <div className="mb-2 inline-flex items-center gap-2 text-sm text-gray-400" aria-live="polite">
                   {/* Media down but the call not over (ICE disconnected/failed
                       or the SDK mid-recovery) -- the StatusBar dot stays bound
                       to signaling (isClientReady); this one is about media. */}
@@ -306,7 +314,7 @@ const CallScreen: React.FC<CallScreenProps> = ({
                           ? 'Ringing…'
                           : 'Calling…'}
                 </div>
-                <div className="text-2xl sm:text-3xl font-light mb-4 wrap-anywhere">{phoneNumber}</div>
+                <div className="text-2xl sm:text-3xl font-light mb-4 wrap-anywhere select-text">{phoneNumber}</div>
                 {/* Like iOS, the timer appears once the call is answered. */}
                 {connectedAt && (
                   <div className="inline-block rounded-full bg-white/5 px-3 py-1 text-lg sm:text-xl text-gray-300 tabular-nums">
@@ -318,7 +326,7 @@ const CallScreen: React.FC<CallScreenProps> = ({
             </div>
 
             {/* Call Controls - Bottom buttons */}
-            <div className="pb-6 sm:pb-8 short:flex-1 short:py-2">
+            <div className="pb-safe sm:pb-8 short:flex-1 short:py-2">
               <div className="flex justify-center items-center w-full px-4">
                 <div className="grid grid-cols-3 gap-3 sm:gap-4 short:gap-2" style={{ maxWidth: '260px' }}>
                   <CallControl icon={MicOff} label="Mute" active={isMuted} onClick={onToggleMute} />

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Phone, PhoneOff, Video } from 'lucide-react';
 
 interface IncomingCallProps {
@@ -14,6 +14,17 @@ const IncomingCall: React.FC<IncomingCallProps> = ({
   onAnswer,
   onReject,
 }) => {
+  // Enter answers, Escape declines.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.repeat) return;
+      if (e.key === 'Enter') onAnswer();
+      else if (e.key === 'Escape') onReject();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [onAnswer, onReject]);
+
   return (
     <div className="app-shell flex flex-col h-dvh overflow-y-auto short:flex-row short:items-center">
       {/* Caller Info */}
@@ -23,7 +34,7 @@ const IncomingCall: React.FC<IncomingCallProps> = ({
             <span className="h-1.5 w-1.5 rounded-full bg-ios-green motion-safe:animate-pulse" />
             {isVideoCall ? 'Incoming video call' : 'Incoming call'}
           </div>
-          <div className="text-3xl font-light mb-8 wrap-anywhere short:mb-0">{phoneNumber}</div>
+          <div className="text-3xl font-light mb-8 wrap-anywhere select-text short:mb-0">{phoneNumber}</div>
 
           {/* Avatar placeholder */}
           <div className="relative mx-auto mb-8 flex h-32 w-32 short:hidden items-center justify-center rounded-full bg-linear-to-b from-white/10 to-white/2 ring-1 ring-white/10 shadow-[0_8px_24px_rgba(0,0,0,0.4)]">
@@ -34,7 +45,7 @@ const IncomingCall: React.FC<IncomingCallProps> = ({
       </div>
 
       {/* Action Buttons - using same size as dial pad */}
-      <div className="flex justify-center items-center w-full px-4 pb-6 sm:pb-8 short:w-auto short:flex-1 short:py-2">
+      <div className="flex justify-center items-center w-full px-4 pb-safe sm:pb-8 short:w-auto short:flex-1 short:py-2">
         <div className="flex gap-8">
           {/* Reject Button */}
           <div className="flex flex-col items-center">

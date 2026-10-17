@@ -42,7 +42,7 @@ const StatusBar: React.FC<StatusBarProps> = ({ children, hasIcons = false }) => 
   const clock = useClock();
 
   return (
-    <div className="glass-bar relative flex min-h-12 items-center justify-between px-4 py-1 text-sm sm:px-6">
+    <div className="glass-bar relative flex min-h-12 items-center justify-between px-4 pb-1 pt-safe text-sm sm:px-6">
       <span
         role="status"
         title={isClientReady ? 'Connected to SignalWire' : 'Reconnecting to SignalWire…'}

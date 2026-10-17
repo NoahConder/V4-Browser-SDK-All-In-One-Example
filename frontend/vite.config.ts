@@ -20,6 +20,18 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [react()],
+    build: {
+      rolldownOptions: {
+        output: {
+          // One cacheable vendor chunk for the SDK and rxjs -- the bulk of the
+          // bundle, and not lazy-loadable since startup needs it. Also keeps
+          // the app chunk under Vite's size warning.
+          codeSplitting: {
+            groups: [{ name: 'vendor-signalwire', test: /node_modules[\\/](@signalwire|rxjs)[\\/]/ }],
+          },
+        },
+      },
+    },
     optimizeDeps: {
       // @signalwire/js is the published npm package, not a local alias.
       // Pre-bundle it and rxjs so Vite resolves their ESM cleanly.

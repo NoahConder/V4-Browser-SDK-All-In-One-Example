@@ -4,6 +4,7 @@ import ResourceAddressList, { type ResourcePage } from './ResourceAddressList';
 import DirectoryAddressList from './DirectoryAddressList';
 import RecentsList from './RecentsList';
 import { swmlAPI, sipAPI } from '../services/api';
+import { useDialog } from '../hooks/useDialog';
 import type { SwmlScript, SipCredential, DialableAddress } from '../types';
 
 export type ResourceTab = 'directory' | 'recents' | 'swml' | 'sip';
@@ -55,10 +56,18 @@ const DialableResourcesPanel: React.FC<DialableResourcesPanelProps> = ({
   onClose,
   onSelectAddress,
 }) => {
+  const dialogRef = useDialog(isOpen, onClose);
+
   if (!isOpen) return null;
 
   return (
-    <div className="glass-panel mx-auto mt-2 max-h-72 w-[calc(100%-2rem)] max-w-sm overflow-y-auto rounded-2xl px-4 py-3">
+    <div
+      ref={dialogRef}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Dialable resources"
+      className="glass-panel mx-auto mt-2 max-h-72 w-[calc(100%-2rem)] max-w-sm overflow-y-auto rounded-2xl px-4 py-3"
+    >
       <div className="mb-2 flex items-center justify-between gap-2">
         <div
           role="tablist"

@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { X } from 'lucide-react';
 import { describeCallError } from '../hooks/useSignalWire';
+import { useDialog } from '../hooks/useDialog';
 
 interface TransferModalProps {
   isOpen: boolean;
@@ -19,17 +20,10 @@ const TransferModal: React.FC<TransferModalProps> = ({ isOpen, onClose, onTransf
     onClose();
   };
 
-  // Escape cancels, unless a transfer is mid-flight.
-  useEffect(() => {
-    if (!isOpen || isSubmitting) return;
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') handleClose();
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-    // handleClose only clears local state and calls onClose.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, isSubmitting]);
+  // Focus trap + Escape (ignored while a transfer is mid-flight) + focus return.
+  const dialogRef = useDialog(isOpen, () => {
+    if (!isSubmitting) handleClose();
+  });
 
   if (!isOpen) return null;
 
@@ -55,9 +49,15 @@ const TransferModal: React.FC<TransferModalProps> = ({ isOpen, onClose, onTransf
     <div className="absolute inset-0 z-30 flex items-center justify-center px-6">
       <div className="absolute inset-0 bg-black/70" onClick={handleClose} />
 
-      <div className="glass-panel relative z-10 w-full max-w-sm rounded-2xl p-5">
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="transfer-title"
+        className="glass-panel relative z-10 w-full max-w-sm rounded-2xl p-5"
+      >
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-medium text-white">Transfer Call</h2>
+          <h2 id="transfer-title" className="text-lg font-medium text-white">Transfer Call</h2>
           <button
             type="button"
             onClick={handleClose}

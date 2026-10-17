@@ -154,7 +154,7 @@ const DialPad: React.FC<DialPadProps> = ({
                   // Special characters with different sizes and positioning
                   <span className={`font-light leading-none ${
                     key.number === '*'
-                      ? 'text-6xl sm:text-7xl relative top-[10px]'  // Asterisk lowered more for proper centering
+                      ? 'text-6xl sm:text-7xl relative top-2.5'  // Asterisk lowered more for proper centering
                       : 'text-3xl sm:text-4xl'  // Hash stays normal
                   }`}>{key.number}</span>
                 ) : (
