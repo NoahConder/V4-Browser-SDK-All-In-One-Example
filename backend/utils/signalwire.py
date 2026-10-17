@@ -4,9 +4,12 @@ import requests
 from typing import Dict, Optional
 import logging
 from datetime import datetime, timezone
-import base64
 
 logger = logging.getLogger(__name__)
+
+# Every call to SignalWire's REST API is bounded so a slow upstream can't hang
+# a Flask worker indefinitely.
+REQUEST_TIMEOUT_S = 10
 
 
 class SignalWireClient:
@@ -23,13 +26,13 @@ class SignalWireClient:
         self.api_base = f"https://{self.space_name}/api/fabric"
         self.auth = (self.project_id, self.auth_token)
 
-    def create_subscriber_token(self, subscriber_id: str = None, reference: str = "swdialer", expires_in: int = 3600) -> Dict:
+    def create_subscriber_token(self, reference: str = "swdialer", expires_in: int = 3600) -> Dict:
         """
         Create a subscriber token for Fabric access
 
         Args:
-            subscriber_id: Optional subscriber identifier
-            reference: Reference identifier for the token (required by SignalWire)
+            reference: Reference identifier for the token (required by SignalWire;
+                see api/auth.py's _resolve_reference for how it's chosen)
             expires_in: Token expiry time in seconds (default 1 hour)
 
         Returns:
@@ -49,9 +52,6 @@ class SignalWireClient:
                 "expire_at": expire_at,
             }
 
-            if subscriber_id:
-                payload["subscriber_id"] = subscriber_id
-
             logger.info(f"Creating subscriber token with expiry: {expire_at}")
 
             # Make the API request
@@ -59,7 +59,8 @@ class SignalWireClient:
                 url,
                 json=payload,
                 auth=self.auth,
-                headers={"Content-Type": "application/json"}
+                headers={"Content-Type": "application/json"},
+                timeout=REQUEST_TIMEOUT_S,
             )
 
             response.raise_for_status()
@@ -113,7 +114,8 @@ class SignalWireClient:
                 response = requests.get(
                     next_url,
                     auth=self.auth,
-                    headers={"Content-Type": "application/json"}
+                    headers={"Content-Type": "application/json"},
+                    timeout=REQUEST_TIMEOUT_S,
                 )
                 response.raise_for_status()
                 payload = response.json()
@@ -239,3 +241,21 @@ class SignalWireClient:
             cleaned = '+' + cleaned
 
         return cleaned
+
+
+# One lazily built REST client shared by every blueprint (they used to each
+# keep their own copy of this). None when SPACE_NAME/PROJECT_ID/AUTH_TOKEN
+# aren't configured; callers answer 500 in that case.
+_client: Optional[SignalWireClient] = None
+
+
+def get_client() -> Optional[SignalWireClient]:
+    global _client
+    if _client is None:
+        try:
+            _client = SignalWireClient()
+            logger.info("SignalWire client initialized")
+        except Exception as e:
+            logger.error(f"Failed to initialize SignalWire client: {e}")
+            return None
+    return _client

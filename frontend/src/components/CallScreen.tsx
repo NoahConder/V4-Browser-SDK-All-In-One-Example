@@ -13,6 +13,7 @@ import AudioLevelMeter from './AudioLevelMeter';
 import { useSignalWire } from '../hooks/useSignalWire';
 import { useCallStore } from '../hooks/useCallStore';
 import { signalWireService } from '../services/signalwire';
+import { log } from '../utils/log';
 
 interface CallScreenProps {
   phoneNumber: string;
@@ -182,7 +183,7 @@ const CallScreen: React.FC<CallScreenProps> = ({
 
   const handleDialPadKey = async (key: string) => {
     // Send DTMF tone through the call
-    console.log('Sending DTMF:', key);
+    log.debug('Sending DTMF:', key);
     setDialPadInput(prev => prev + key);
     await sendDTMF(key);
   };

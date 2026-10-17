@@ -3,7 +3,7 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 from dotenv import load_dotenv
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 # Load environment variables
 load_dotenv()
@@ -17,11 +17,11 @@ logger = logging.getLogger(__name__)
 
 # Create Flask app
 app = Flask(__name__)
-app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
 
-# Configure CORS
+# Configure CORS. No cookies are involved (the API key travels in a header),
+# so credentials support isn't needed.
 frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:5173')
-CORS(app, origins=[frontend_url], supports_credentials=True)
+CORS(app, origins=[frontend_url])
 
 # Import blueprints
 from api.auth import auth_bp
@@ -37,6 +37,13 @@ app.register_blueprint(swml_bp, url_prefix='/api/swml')
 app.register_blueprint(sip_credentials_bp, url_prefix='/api/sip')
 app.register_blueprint(subscribers_bp, url_prefix='/api/subscribers')
 
+# Request headers whose values must never reach the log.
+_SENSITIVE_HEADERS = {'x-api-key', 'authorization', 'cookie'}
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
 
 @app.route('/')
 def index():
@@ -44,7 +51,7 @@ def index():
     return jsonify({
         "status": "online",
         "service": "SignalWire Dialer Backend",
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": _now_iso(),
         "version": "1.0.0"
     })
 
@@ -53,19 +60,23 @@ def index():
 def health_check():
     """Detailed health check"""
     try:
-        # Check if environment variables are set
+        # Check if environment variables are set. DIALER_API_KEY is reported
+        # separately: without it the token endpoints fail closed (503), which
+        # is the most common misconfiguration.
         config_status = all([
             os.getenv('SPACE_NAME'),
             os.getenv('PROJECT_ID'),
             os.getenv('AUTH_TOKEN')
         ])
+        api_key_configured = bool(os.getenv('DIALER_API_KEY'))
 
         return jsonify({
-            "status": "healthy" if config_status else "degraded",
+            "status": "healthy" if config_status and api_key_configured else "degraded",
             "checks": {
                 "server": True,
                 "config": config_status,
-                "timestamp": datetime.utcnow().isoformat()
+                "dialer_api_key": api_key_configured,
+                "timestamp": _now_iso()
             }
         }), 200 if config_status else 503
 
@@ -73,7 +84,7 @@ def health_check():
         logger.error(f"Health check failed: {str(e)}")
         return jsonify({
             "status": "unhealthy",
-            "error": str(e)
+            "error": "Health check failed"
         }), 503
 
 
@@ -98,9 +109,14 @@ def internal_error(error):
 
 @app.before_request
 def log_request_info():
-    """Log incoming requests"""
-    logger.debug(f"Headers: {dict(request.headers)}")
-    logger.debug(f"Body: {request.get_data()}")
+    """Log incoming requests at DEBUG, with secrets redacted. Bodies aren't
+    logged: the auth endpoints post tokens."""
+    if logger.isEnabledFor(logging.DEBUG):
+        headers = {
+            name: ('<redacted>' if name.lower() in _SENSITIVE_HEADERS else value)
+            for name, value in request.headers.items()
+        }
+        logger.debug(f"{request.method} {request.path} headers={headers} body_bytes={request.content_length or 0}")
 
 
 if __name__ == '__main__':

@@ -1,15 +1,12 @@
 import os
 from flask import Blueprint, jsonify, request
-from utils.signalwire import SignalWireClient
-from utils.security import api_key_ok, rate_limited, client_ip
+from utils.signalwire import get_client
+from utils.security import api_key_ok, rate_limited, client_ip, bounded_page
 import logging
 import time
 
 logger = logging.getLogger(__name__)
 subscribers_bp = Blueprint('subscribers', __name__)
-
-# Initialize SignalWire client
-sw_client = None
 
 # Unlike the SWML/SIP resource browsers, subscriber records carry real PII
 # (email, name) rather than just resource labels, so this list is gated the
@@ -32,24 +29,33 @@ def _gate():
     return None
 
 
-def init_signalwire_client():
-    global sw_client
-    try:
-        sw_client = SignalWireClient()
-        logger.info("SignalWire client initialized for subscribers")
-    except Exception as e:
-        logger.error(f"Failed to initialize SignalWire client: {e}")
-        sw_client = None
-
-
-def _get_subscribers_cached() -> list:
+def get_subscribers_cached() -> list:
+    """The space's raw subscriber records, cached briefly. Shared with
+    api/auth.py, which validates a client-chosen subscriber id against it.
+    Raises if the SignalWire client isn't configured.
+    """
     if _subscribers_cache["data"] is not None and time.time() < _subscribers_cache["expires_at"]:
         return _subscribers_cache["data"]
 
+    sw_client = get_client()
+    if not sw_client:
+        raise RuntimeError("SignalWire client not configured")
     subscribers = sw_client.list_subscribers()
     _subscribers_cache["data"] = subscribers
     _subscribers_cache["expires_at"] = time.time() + CACHE_TTL_SECONDS
     return subscribers
+
+
+def display_name_for(subscriber: dict) -> str:
+    """Best available display name for a raw subscriber record."""
+    nested = subscriber.get('subscriber') or {}
+    return (
+        subscriber.get('display_name')
+        or nested.get('display_name')
+        or f"{nested.get('first_name', '')} {nested.get('last_name', '')}".strip()
+        or nested.get('email')
+        or subscriber.get('id')
+    )
 
 
 def _to_public_shape(subscriber: dict) -> dict:
@@ -58,16 +64,9 @@ def _to_public_shape(subscriber: dict) -> dict:
     forwarding more PII to the browser than necessary.
     """
     nested = subscriber.get('subscriber') or {}
-    display_name = (
-        subscriber.get('display_name')
-        or nested.get('display_name')
-        or f"{nested.get('first_name', '')} {nested.get('last_name', '')}".strip()
-        or nested.get('email')
-        or subscriber.get('id')
-    )
     return {
         "id": subscriber.get('id'),
-        "display_name": display_name,
+        "display_name": display_name_for(subscriber),
         "email": nested.get('email'),
     }
 
@@ -81,19 +80,15 @@ def get_subscribers():
     if blocked:
         return blocked
     try:
-        if not sw_client:
-            init_signalwire_client()
-
-        if not sw_client:
+        if not get_client():
             return jsonify({
                 "success": False,
                 "error": "SignalWire client not configured"
             }), 500
 
-        offset = request.args.get('offset', 0, type=int)
-        limit = request.args.get('limit', 10, type=int)
+        offset, limit = bounded_page(request)
 
-        subscribers = _get_subscribers_cached()
+        subscribers = get_subscribers_cached()
         page = [_to_public_shape(s) for s in subscribers[offset:offset + limit]]
 
         return jsonify({
@@ -109,5 +104,5 @@ def get_subscribers():
         logger.error(f"Error listing subscribers: {str(e)}")
         return jsonify({
             "success": False,
-            "error": str(e)
+            "error": "Failed to list subscribers"
         }), 500

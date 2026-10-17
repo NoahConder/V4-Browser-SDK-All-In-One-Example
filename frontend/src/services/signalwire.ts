@@ -10,7 +10,6 @@ import {
   version as sdkVersion,
 } from '@signalwire/js';
 import type {
-  AuthenticateContext,
   Call,
   CallStatus,
   DeviceRecoveryEvent,
@@ -34,6 +33,7 @@ import { authAPI } from './api';
 import { toneService } from './tones';
 import { loadSettings, type DialerSettings } from './settings';
 import { isDialAddress } from '../utils/address';
+import { log, setDebugLogging } from '../utils/log';
 
 // Thrown by makeCall()/answerCall() when client.ready$ is currently false --
 // e.g. right after a token refresh or network blip, not just at first mount
@@ -219,12 +219,6 @@ class SignalWireService {
   private pendingCall: Call | null = null;
   private currentToken: TokenData | null = null;
   private wasIncomingCall: boolean = false;
-  // Set while a transfer() request is in flight (and briefly after, until the
-  // resulting status$ change is observed), purely so the "Call status" log
-  // line can flag which disconnect/reconnect was caused by a transfer --
-  // transfer() resolving only confirms the request was sent, not that it
-  // succeeded, so this is the only way to see the real outcome in the console.
-  private pendingTransferDestination: string | null = null;
   // Mic mute for the current call, applied locally to the outgoing audio
   // track -- see toggleMute() for why this isn't the SDK's self.mute().
   private isMicMuted = false;
@@ -268,7 +262,6 @@ class SignalWireService {
   private readySub: Subscription | null = null;
   private registeredSub: Subscription | null = null;
   private deviceRecoveredSub: Subscription | null = null;
-  private capabilitiesSub: Subscription | null = null;
   private screenShareCapabilitySub: Subscription | null = null;
   private callErrorsSub: Subscription | null = null;
   private screenShareSub: Subscription | null = null;
@@ -324,7 +317,7 @@ class SignalWireService {
 
   async initialize(callbacks: SignalWireCallbacks = {}) {
     if (this.isInitializing || this.isInitialized) {
-      console.log('SignalWire initialization already in progress or completed, skipping...');
+      log.debug('SignalWire initialization already in progress or completed, skipping...');
       while (this.isInitializing) {
         await new Promise(resolve => setTimeout(resolve, 100));
       }
@@ -332,7 +325,7 @@ class SignalWireService {
     }
 
     this.isInitializing = true;
-    console.log('Starting SignalWire initialization...');
+    log.debug('Starting SignalWire initialization...');
 
     try {
       this.onIncomingCall = callbacks.onIncomingCall || null;
@@ -357,12 +350,9 @@ class SignalWireService {
 
       // Create credential provider with automatic refresh
       const credentialProvider = {
-        authenticate: async (context?: AuthenticateContext) => {
-          // Diagnostic only -- this app mints a plain SAT (no fingerprint/scope
-          // forwarded), so this just tells us whether the SDK hands us a DPoP
-          // fingerprint at all in this browser/version. See CLAUDE.md's Client
-          // Bound SAT note.
-          console.log('[SAT] authenticate() context.fingerprint:', context?.fingerprint ?? '(none)');
+        authenticate: async () => {
+          // `context.fingerprint` (DPoP) is available here but unused: this
+          // app mints a plain SAT. See CLAUDE.md's Client Bound SAT note.
           const tokenData = await this.fetchTokenForSelectedSubscriber();
           this.currentToken = tokenData;
           return {
@@ -426,7 +416,7 @@ class SignalWireService {
       // where they're thrown, so only session-ending ones are escalated to
       // the UI via onClientError — everything else stays console-only.
       this.errorSub = this.client.errors$.subscribe((error) => {
-        console.error('SignalWire error:', error);
+        log.error('SignalWire error:', error);
         if (error instanceof TokenRefreshError || error instanceof InvalidCredentialsError) {
           this.onClientError?.('Your session could not be refreshed. Please reload the page to reconnect.');
         }
@@ -438,7 +428,7 @@ class SignalWireService {
       // tell us whether our refresh() is actually being used or the session will
       // silently die at SAT expiry.
       this.warningSub = this.client.warnings$.subscribe((warning) => {
-        console.warn('SignalWire warning:', warning.code, warning.message);
+        log.warn('SignalWire warning:', warning.code, warning.message);
         if (warning.code === 'credential_no_refresh_handler') {
           this.onClientError?.('Your session will expire soon and cannot auto-refresh. Reload the page before it does to stay connected.');
         }
@@ -467,7 +457,7 @@ class SignalWireService {
 
       // Register for incoming calls
       await this.client.register();
-      console.log('Client registered and ready for incoming calls');
+      log.debug('Client registered and ready for incoming calls');
 
       // Subscribe to incoming calls
       this.incomingCallSub = this.client.session.incomingCalls$.subscribe((calls) => {
@@ -484,7 +474,7 @@ class SignalWireService {
         if (this.currentCall || this.isDialing) {
           if (!this.autoRejectedCallIds.has(ringingCall.id)) {
             this.autoRejectedCallIds.add(ringingCall.id);
-            console.log('Already in a call - auto-rejecting incoming call from', callerId);
+            log.debug('Already in a call - auto-rejecting incoming call from', callerId);
             this.onIncomingCallAutoRejected?.(callerId, ringingCall.from);
             ringingCall.reject();
           }
@@ -495,7 +485,7 @@ class SignalWireService {
         if (this.pendingCall && this.pendingCall.id === ringingCall.id) return;
 
         this.pendingCall = ringingCall;
-        console.log('Incoming call from:', callerId);
+        log.debug('Incoming call from:', callerId);
 
         // Best-effort: mediaDirections reflects the inbound SDP offer, so a
         // video-enabled offer should show as something other than 'inactive'
@@ -509,7 +499,7 @@ class SignalWireService {
 
         // Watch for the caller hanging up before we answer
         const cleanupCanceled = () => {
-          console.log('Incoming call canceled by caller');
+          log.debug('Incoming call canceled by caller');
           toneService.stopIncomingCallTone();
           if (this.pendingCall?.id === ringingCall.id) {
             this.pendingCall = null;
@@ -560,7 +550,7 @@ class SignalWireService {
         });
         if (!restored) return;
 
-        console.log('Adopting reattached call:', restored.id, 'status:', restored.status);
+        log.debug('Adopting reattached call:', restored.id, 'status:', restored.status);
         this.isMicMuted = false;
         this.currentCall = restored;
         this.wasIncomingCall = false;
@@ -578,10 +568,10 @@ class SignalWireService {
 
       this.isInitialized = true;
       this.isInitializing = false;
-      console.log('SignalWire service fully initialized');
+      log.debug('SignalWire service fully initialized');
       return true;
     } catch (error) {
-      console.error('Failed to initialize SignalWire:', error);
+      log.error('Failed to initialize SignalWire:', error);
       this.isInitializing = false;
       throw error;
     }
@@ -624,7 +614,7 @@ class SignalWireService {
       if (!selectedId || !axios.isAxiosError(error) || error.response?.status !== 400) {
         throw error;
       }
-      console.warn('Saved subscriber was rejected by the backend - falling back to the default subscriber');
+      log.warn('Saved subscriber was rejected by the backend - falling back to the default subscriber');
       localStorage.removeItem(SELECTED_SUBSCRIBER_KEY);
       this.onClientError?.('Your saved subscriber no longer exists, so you were connected as the default subscriber.');
       return authAPI.getToken(undefined);
@@ -634,16 +624,9 @@ class SignalWireService {
   private setupCallSubscriptions(call: Call) {
     this.cleanupCallSubscriptions();
 
-    // Reset per-call; a stale flag from a previous call must never attribute
-    // this call's status changes to a transfer that happened on another call.
-    this.pendingTransferDestination = null;
-
     // Subscribe to call status changes
     this.callStatusSub = call.status$.subscribe((status) => {
-      const transferSuffix = this.pendingTransferDestination
-        ? ` [transfer] after request to ${this.pendingTransferDestination}`
-        : '';
-      console.log('Call status:', status + transferSuffix);
+      log.debug('Call status:', status);
 
       if (status === 'trying' || status === 'connecting') {
         this.onCallStatusChange?.('connecting');
@@ -654,18 +637,10 @@ class SignalWireService {
         // reported on recoveryState$); handled in case a later SDK does.
         this.setMediaDisrupted(true);
       } else if (status === 'connected') {
-        if (this.pendingTransferDestination) {
-          console.log('[transfer] Call is still connected on this leg -- the transfer did not take the call away, so it likely failed or was not accepted by the destination');
-          this.pendingTransferDestination = null;
-        }
         if (this.onCallConnected) {
           this.onCallConnected();
         }
       } else if (status === 'disconnected' || status === 'failed') {
-        if (this.pendingTransferDestination) {
-          console.log(`[transfer] Call ended (status: ${status}) after a transfer request to ${this.pendingTransferDestination} -- this is the expected outcome of a successful blind transfer`);
-          this.pendingTransferDestination = null;
-        }
         toneService.playDisconnectTone();
         // Only clean up if this is still the active call (endCall may have already cleared it)
         if (this.currentCall === call) {
@@ -677,7 +652,7 @@ class SignalWireService {
     // Subscribe to remote stream for audio/video playback
     this.remoteStreamSub = call.remoteStream$.subscribe((stream) => {
       if (stream) {
-        console.log('remoteStream$ emitted stream:', stream.id);
+        log.debug('remoteStream$ emitted stream:', stream.id);
         this.handleRemoteMedia(stream);
       }
     });
@@ -713,23 +688,13 @@ class SignalWireService {
     // toggleScreenShare's caller already reports those from the rejected
     // promise.
     this.callErrorsSub = call.errors$.subscribe((callError) => {
-      console.warn('[call.errors$]', callError.kind, 'fatal:', callError.fatal, 'leg:', callError.leg ?? 'main', callError.error);
+      log.warn('[call.errors$]', callError.kind, 'fatal:', callError.fatal, 'leg:', callError.leg ?? 'main', callError.error);
       if (callError.fatal) return;
       if (callError.leg && callError.leg !== 'main') return;
       const { error } = callError;
       if (error instanceof MediaAccessError || error instanceof MediaTrackError) {
         this.onCallMediaError?.(error);
       }
-    });
-
-    // Diagnostic only -- NOT used to gate the UI (see onCanScreenShareChange's
-    // declaration comment for why). Logs the raw server-sent set, which the
-    // SDK passes through unchanged from call.joined. Note hold/transfer are
-    // not capabilities at all -- the SDK's Capability vocabulary only covers
-    // in-room actions (mute, deaf, layout, lock, digit, screenshare, end,
-    // device) -- so this can only ever reveal a real 'screenshare' grant.
-    this.capabilitiesSub = call.capabilities$.subscribe((capabilities) => {
-      console.log('[capabilities] call.capabilities$:', capabilities);
     });
 
     // Screen-share gate (see onCanScreenShareChange's declaration), fired
@@ -745,7 +710,7 @@ class SignalWireService {
         distinctUntilChanged(),
       )
       .subscribe((granted) => {
-        console.log('[screenshare] capability granted:', granted);
+        log.debug('[screenshare] capability granted:', granted);
         this.onCanScreenShareChange?.(this.screenShareApiSupported && granted);
       });
 
@@ -774,13 +739,13 @@ class SignalWireService {
     this.lastRecoveryState = 'idle';
     this.recoveryEvents$ = new ReplaySubject<RecoveryEvent>(10);
     this.recoveryStateSub = call.recoveryState$.subscribe((state) => {
-      console.log('[recovery] state:', state);
+      log.debug('[recovery] state:', state);
       this.lastRecoveryState = state;
       this.onRecoveryStateChange?.(state);
       this.setMediaDisrupted(state === 'debouncing' || state === 'recovering' || this.isPeerConnectionDown());
     });
     this.recoveryEventSub = call.recoveryEvent$.subscribe((event) => {
-      console.log('[recovery]', event.action, '-', event.reason, event.attempt != null ? `(${event.attempt}/${event.maxAttempts})` : '');
+      log.debug('[recovery]', event.action, '-', event.reason, event.attempt != null ? `(${event.attempt}/${event.maxAttempts})` : '');
       this.recoveryEvents$.next(event);
       if (this.currentCall !== call) return;
       if (event.action === 'max_attempts_reached') {
@@ -932,8 +897,6 @@ class SignalWireService {
     this.remoteStreamSub = null;
     this.localStreamSub?.unsubscribe();
     this.localStreamSub = null;
-    this.capabilitiesSub?.unsubscribe();
-    this.capabilitiesSub = null;
     this.screenShareCapabilitySub?.unsubscribe();
     this.screenShareCapabilitySub = null;
     this.qualitySub?.unsubscribe();
@@ -1015,7 +978,7 @@ class SignalWireService {
     // rtcPeerConnection is public on the v4 Call type (RTCPeerConnection | undefined)
     const pc = call.rtcPeerConnection;
     if (pc) {
-      console.log('PC available immediately, state:', pc.connectionState, 'ice:', pc.iceConnectionState);
+      log.debug('PC available immediately, state:', pc.connectionState, 'ice:', pc.iceConnectionState);
       this.monitorPeerConnection(pc, call);
       return;
     }
@@ -1026,14 +989,14 @@ class SignalWireService {
       attempts++;
       const rtcPC = call.rtcPeerConnection;
       if (rtcPC) {
-        console.log('PC became available after', attempts, 'checks, state:', rtcPC.connectionState);
+        log.debug('PC became available after', attempts, 'checks, state:', rtcPC.connectionState);
         if (this.remoteAudioCheckInterval) {
           clearInterval(this.remoteAudioCheckInterval);
           this.remoteAudioCheckInterval = null;
         }
         this.monitorPeerConnection(rtcPC, call);
       } else if (attempts > 30) {
-        console.warn('Gave up waiting for RTCPeerConnection');
+        log.warn('Gave up waiting for RTCPeerConnection');
         if (this.remoteAudioCheckInterval) {
           clearInterval(this.remoteAudioCheckInterval);
           this.remoteAudioCheckInterval = null;
@@ -1061,7 +1024,7 @@ class SignalWireService {
 
     // Listen for track events (addEventListener doesn't overwrite the SDK's ontrack handler)
     listen('track', (event) => {
-      console.log('PC track event:', event.track.kind, 'streams:', event.streams.length);
+      log.debug('PC track event:', event.track.kind, 'streams:', event.streams.length);
       if (event.track.kind === 'audio' || event.track.kind === 'video') {
         const stream = event.streams[0] || new MediaStream([event.track]);
         this.handleRemoteMedia(stream);
@@ -1081,9 +1044,9 @@ class SignalWireService {
     const onMediaStateChange = () => {
       const ice = pc.iceConnectionState;
       const conn = pc.connectionState;
-      console.log('PC state:', conn, 'ice:', ice);
+      log.debug('PC state:', conn, 'ice:', ice);
       if (ice === 'closed' || conn === 'closed') {
-        console.log('Peer connection closed - ending call as fallback');
+        log.debug('Peer connection closed - ending call as fallback');
         this.handleCallEnded();
       } else if (ice === 'disconnected' || ice === 'failed' || conn === 'failed') {
         this.setMediaDisrupted(true);
@@ -1116,12 +1079,12 @@ class SignalWireService {
       const ice = pc.iceConnectionState;
       if (ice === 'connected' || ice === 'completed') return;
       if (this.lastRecoveryState === 'recovering' && !this.mediaDisruptionTimerExtended) {
-        console.log(`Media still down after ${graceMs} ms but the SDK is recovering - waiting one more attempt`);
+        log.debug(`Media still down after ${graceMs} ms but the SDK is recovering - waiting one more attempt`);
         this.mediaDisruptionTimerExtended = true;
         this.mediaDisruptionTimer = setTimeout(onExpiry, attemptMs);
         return;
       }
-      console.warn(`Media did not recover (ice: ${ice}, recovery: ${this.lastRecoveryState}) - ending call as fallback`);
+      log.warn(`Media did not recover (ice: ${ice}, recovery: ${this.lastRecoveryState}) - ending call as fallback`);
       this.handleCallEnded();
     };
     this.mediaDisruptionTimer = setTimeout(onExpiry, graceMs);
@@ -1134,10 +1097,10 @@ class SignalWireService {
       .filter((t): t is MediaStreamTrack => !!t && t.readyState === 'live');
 
     if (liveTracks.length > 0) {
-      console.log('Live receiver tracks found:', liveTracks.map(t => t.kind).join(', '));
+      log.debug('Live receiver tracks found:', liveTracks.map(t => t.kind).join(', '));
       this.handleRemoteMedia(new MediaStream(liveTracks));
     } else {
-      console.log('No live receivers found, receivers:', receivers.length);
+      log.debug('No live receivers found, receivers:', receivers.length);
     }
   }
 
@@ -1151,7 +1114,7 @@ class SignalWireService {
     if (current && incoming.length > 0 && incoming.every((t) => current.getTrackById(t.id))) {
       return;
     }
-    console.log('Playing remote stream:', stream.id, 'tracks:', incoming.length);
+    log.debug('Playing remote stream:', stream.id, 'tracks:', incoming.length);
     if (!audioEl) {
       audioEl = document.createElement('audio');
       audioEl.id = 'sw-remote-audio';
@@ -1169,11 +1132,11 @@ class SignalWireService {
       // A newer srcObject superseded this play() call; its own play() takes over.
       if (err instanceof DOMException && err.name === 'AbortError') return;
       if (err instanceof DOMException && err.name === 'NotAllowedError') {
-        console.warn('Remote media playback blocked by the autoplay policy - waiting for a user gesture');
+        log.warn('Remote media playback blocked by the autoplay policy - waiting for a user gesture');
         this.onRemoteAudioBlocked?.();
         return;
       }
-      console.error('Remote media play() failed:', err);
+      log.error('Remote media play() failed:', err);
     });
   }
 
@@ -1243,7 +1206,7 @@ class SignalWireService {
       this.isDialing = true;
       this.dialCancelled = false;
       const formattedNumber = this.withVideoChannel(this.normalizeDestination(phoneNumber), video);
-      console.log('Dialing:', formattedNumber);
+      log.debug('Dialing:', formattedNumber);
 
       const call = await this.client.dial(formattedNumber, {
         audio: true,
@@ -1253,9 +1216,9 @@ class SignalWireService {
       // The user hung up while dial() was pending (see dialCancelled). The UI
       // has already reset, so don't adopt the call -- end it.
       if (this.dialCancelled) {
-        console.log('Dial resolved after the user hung up - ending the call');
+        log.debug('Dial resolved after the user hung up - ending the call');
         call.hangup().catch((error) => {
-          console.debug('Hangup of cancelled dial (ignored):', error);
+          log.debug('Hangup of cancelled dial (ignored):', error);
         });
         return null;
       }
@@ -1265,10 +1228,10 @@ class SignalWireService {
       this.setupCallSubscriptions(call);
       this.setupRemoteAudioFallback(call);
 
-      console.log('Call initiated successfully');
+      log.debug('Call initiated successfully');
       return call;
     } catch (error) {
-      console.error('Failed to make call:', error);
+      log.error('Failed to make call:', error);
       throw error;
     } finally {
       this.isDialing = false;
@@ -1300,7 +1263,7 @@ class SignalWireService {
       try {
         await self.stopScreenShare();
       } catch (error) {
-        console.debug('Stopping screen share during endCall (ignored):', error);
+        log.debug('Stopping screen share during endCall (ignored):', error);
       }
     }
 
@@ -1308,7 +1271,7 @@ class SignalWireService {
     try {
       await call.hangup();
     } catch (error) {
-      console.debug('Hangup during endCall (ignored):', error);
+      log.debug('Hangup during endCall (ignored):', error);
     }
   }
 
@@ -1326,19 +1289,19 @@ class SignalWireService {
       try {
         unanswerable.reject();
       } catch (error) {
-        console.debug('Rejecting unanswerable call (ignored):', error);
+        log.debug('Rejecting unanswerable call (ignored):', error);
       }
       throw new ClientNotReadyError();
     }
 
     if (this.currentCall) {
-      console.warn('Call already in progress, ignoring answer');
+      log.warn('Call already in progress, ignoring answer');
       return;
     }
     this.isMicMuted = false;
 
     try {
-      console.log('Answering incoming call...');
+      log.debug('Answering incoming call...');
       toneService.stopIncomingCallTone();
 
       const call = this.pendingCall;
@@ -1350,9 +1313,9 @@ class SignalWireService {
       this.setupCallSubscriptions(call);
       this.setupRemoteAudioFallback(call);
 
-      console.log('Call answered successfully');
+      log.debug('Call answered successfully');
     } catch (error) {
-      console.error('Failed to answer call:', error);
+      log.error('Failed to answer call:', error);
       this.pendingCall = null;
       throw error;
     }
@@ -1364,13 +1327,13 @@ class SignalWireService {
     }
 
     try {
-      console.log('Rejecting incoming call...');
+      log.debug('Rejecting incoming call...');
       toneService.stopIncomingCallTone();
       this.pendingCall.reject();
       this.pendingCall = null;
-      console.log('Call rejected');
+      log.debug('Call rejected');
     } catch (error) {
-      console.error('Failed to reject call:', error);
+      log.error('Failed to reject call:', error);
       this.pendingCall = null;
       throw error;
     }
@@ -1388,7 +1351,7 @@ class SignalWireService {
     // again once the call's local stream arrives.
     this.isMicMuted = muted;
     this.applyMicMute();
-    console.log(`Audio ${muted ? 'muted' : 'unmuted'}`);
+    log.debug(`Audio ${muted ? 'muted' : 'unmuted'}`);
   }
 
   // Disables both the local stream's mic track and the outgoing sender track:
@@ -1411,7 +1374,7 @@ class SignalWireService {
   // renegotiates; otherwise it's a plain mute/unmute of the existing track.
   async toggleCamera(cameraOn: boolean) {
     if (!this.currentCall) {
-      console.warn('No active call to toggle camera');
+      log.warn('No active call to toggle camera');
       return;
     }
 
@@ -1431,7 +1394,7 @@ class SignalWireService {
     } else {
       await self.muteVideo();
     }
-    console.log(`Camera ${cameraOn ? 'enabled' : 'disabled'}`);
+    log.debug(`Camera ${cameraOn ? 'enabled' : 'disabled'}`);
   }
 
   // No held$/isOnHold observable exists on Call -- the caller tracks hold
@@ -1466,10 +1429,10 @@ class SignalWireService {
   }
 
   async toggleHold() {
-    console.log('[hold] Requested');
+    log.debug('[hold] Requested');
 
     if (!this.currentCall) {
-      console.error('[hold] Aborted -- no active call to hold');
+      log.error('[hold] Aborted -- no active call to hold');
       throw new Error('No active call to hold');
     }
 
@@ -1486,22 +1449,22 @@ class SignalWireService {
     try {
       refusal = await this.refusalOf(call, () => call.toggleHold());
     } catch (error) {
-      console.error('[hold] call.toggleHold() rejected:', error);
+      log.error('[hold] call.toggleHold() rejected:', error);
       throw error;
     }
     if (refusal) {
-      console.error('[hold] refused by the server:', refusal);
+      log.error('[hold] refused by the server:', refusal);
       throw new Error(`The server refused the hold request (${refusal.message.replace(/\.$/, '')}).`);
     }
-    console.log('[hold] call.toggleHold() resolved -- server acknowledged the state change');
+    log.debug('[hold] call.toggleHold() resolved -- server acknowledged the state change');
   }
 
   async transferCall(destination: string) {
     const formattedDestination = this.normalizeDestination(destination);
-    console.log('[transfer] Requested, raw input:', destination, '-> normalized:', formattedDestination);
+    log.debug('[transfer] Requested, raw input:', destination, '-> normalized:', formattedDestination);
 
     if (!this.currentCall) {
-      console.error('[transfer] Aborted -- no active call to transfer');
+      log.error('[transfer] Aborted -- no active call to transfer');
       throw new Error('No active call to transfer');
     }
 
@@ -1517,24 +1480,21 @@ class SignalWireService {
     // rejection below is what TransferModal shows the user.
     const call = this.currentCall;
     let refusal: Error | null;
-    this.pendingTransferDestination = formattedDestination;
     try {
       refusal = await this.refusalOf(call, () => call.transfer({ destination: formattedDestination }));
     } catch (error) {
-      console.error('[transfer] call.transfer() rejected:', error);
-      this.pendingTransferDestination = null;
+      log.error('[transfer] call.transfer() rejected:', error);
       throw error;
     }
     if (refusal) {
-      console.error('[transfer] refused by the server:', refusal);
-      this.pendingTransferDestination = null;
+      log.error('[transfer] refused by the server:', refusal);
       throw new Error(`The server refused the transfer (${refusal.message.replace(/\.$/, '')}).`);
     }
     // Per the docs, resolving means the server ACCEPTED the request -- not
-    // that the destination answered. This blind transfer then moves the local
-    // call to 'disconnected'; watch the "Call status" logs above for the
-    // actual outcome.
-    console.log('[transfer] call.transfer() resolved -- server accepted the request, watch "Call status" logs for the real outcome');
+    // that the destination answered. A successful blind transfer then moves
+    // this call to 'disconnected' (status$); if it stays 'connected', the
+    // destination didn't take it.
+    log.debug('[transfer] call.transfer() resolved -- server accepted the request');
   }
 
   // start/stopScreenShare() live on call.self, gated by the caller on the
@@ -1562,7 +1522,7 @@ class SignalWireService {
       // The SDK says to treat 'stopping' as busy -- starting now could hit
       // ScreenShareAlreadyActiveError against the share still tearing down.
       case 'stopping':
-        console.log('Screen share is still stopping - ignoring toggle');
+        log.debug('Screen share is still stopping - ignoring toggle');
         break;
       case 'none':
         await self.startScreenShare(withAudio ? { audio: true } : undefined);
@@ -1626,7 +1586,7 @@ class SignalWireService {
 
     const sinkEl = this.getRemoteMediaSinkElement();
     if (!sinkEl) {
-      console.warn('No remote media element available yet for speaker toggle');
+      log.warn('No remote media element available yet for speaker toggle');
       return false;
     }
 
@@ -1638,16 +1598,16 @@ class SignalWireService {
         this.client.selectAudioOutputDevice(null);
         if (typeof sinkEl.setSinkId !== 'function') return false;
         await sinkEl.setSinkId('');
-        console.log('Speaker off (default output)');
+        log.debug('Speaker off (default output)');
         return true;
       }
 
       this.client.selectAudioOutputDevice(this.preferredOutputDevice);
       const applied = await this.client.applySelectedAudioOutputDevice(sinkEl);
-      console.log('Speaker on, applied:', applied);
+      log.debug('Speaker on, applied:', applied);
       return applied;
     } catch (error) {
-      console.error('Error applying audio output device:', error);
+      log.error('Error applying audio output device:', error);
       return false;
     }
   }
@@ -1665,6 +1625,7 @@ class SignalWireService {
   applySettings(settings: DialerSettings) {
     setLogLevel(settings.logLevel);
     setDebugOptions({ logWsTraffic: settings.logWsTraffic });
+    setDebugLogging(settings.debugLogs);
     this.applyPreferences(settings);
   }
 
@@ -1789,14 +1750,13 @@ class SignalWireService {
   }
 
   private handleCallEnded() {
-    console.log('handleCallEnded - cleaning up');
+    log.debug('handleCallEnded - cleaning up');
     const wasIncoming = this.wasIncomingCall;
 
     this.cleanupCallSubscriptions();
     this.currentCall = null;
     this.pendingCall = null;
     this.wasIncomingCall = false;
-    this.pendingTransferDestination = null;
     // Not via setAudioProcessing() -- the store's own reset covers the UI.
     this.audioProcessing = { ...DEFAULT_AUDIO_PROCESSING };
 
@@ -1807,7 +1767,7 @@ class SignalWireService {
     this.remoteAudioRoutedToVideo = false;
 
     if (this.onCallEnded) {
-      console.log('Notifying UI of call end, wasIncoming:', wasIncoming);
+      log.debug('Notifying UI of call end, wasIncoming:', wasIncoming);
       this.onCallEnded(wasIncoming);
     }
   }
@@ -1821,11 +1781,11 @@ class SignalWireService {
 
   disconnect() {
     if (!this.client) {
-      console.log('Disconnect called but no client exists - ignoring');
+      log.debug('Disconnect called but no client exists - ignoring');
       return;
     }
 
-    console.log('SignalWire service disconnecting...');
+    log.debug('SignalWire service disconnecting...');
 
     this.cleanupCallSubscriptions();
     this.incomingCallSub?.unsubscribe();
@@ -1846,7 +1806,7 @@ class SignalWireService {
 
     if (this.currentCall) {
       this.currentCall.hangup().catch((error) => {
-        console.debug('Hangup error during disconnect (ignored):', error?.message);
+        log.debug('Hangup error during disconnect (ignored):', error?.message);
       });
       this.currentCall = null;
     }
@@ -1861,7 +1821,7 @@ class SignalWireService {
     // noisy RPCTimeoutError on errors$. unregister() is only for going offline
     // while staying connected, which this app never needs.
     this.client.disconnect().catch((error) => {
-      console.debug('Disconnect error (ignored):', error?.message);
+      log.debug('Disconnect error (ignored):', error?.message);
     });
 
     this.client = null;

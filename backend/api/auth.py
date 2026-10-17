@@ -1,16 +1,15 @@
 import os
-import time
 from flask import Blueprint, jsonify, request
-from utils.signalwire import SignalWireClient
+from utils.signalwire import get_client
 from utils.security import api_key_ok, rate_limited, client_ip
+from api.subscribers import get_subscribers_cached, display_name_for
 import logging
-from datetime import datetime
 
 logger = logging.getLogger(__name__)
 auth_bp = Blueprint('auth', __name__)
 
 # Default reference used when the client doesn't request a specific
-# subscriber. The client can now opt into a specific subscriber (see
+# subscriber. The client can opt into a specific subscriber (see
 # _resolve_reference below), but ONLY by id, validated against the account's
 # real subscriber list fetched with our own credentials -- never by an
 # arbitrary client-supplied reference/subscriber_id string. That distinction
@@ -18,40 +17,6 @@ auth_bp = Blueprint('auth', __name__)
 # originally added to close (a caller minting a token for an arbitrary
 # subscriber_id they don't otherwise have any claim to).
 _TOKEN_REFERENCE = "swdialer"
-
-# Initialize SignalWire client
-sw_client = None
-
-# Separate short-lived cache from api/subscribers.py's -- self-contained per
-# the existing blueprint convention (see swml.py/sip_credentials.py). Used
-# only to validate a client-chosen subscriber id against real accounts.
-_subscribers_cache = {"data": None, "expires_at": 0}
-SUBSCRIBERS_CACHE_TTL_SECONDS = 60
-
-
-def _get_subscribers_cached() -> list:
-    if _subscribers_cache["data"] is not None and time.time() < _subscribers_cache["expires_at"]:
-        return _subscribers_cache["data"]
-
-    subscribers = sw_client.list_subscribers()
-    _subscribers_cache["data"] = subscribers
-    _subscribers_cache["expires_at"] = time.time() + SUBSCRIBERS_CACHE_TTL_SECONDS
-    return subscribers
-
-
-def _display_name_for(subscriber: dict) -> str:
-    """Same shape as subscribers.py's _to_public_shape -- duplicated rather
-    than imported, per the existing self-contained-blueprint convention
-    (see this module's cache comment above).
-    """
-    nested = subscriber.get('subscriber') or {}
-    return (
-        subscriber.get('display_name')
-        or nested.get('display_name')
-        or f"{nested.get('first_name', '')} {nested.get('last_name', '')}".strip()
-        or nested.get('email')
-        or subscriber.get('id')
-    )
 
 
 def _resolve_reference(subscriber_id):
@@ -77,7 +42,7 @@ def _resolve_reference(subscriber_id):
     GET /resources/subscribers' `id` -- confirmed by minting a token for a
     known subscriber and getting back neither that id nor any id in the
     account's subscriber list. So callers here should prefer the resource id
-    resolved below over sw_client.create_subscriber_token()'s own returned
+    resolved below over create_subscriber_token()'s own returned
     subscriber_id, which is useless for cross-referencing the subscriber list.
     """
     if not subscriber_id:
@@ -85,16 +50,16 @@ def _resolve_reference(subscriber_id):
         # against the real subscriber list (SignalWire auto-creates/reuses a
         # resource per unique reference on first use, so one often exists),
         # falling back to the literal reference string as the display name.
-        subscribers = _get_subscribers_cached()
+        subscribers = get_subscribers_cached()
         default_match = next(
             (s for s in subscribers if (s.get('subscriber') or {}).get('email') == _TOKEN_REFERENCE),
             None,
         )
         if default_match:
-            return _TOKEN_REFERENCE, default_match.get('id'), _display_name_for(default_match), None
+            return _TOKEN_REFERENCE, default_match.get('id'), display_name_for(default_match), None
         return _TOKEN_REFERENCE, None, _TOKEN_REFERENCE, None
 
-    subscribers = _get_subscribers_cached()
+    subscribers = get_subscribers_cached()
     match = next((s for s in subscribers if s.get('id') == subscriber_id), None)
     if not match:
         return None, None, None, "Unknown subscriber"
@@ -103,7 +68,7 @@ def _resolve_reference(subscriber_id):
     # Fall back to the id itself if this subscriber has no email on file --
     # still deterministic/reusable, just not tied to their real identity.
     reference = nested.get('email') or subscriber_id
-    return reference, match.get('id'), _display_name_for(match), None
+    return reference, match.get('id'), display_name_for(match), None
 
 
 def _gate():
@@ -123,14 +88,49 @@ def _gate():
     return None
 
 
-def init_signalwire_client():
-    global sw_client
+def _mint(refresh: bool):
+    """Shared body of /token and /refresh: gate, resolve the subscriber, mint."""
+    blocked = _gate()
+    if blocked:
+        return blocked
     try:
-        sw_client = SignalWireClient()
-        logger.info("SignalWire client initialized successfully")
+        sw_client = get_client()
+        if not sw_client:
+            return jsonify({"success": False, "error": "SignalWire client not configured"}), 500
+
+        body = request.get_json(silent=True) or {}
+        reference, resource_id, display_name, error = _resolve_reference(body.get('subscriber_id'))
+        if error:
+            return jsonify({"success": False, "error": error}), 400
+
+        if refresh:
+            token_data = sw_client.refresh_token(reference=reference)
+        else:
+            token_data = sw_client.create_subscriber_token(
+                reference=reference,
+                expires_in=3600  # 1 hour
+            )
+        # Override SignalWire's own returned subscriber_id -- it's in a
+        # different id namespace than GET /resources/subscribers and can't be
+        # cross-referenced against the subscriber list (see _resolve_reference).
+        if resource_id:
+            token_data['subscriber_id'] = resource_id
+        token_data['subscriber_display_name'] = display_name
+
+        logger.info("Token refreshed successfully" if refresh else "Token generated successfully")
+
+        return jsonify({
+            "success": True,
+            "data": token_data
+        }), 200
+
     except Exception as e:
-        logger.error(f"Failed to initialize SignalWire client: {e}")
-        sw_client = None
+        # Log details server-side; do not leak internals to the client.
+        logger.error(f"Error {'refreshing' if refresh else 'generating'} token: {str(e)}")
+        return jsonify({
+            "success": False,
+            "error": "Failed to refresh token" if refresh else "Failed to generate token"
+        }), 500
 
 
 @auth_bp.route('/token', methods=['POST'])
@@ -141,45 +141,7 @@ def generate_token():
     revalidated here against the account's real subscriber list before use,
     never trusted as-is (see _resolve_reference).
     """
-    blocked = _gate()
-    if blocked:
-        return blocked
-    try:
-        if not sw_client:
-            init_signalwire_client()
-            if not sw_client:
-                return jsonify({"error": "SignalWire client not configured"}), 500
-
-        body = request.get_json(silent=True) or {}
-        reference, resource_id, display_name, error = _resolve_reference(body.get('subscriber_id'))
-        if error:
-            return jsonify({"success": False, "error": error}), 400
-
-        token_data = sw_client.create_subscriber_token(
-            reference=reference,
-            expires_in=3600  # 1 hour
-        )
-        # Override SignalWire's own returned subscriber_id -- it's in a
-        # different id namespace than GET /resources/subscribers and can't be
-        # cross-referenced against the subscriber list (see _resolve_reference).
-        if resource_id:
-            token_data['subscriber_id'] = resource_id
-        token_data['subscriber_display_name'] = display_name
-
-        logger.info("Token generated successfully")
-
-        return jsonify({
-            "success": True,
-            "data": token_data
-        }), 200
-
-    except Exception as e:
-        # Log details server-side; do not leak internals to the client.
-        logger.error(f"Error generating token: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": "Failed to generate token"
-        }), 500
+    return _mint(refresh=False)
 
 
 @auth_bp.route('/refresh', methods=['POST'])
@@ -191,66 +153,4 @@ def refresh_token():
     reference mid-session -- still revalidated against the real subscriber
     list on every call, same as /token.
     """
-    blocked = _gate()
-    if blocked:
-        return blocked
-    try:
-        if not sw_client:
-            init_signalwire_client()
-            if not sw_client:
-                return jsonify({"error": "SignalWire client not configured"}), 500
-
-        body = request.get_json(silent=True) or {}
-        reference, resource_id, display_name, error = _resolve_reference(body.get('subscriber_id'))
-        if error:
-            return jsonify({"success": False, "error": error}), 400
-
-        token_data = sw_client.refresh_token(reference=reference)
-        if resource_id:
-            token_data['subscriber_id'] = resource_id
-        token_data['subscriber_display_name'] = display_name
-
-        logger.info("Token refreshed successfully")
-
-        return jsonify({
-            "success": True,
-            "data": token_data
-        }), 200
-
-    except Exception as e:
-        logger.error(f"Error refreshing token: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": "Failed to refresh token"
-        }), 500
-
-
-@auth_bp.route('/validate', methods=['POST'])
-def validate_token():
-    """
-    Validate if a token is still valid (endpoint for testing)
-    """
-    try:
-        data = request.get_json() or {}
-        token = data.get('token')
-
-        if not token:
-            return jsonify({
-                "success": False,
-                "error": "No token provided"
-            }), 400
-
-        # In a real implementation, you would validate the token with SignalWire
-        # For now, we'll just return success
-        return jsonify({
-            "success": True,
-            "valid": True,
-            "message": "Token validation endpoint (placeholder)"
-        }), 200
-
-    except Exception as e:
-        logger.error(f"Error validating token: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": str(e)
-        }), 500
+    return _mint(refresh=True)

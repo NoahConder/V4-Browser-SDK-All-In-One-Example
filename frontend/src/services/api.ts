@@ -44,6 +44,8 @@ export const authAPI = {
   },
 };
 
+// The backend's call log is cosmetic (see CLAUDE.md); the browser keeps its
+// own Recents. Only the fire-and-forget dial post is used.
 export const callsAPI = {
   async initiateCall(toNumber: string): Promise<CallData> {
     const response = await api.post<{ success: boolean; data: CallData }>('/calls/dial', {
@@ -51,32 +53,6 @@ export const callsAPI = {
     });
     if (!response.data.success) {
       throw new Error('Failed to initiate call');
-    }
-    return response.data.data;
-  },
-
-  async endCall(callId: string): Promise<CallData> {
-    const response = await api.post<{ success: boolean; data: CallData }>(`/calls/end/${callId}`);
-    if (!response.data.success) {
-      throw new Error('Failed to end call');
-    }
-    return response.data.data;
-  },
-
-  async getCallStatus(callId: string): Promise<CallData> {
-    const response = await api.get<{ success: boolean; data: CallData }>(`/calls/status/${callId}`);
-    if (!response.data.success) {
-      throw new Error('Failed to get call status');
-    }
-    return response.data.data;
-  },
-
-  async getCallHistory(limit = 50): Promise<CallData[]> {
-    const response = await api.get<{ success: boolean; data: CallData[] }>('/calls/history', {
-      params: { limit },
-    });
-    if (!response.data.success) {
-      throw new Error('Failed to get call history');
     }
     return response.data.data;
   },

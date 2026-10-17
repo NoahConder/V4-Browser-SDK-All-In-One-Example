@@ -3,6 +3,7 @@ import Dialer from './components/Dialer';
 import { useSignalWire } from './hooks/useSignalWire';
 import { signalWireService } from './services/signalwire';
 import { toneService } from './services/tones';
+import { log } from './utils/log';
 
 function App() {
   const { isInitialized, error } = useSignalWire();
@@ -12,7 +13,7 @@ function App() {
     // Handle proper cleanup only on page unload
     const handleBeforeUnload = (event: BeforeUnloadEvent) => {
       // Only disconnect when the page is actually being closed
-      console.log('🚪 Page unloading event triggered');
+      log.debug('Page unloading event triggered');
       // Double-check this is a real unload event
       if (event && event.type === 'beforeunload') {
         // Not while a call is up. client.disconnect() ends the session and
@@ -26,10 +27,10 @@ function App() {
         // (5 min by default), so nothing is stranded if the user doesn't come
         // back.
         if (signalWireService.hasActiveCall()) {
-          console.log('🚪 beforeunload during an active call - keeping the session so the call can be reattached');
+          log.debug('beforeunload during an active call - keeping the session so the call can be reattached');
           return;
         }
-        console.log('🚪 Confirmed beforeunload - disconnecting SignalWire');
+        log.debug('Confirmed beforeunload - disconnecting SignalWire');
         signalWireService.disconnect();
       }
     };
@@ -49,7 +50,7 @@ function App() {
         stream.getTracks().forEach(track => track.stop());
         setPermissionsGranted(true);
       } catch (err) {
-        console.error('Failed to get microphone permissions:', err);
+        log.error('Failed to get microphone permissions:', err);
         setPermissionsGranted(false);
       }
     };

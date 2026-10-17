@@ -13,6 +13,7 @@ import { useCallStore } from './useCallStore';
 import { useRecentsStore } from './useRecentsStore';
 import { callsAPI } from '../services/api';
 import { formatPhoneNumber } from '../utils/address';
+import { log } from '../utils/log';
 
 // Who this browser is signed in as, stamped on each Recents entry.
 const activeSubscriber = () => ({
@@ -129,7 +130,7 @@ export const useSignalWire = () => {
             // onCallConnected -- reattachment isn't instant, and claiming
             // 'connected' early would show a running timer on a dead call if
             // the reattach turns out to have failed.
-            console.log('🔔 Call reattached after reload/reconnect:', remoteNumber);
+            log.debug('Call reattached after reload/reconnect:', remoteNumber);
             // Already connected before this page loaded; onCallEnded finishes
             // it as answered.
             useRecentsStore.getState().start({
@@ -152,7 +153,7 @@ export const useSignalWire = () => {
             });
           },
           onCallEnded: (wasIncoming: boolean) => {
-            console.log('🔔 Remote party ended call - returning to idle, wasIncoming:', wasIncoming);
+            log.debug('Remote party ended call - returning to idle, wasIncoming:', wasIncoming);
 
             // Answered if it ever connected; otherwise the caller gave up
             // (missed) or the dial never went through (failed). The hook's
@@ -167,14 +168,14 @@ export const useSignalWire = () => {
             resetCallState();
             setError(null);  // Clear any errors
 
-            // If it was an outbound call, trigger number clearing
+            // An outbound call is over: have the dialer clear its field (set
+            // after the reset, which clears this flag).
             if (!wasIncoming && callDirection === 'outbound') {
-              // We'll use a callback or event to clear the number
-              window.dispatchEvent(new CustomEvent('clearDialedNumber'));
+              setCallState({ pendingDialClear: true });
             }
           },
           onCallConnected: () => {
-            console.log('🔔 Call connected');
+            log.debug('Call connected');
             // connectedAt is set once: status$ re-emits 'connected' after a
             // successful ICE restart, which must not restart the timer.
             setCallState({
@@ -244,7 +245,6 @@ export const useSignalWire = () => {
         });
 
         setIsInitialized(true);
-        setCallState({ isConnected: true });
 
         // The backend resolves this from the reference actually used to mint
         // the token (see auth.py's _resolve_reference) -- already present on
@@ -254,23 +254,20 @@ export const useSignalWire = () => {
           canSelectAudioOutput: signalWireService.canSelectAudioOutput(),
         });
       } catch (err) {
-        console.error('Failed to initialize SignalWire:', err);
+        log.error('Failed to initialize SignalWire:', err);
         setError('Failed to connect to SignalWire');
         // App.tsx shows the error screen only once initialization has
         // settled; without this it would show the connecting spinner forever.
         setIsInitialized(true);
-        setCallState({ isConnected: false });
       }
     };
 
     initializeSignalWire();
 
     return () => {
-      // Only cleanup on actual unmount, not on re-renders
-      // The disconnect should only happen when the entire app unmounts
-      console.log('⚠️ useSignalWire cleanup triggered - NOT disconnecting to preserve calls');
-      // We'll let the service maintain its connection
-      // signalWireService.disconnect() should only be called on app unmount
+      // Deliberately no signalWireService.disconnect() here: the singleton
+      // must outlive React unmounts/re-renders (StrictMode, CallScreen
+      // mounting). Only App.tsx's beforeunload disconnects -- see CLAUDE.md.
     };
     // Intentionally run once on mount: the SignalWire singleton must outlive
     // React unmounts/re-renders (see CLAUDE.md). setCallState/resetCallState are
@@ -282,7 +279,7 @@ export const useSignalWire = () => {
   // from the resources panel; typed numbers are formatted for display.
   const makeCall = async (phoneNumber: string, video: boolean = false, label?: string) => {
     try {
-      console.log('📢 useSignalWire.makeCall() called with:', phoneNumber, 'video:', video);
+      log.debug('useSignalWire.makeCall() called with:', phoneNumber, 'video:', video);
       setError(null);
       setCallState({ callError: null });
       useRecentsStore.getState().start({
@@ -298,13 +295,13 @@ export const useSignalWire = () => {
       // hanging up was a no-op (nothing was dialing yet) and the call was
       // placed anyway once the request returned.
       callsAPI.initiateCall(phoneNumber)
-        .then((callData) => console.log('✅ Backend logged call:', callData))
-        .catch((err) => console.warn('Backend call log failed (ignored):', err));
+        .then((callData) => log.debug('Backend logged call:', callData))
+        .catch((err) => log.warn('Backend call log failed (ignored):', err));
 
       // Make the actual call
-      console.log('📞 Making actual call via SignalWire service...');
+      log.debug('Making actual call via SignalWire service...');
       const call = await signalWireService.makeCall(phoneNumber, video);
-      console.log('✅ SignalWire service returned call object:', call);
+      log.debug('SignalWire service returned call object:', call);
       // The user hung up while the dial was in flight; the UI already reset.
       if (!call) return;
       useRecentsStore.getState().setCallId(call.id);
@@ -312,15 +309,10 @@ export const useSignalWire = () => {
       // From here call.status$ drives callStatus: 'ringing' once the far end
       // rings (onCallStatusChange), 'connected' when it answers.
 
-      console.log('✅ Call state updated, call should be active');
+      log.debug('Call state updated, call should be active');
     } catch (err) {
       const message = describeCallError(err);
-      console.error('❌ Failed to make call:', err);
-      console.error('Error details:', {
-        message,
-        stack: err instanceof Error ? err.stack : undefined,
-        fullError: err
-      });
+      log.error('Failed to make call:', err);
       // callError (not the hook's full-screen `error`) -- a failed call
       // attempt shouldn't take over the whole app UI, just explain itself on
       // the idle dialer screen via ErrorBanner.
@@ -332,23 +324,26 @@ export const useSignalWire = () => {
 
   const endCall = async () => {
     try {
-      console.log('🔴 Ending call...');
+      log.debug('Ending call...');
       // Hanging up before the far end answered is a cancelled call. An
       // answered one is finished by onCallEnded, which the service fires
       // synchronously inside endCall().
       if (!activeRecent()?.connectedAt) useRecentsStore.getState().finish('cancelled');
+      const { callDirection } = useCallStore.getState();
       await signalWireService.endCall();
       resetCallState();
       setError(null);  // Clear any errors
-      console.log('✅ Call ended and state reset');
+      // Same as onCallEnded's remote-hangup path (which doesn't fire when the
+      // dial was still in flight): an outbound call is over, clear the field.
+      if (callDirection === 'outbound') setCallState({ pendingDialClear: true });
     } catch (err) {
-      console.error('Failed to end call:', err);
+      log.error('Failed to end call:', err);
       // Don't set error here as it causes blank screen
       // Just log the error and reset state
       // Reset state even if end call fails to return to dialer
       resetCallState();
       setError(null);  // Clear error to return to dialer
-      console.log('⚠️ End call failed but returning to dialer');
+      log.debug('End call failed but returning to dialer');
     }
   };
 
@@ -365,7 +360,7 @@ export const useSignalWire = () => {
         isCameraOn: isVideoCall,
       });
     } catch (err) {
-      console.error('Failed to answer call:', err);
+      log.error('Failed to answer call:', err);
       // Same as rejectCall/endCall's failure paths below: bail back to the
       // idle dialer rather than leaving the user stuck on an unanswerable
       // incoming-call screen. callError survives resetCallState() and
@@ -379,19 +374,19 @@ export const useSignalWire = () => {
 
   const rejectCall = async () => {
     try {
-      console.log('🚫 Rejecting incoming call...');
+      log.debug('Rejecting incoming call...');
       useRecentsStore.getState().finish('declined');
       await signalWireService.rejectCall();
       resetCallState();
       setError(null);  // Clear any errors
-      console.log('✅ Call rejected and state reset');
+      log.debug('Call rejected and state reset');
     } catch (err) {
-      console.error('Failed to reject call:', err);
+      log.error('Failed to reject call:', err);
       // Don't set error here as it causes blank screen
       // Reset state even if reject fails to return to dialer
       resetCallState();
       setError(null);  // Clear error to return to dialer
-      console.log('⚠️ Reject call failed but returning to dialer');
+      log.debug('Reject call failed but returning to dialer');
     }
   };
 
@@ -406,7 +401,7 @@ export const useSignalWire = () => {
       await signalWireService.toggleMute(newMutedState);
     } catch (err) {
       // Log but don't show error to user since we handle it gracefully
-      console.warn('Mute toggle warning:', err);
+      log.warn('Mute toggle warning:', err);
       // Don't set error state - the mute is handled via WebRTC directly
     }
   };
@@ -421,7 +416,7 @@ export const useSignalWire = () => {
     try {
       await signalWireService.toggleCamera(newCameraState);
     } catch (err) {
-      console.warn('Camera toggle failed:', err);
+      log.warn('Camera toggle failed:', err);
       setCallState({ isCameraOn: !newCameraState, callError: describeCallError(err) });
     }
   };
@@ -442,7 +437,7 @@ export const useSignalWire = () => {
         });
       }
     } catch (err) {
-      console.error('Failed to toggle speaker:', err);
+      log.error('Failed to toggle speaker:', err);
       setCallState({ callError: 'Failed to toggle speaker.' });
     }
   };
@@ -451,7 +446,7 @@ export const useSignalWire = () => {
     try {
       await signalWireService.sendDTMF(digit);
     } catch (err) {
-      console.error('Failed to send DTMF:', err);
+      log.error('Failed to send DTMF:', err);
     }
   };
 
@@ -465,7 +460,7 @@ export const useSignalWire = () => {
     try {
       await signalWireService.toggleHold();
     } catch (err) {
-      console.error('Failed to toggle hold:', err);
+      log.error('Failed to toggle hold:', err);
       setCallState({ isOnHold, callError: describeCallError(err) });
     }
   };
@@ -482,7 +477,7 @@ export const useSignalWire = () => {
     } catch (err) {
       const message = describeScreenShareError(err);
       if (message === null) return;
-      console.error('Failed to toggle screen share:', err);
+      log.error('Failed to toggle screen share:', err);
       // NotSupportedError: the API is unavailable after all, so hide the control.
       if (err instanceof DOMException && err.name === 'NotSupportedError') {
         setCallState({ canScreenShare: false });
@@ -498,7 +493,7 @@ export const useSignalWire = () => {
     try {
       await signalWireService.toggleEchoCancellation();
     } catch (err) {
-      console.warn('Echo cancellation toggle failed:', err);
+      log.warn('Echo cancellation toggle failed:', err);
       setCallState({ callError: describeCallError(err) });
     }
   };
@@ -507,7 +502,7 @@ export const useSignalWire = () => {
     try {
       await signalWireService.toggleAutoGain();
     } catch (err) {
-      console.warn('Auto gain toggle failed:', err);
+      log.warn('Auto gain toggle failed:', err);
       setCallState({ callError: describeCallError(err) });
     }
   };
@@ -516,7 +511,7 @@ export const useSignalWire = () => {
     try {
       await signalWireService.toggleNoiseSuppression();
     } catch (err) {
-      console.warn('Noise suppression toggle failed:', err);
+      log.warn('Noise suppression toggle failed:', err);
       setCallState({ callError: describeCallError(err) });
     }
   };
@@ -527,7 +522,7 @@ export const useSignalWire = () => {
     try {
       await signalWireService.setDoNotDisturb(enabled);
     } catch (err) {
-      console.warn('Do Not Disturb change failed:', err);
+      log.warn('Do Not Disturb change failed:', err);
       setCallState({ callError: describeCallError(err) });
     }
   };
@@ -537,7 +532,7 @@ export const useSignalWire = () => {
     try {
       await signalWireService.requestIceRestart();
     } catch (err) {
-      console.warn('ICE restart failed:', err);
+      log.warn('ICE restart failed:', err);
       setCallState({ callError: describeCallError(err) });
     }
   };

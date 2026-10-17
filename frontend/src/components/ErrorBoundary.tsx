@@ -1,4 +1,5 @@
 import React, { Component, ReactNode } from 'react';
+import { log } from '../utils/log';
 
 interface Props {
   children: ReactNode;
@@ -25,14 +26,14 @@ class ErrorBoundary extends Component<Props, State> {
 
   componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
     // Log error details for debugging
-    console.error('ErrorBoundary caught:', error, errorInfo);
+    log.error('ErrorBoundary caught:', error, errorInfo);
 
     // A DOM-manipulation error (e.g. a media element removed out from under
     // React) usually clears on re-render -- retry once.
     const isDomError = error.message.includes('removeChild') || error.message.includes('Node');
     if (isDomError && !this.retriedDomError) {
       this.retriedDomError = true;
-      console.log('DOM manipulation error detected, attempting recovery...');
+      log.debug('DOM manipulation error detected, attempting recovery...');
       setTimeout(() => {
         this.setState({ hasError: false });
       }, 100);

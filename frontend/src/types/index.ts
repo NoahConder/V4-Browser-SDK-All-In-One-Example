@@ -1,5 +1,4 @@
 export interface CallState {
-  isConnected: boolean;
   isClientReady: boolean;
   // Whether this browser can route audio to a chosen output device at all
   // (HTMLMediaElement.setSinkId -- missing on Firefox and Safari). A fact
@@ -16,8 +15,10 @@ export interface CallState {
   isIncoming: boolean;
   isMuted: boolean;
   isSpeakerOn: boolean;
-  callDuration: number;
   remoteNumber: string;
+  // Set when an outbound call ends (hung up here or by the far end) so the
+  // dialer clears its field; the dialer resets it once handled.
+  pendingDialClear: boolean;
   callDirection: 'inbound' | 'outbound' | null;
   // 'connecting' from the moment Call is tapped (and for the SDK's
   // trying/connecting statuses), 'ringing' once the SDK reports the far end
@@ -61,17 +62,16 @@ export interface CallState {
   activeSubscriberName: string | null;
 }
 
+// The fields of the backend's token response this app reads (it also returns
+// expires_in/project_id/space_name, unused here).
 export interface TokenData {
   token: string;
   expires_at: string;
-  expires_in: number;
   subscriber_id?: string;
   // Resolved server-side from the reference actually used to mint this
   // token -- see auth.py's _resolve_reference for why this can't be
   // recovered from subscriber_id alone.
   subscriber_display_name?: string;
-  project_id: string;
-  space_name: string;
 }
 
 export interface CallData {

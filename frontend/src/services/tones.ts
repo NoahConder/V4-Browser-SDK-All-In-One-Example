@@ -1,3 +1,5 @@
+import { log } from '../utils/log';
+
 // Standard DTMF pairs (low, high) in Hz.
 const DTMF_FREQUENCIES: Record<string, [number, number]> = {
   '1': [697, 1209], '2': [697, 1336], '3': [697, 1477],
@@ -15,16 +17,13 @@ class ToneService {
     if (!this.audioContext) {
       this.audioContext = new (window.AudioContext ||
         (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext)();
-      console.log('🔊 AudioContext created, state:', this.audioContext.state);
     }
 
     // Resume context if it's suspended (browser autoplay policy)
     if (this.audioContext.state === 'suspended') {
-      console.log('🔊 AudioContext is suspended, attempting to resume...');
       this.audioContext.resume().then(() => {
-        console.log('🔊 AudioContext resumed successfully');
       }).catch(err => {
-        console.error('🔊 Failed to resume AudioContext:', err);
+        log.error('Failed to resume AudioContext:', err);
       });
     }
 
@@ -76,31 +75,25 @@ class ToneService {
 
   // Play a repeating whimsical ringtone for incoming calls
   playIncomingCallTone() {
-    console.log('🎵 playIncomingCallTone() called');
 
     // Clear any existing ringtone
     this.stopIncomingCallTone();
 
     const context = this.getAudioContext();
-    console.log('🎵 AudioContext state:', context.state);
 
     // Play initial ring immediately
     this.playWhimsicalRing(context);
 
     // Repeat the ring pattern every 2 seconds
     this.incomingCallInterval = setInterval(() => {
-      console.log('🎵 Playing repeat ring...');
       this.playWhimsicalRing(context);
     }, 2000);
 
-    console.log('🎵 Ringtone started, interval ID:', this.incomingCallInterval);
   }
 
   // Stop the incoming call ringtone
   stopIncomingCallTone() {
-    console.log('🎵 stopIncomingCallTone() called');
     if (this.incomingCallInterval) {
-      console.log('🎵 Clearing interval:', this.incomingCallInterval);
       clearInterval(this.incomingCallInterval);
       this.incomingCallInterval = null;
     }
@@ -117,7 +110,6 @@ class ToneService {
   }
 
   private playWhimsicalRing(context: AudioContext) {
-    console.log('🎶 playWhimsicalRing() called, context state:', context.state);
     const currentTime = context.currentTime;
 
     // Create a more whimsical pattern with ascending notes

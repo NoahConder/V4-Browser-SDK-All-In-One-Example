@@ -139,12 +139,10 @@ There are no automated tests in this repo.
 | `GET /health` | Health check with configuration status |
 | `POST /api/auth/token` | Mint a subscriber token for the browser SDK. Requires `X-API-Key`; rate limited |
 | `POST /api/auth/refresh` | Mint a fresh token (called by the SDK before expiry). Requires `X-API-Key`; rate limited |
-| `POST /api/auth/validate` | Development stub. It does not validate tokens |
-| `GET /api/subscribers` | List the space's subscribers (id, display name, email). Requires `X-API-Key`; rate limited |
-| `GET /api/swml/scripts` | Paginated SWML scripts with their dialable addresses |
-| `GET /api/sip/credentials` | Paginated SIP credentials with their dialable addresses |
+| `GET /api/subscribers` | List the space's subscribers (id, display name, email). Requires `X-API-Key`; rate limited. `limit` ≤ 50 |
+| `GET /api/swml/scripts` | Paginated SWML scripts with their dialable addresses. `limit` ≤ 50 |
+| `GET /api/sip/credentials` | Paginated SIP credentials with their dialable addresses. `limit` ≤ 50 |
 | `POST /api/calls/dial` | Records an outbound call in the in-memory log (the call itself is placed by the browser) |
-| `POST /api/calls/incoming` | Records an incoming call in the in-memory log |
 | `GET /api/calls/status/<call_id>` | Look up a logged call |
 | `POST /api/calls/end/<call_id>` | Mark a logged call as ended |
 | `GET /api/calls/history` | Logged call history |

@@ -13,6 +13,7 @@ import { useCallStore } from '../hooks/useCallStore';
 import { useRecentsStore } from '../hooks/useRecentsStore';
 import { useSignalWire } from '../hooks/useSignalWire';
 import { type DialAddressType, countDigits, formatPhoneNumber, getDialAddressType, isDialAddress } from '../utils/address';
+import { log } from '../utils/log';
 
 type HeaderPanel = 'devices' | 'diagnostics' | 'resources' | 'subscriber';
 
@@ -90,6 +91,7 @@ const Dialer: React.FC = () => {
   const remoteHasVideo = useCallStore((s) => s.remoteHasVideo);
   const callError = useCallStore((s) => s.callError);
   const clientNotice = useCallStore((s) => s.clientNotice);
+  const pendingDialClear = useCallStore((s) => s.pendingDialClear);
   const setCallState = useCallStore((s) => s.setCallState);
   const resetCallState = useCallStore((s) => s.resetCallState);
 
@@ -110,12 +112,12 @@ const Dialer: React.FC = () => {
   };
 
   const handleCall = async () => {
-    console.log('📢 handleCall() triggered');
-    console.log('Current phoneNumber:', phoneNumber);
+    log.debug('handleCall() triggered');
+    log.debug('Current phoneNumber:', phoneNumber);
 
     // Prevent multiple simultaneous calls
     if (isCallingInProgress) {
-      console.log('⚠️ Call already in progress, ignoring duplicate request');
+      log.debug('Call already in progress, ignoring duplicate request');
       return;
     }
 
@@ -124,7 +126,7 @@ const Dialer: React.FC = () => {
     if (!phoneNumber) {
       const lastOutbound = useRecentsStore.getState().entries.find((entry) => entry.direction === 'outbound');
       if (lastOutbound) {
-        console.log('🔄 Populating with last dialed destination:', lastOutbound.destination);
+        log.debug('Populating with last dialed destination:', lastOutbound.destination);
         setPhoneNumber(lastOutbound.destination);
         setWantsVideo(lastOutbound.video);
         setPicked({ destination: lastOutbound.destination, label: lastOutbound.label });
@@ -136,7 +138,7 @@ const Dialer: React.FC = () => {
     // shorter than a phone number, so only phone-number-looking input needs
     // the 7-digit sanity check (digits only -- "555-1234" has 7).
     if (phoneNumber && (isDialAddress(phoneNumber) || countDigits(phoneNumber) >= 7)) {
-      console.log('📞 Dialing:', phoneNumber);
+      log.debug('Dialing:', phoneNumber);
       setIsCallingInProgress(true);
 
       // Immediately set the call state to show the call screen
@@ -155,9 +157,9 @@ const Dialer: React.FC = () => {
 
       try {
         await makeCall(phoneNumber, wantsVideo, pickedLabel);
-        console.log('✅ makeCall completed');
+        log.debug('makeCall completed');
       } catch (error) {
-        console.error('❌ makeCall failed:', error);
+        log.error('makeCall failed:', error);
         // Reset state if call fails
         resetCallState();
       } finally {
@@ -165,40 +167,25 @@ const Dialer: React.FC = () => {
         setIsCallingInProgress(false);
       }
     } else {
-      console.log('⚠️ Number too short:', phoneNumber?.length || 0, 'digits');
+      log.debug('Number too short:', phoneNumber?.length || 0, 'digits');
     }
   };
 
   const handleEndCall = async () => {
-    console.log('🔴 handleEndCall called');
-    console.log('State before ending - isInCall:', isInCall, 'isIncoming:', isIncoming);
-
     await endCall();
-
-    // Reset calling flag when call ends
+    // For an outbound call the hook sets pendingDialClear; the effect below
+    // clears the field. The flag is reset here too in case the dial was
+    // still in flight (endCall then resolves without a call to tear down).
     setIsCallingInProgress(false);
-
-    // Clear the phone number for outgoing calls
-    // (callDirection will be 'outbound' for calls we initiated)
-    const { callDirection } = useCallStore.getState();
-    if (callDirection === 'outbound') {
-      setPhoneNumber('');
-    }
-
-    console.log('State after ending - isInCall:', useCallStore.getState().isInCall, 'isIncoming:', useCallStore.getState().isIncoming);
   };
 
-  // Handle clearing number when outbound call ends (remote hangup)
+  // An outbound call ended (hung up here or by the far end): clear the field.
   useEffect(() => {
-    const handleClearNumber = () => {
-      console.log('🗑️ Clearing dialed number after outbound call ended');
-      setPhoneNumber('');
-      setIsCallingInProgress(false); // Reset calling flag
-    };
-
-    window.addEventListener('clearDialedNumber', handleClearNumber);
-    return () => window.removeEventListener('clearDialedNumber', handleClearNumber);
-  }, []);
+    if (!pendingDialClear) return;
+    setPhoneNumber('');
+    setIsCallingInProgress(false);
+    setCallState({ pendingDialClear: false });
+  }, [pendingDialClear, setCallState]);
 
   // Enter-to-call, from anywhere on the idle dialer screen (including while
   // the address input is focused, since 'keydown' bubbles up to window).

@@ -1,28 +1,24 @@
 from flask import Blueprint, jsonify, request
-from utils.signalwire import SignalWireClient
+from utils.signalwire import get_client
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 import uuid
 
 logger = logging.getLogger(__name__)
 calls_bp = Blueprint('calls', __name__)
 
-# In-memory call storage (in production, use a database)
+# In-memory call log. Cosmetic debugging data, not a source of truth: calls are
+# signaled and carried between the browser and SignalWire directly, and the
+# frontend only ever posts to /dial (fire-and-forget). The browser keeps its
+# own Recents list; see CLAUDE.md.
 active_calls = {}
 call_history = []
+MAX_ACTIVE_CALLS = 200
+MAX_HISTORY = 100
 
-# Initialize SignalWire client
-sw_client = None
 
-
-def init_signalwire_client():
-    global sw_client
-    try:
-        sw_client = SignalWireClient()
-        logger.info("SignalWire client initialized for calls")
-    except Exception as e:
-        logger.error(f"Failed to initialize SignalWire client: {e}")
-        sw_client = None
+def _now():
+    return datetime.now(timezone.utc)
 
 
 @calls_bp.route('/dial', methods=['POST'])
@@ -42,8 +38,7 @@ def initiate_call():
             }), 400
 
         # Validate phone number
-        if not sw_client:
-            init_signalwire_client()
+        sw_client = get_client()
 
         if sw_client and not sw_client.validate_phone_number(to_number):
             return jsonify({
@@ -64,10 +59,14 @@ def initiate_call():
             "from": from_number,
             "direction": "outbound",
             "status": "initiated",
-            "started_at": datetime.utcnow().isoformat(),
+            "started_at": _now().isoformat(),
             "duration": 0
         }
 
+        # Nothing ever moves these to history unless /end is called, so cap
+        # the dict rather than let it grow for the life of the process.
+        if len(active_calls) >= MAX_ACTIVE_CALLS:
+            del active_calls[next(iter(active_calls))]
         active_calls[call_id] = call_data
 
         logger.info(f"Outbound call initiated: {call_id} to {formatted_number}")
@@ -81,52 +80,7 @@ def initiate_call():
         logger.error(f"Error initiating call: {str(e)}")
         return jsonify({
             "success": False,
-            "error": str(e)
-        }), 500
-
-
-@calls_bp.route('/incoming', methods=['POST'])
-def handle_incoming_call():
-    """
-    Handle incoming call webhook from SignalWire
-    """
-    try:
-        # Parse webhook data
-        data = request.get_json() or request.form.to_dict()
-
-        # Extract call information
-        from_number = data.get('From', 'Unknown')
-        to_number = data.get('To', 'WebDialer')
-        call_sid = data.get('CallSid', str(uuid.uuid4()))
-
-        # Store incoming call
-        call_data = {
-            "id": call_sid,
-            "from": from_number,
-            "to": to_number,
-            "direction": "inbound",
-            "status": "ringing",
-            "started_at": datetime.utcnow().isoformat(),
-            "duration": 0
-        }
-
-        active_calls[call_sid] = call_data
-
-        logger.info(f"Incoming call received: {call_sid} from {from_number}")
-
-        # Return TwiML response to handle the call
-        # For now, we'll just acknowledge receipt
-        return jsonify({
-            "success": True,
-            "message": "Incoming call registered",
-            "call_id": call_sid
-        }), 200
-
-    except Exception as e:
-        logger.error(f"Error handling incoming call: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": str(e)
+            "error": "Failed to log call"
         }), 500
 
 
@@ -159,7 +113,7 @@ def get_call_status(call_id):
         logger.error(f"Error getting call status: {str(e)}")
         return jsonify({
             "success": False,
-            "error": str(e)
+            "error": "Failed to get call status"
         }), 500
 
 
@@ -176,21 +130,23 @@ def end_call(call_id):
             }), 404
 
         call_data = active_calls[call_id]
+        ended = _now()
         call_data['status'] = 'ended'
-        call_data['ended_at'] = datetime.utcnow().isoformat()
+        call_data['ended_at'] = ended.isoformat()
 
         # Calculate duration if started_at exists
         if 'started_at' in call_data:
             started = datetime.fromisoformat(call_data['started_at'])
-            ended = datetime.utcnow()
+            if started.tzinfo is None:
+                started = started.replace(tzinfo=timezone.utc)
             call_data['duration'] = int((ended - started).total_seconds())
 
         # Move to history
         call_history.append(call_data)
         del active_calls[call_id]
 
-        # Keep only last 100 calls in history
-        if len(call_history) > 100:
+        # Keep only the most recent calls in history
+        if len(call_history) > MAX_HISTORY:
             call_history.pop(0)
 
         logger.info(f"Call ended: {call_id}")
@@ -204,7 +160,7 @@ def end_call(call_id):
         logger.error(f"Error ending call: {str(e)}")
         return jsonify({
             "success": False,
-            "error": str(e)
+            "error": "Failed to end call"
         }), 500
 
 
@@ -215,7 +171,7 @@ def get_call_history():
     """
     try:
         # Get query parameters
-        limit = request.args.get('limit', 50, type=int)
+        limit = max(1, min(request.args.get('limit', 50, type=int) or 50, MAX_HISTORY))
         direction = request.args.get('direction')  # 'inbound', 'outbound', or None for all
 
         # Filter history
@@ -246,7 +202,7 @@ def get_call_history():
         logger.error(f"Error getting call history: {str(e)}")
         return jsonify({
             "success": False,
-            "error": str(e)
+            "error": "Failed to get call history"
         }), 500
 
 
@@ -266,5 +222,5 @@ def get_active_calls():
         logger.error(f"Error getting active calls: {str(e)}")
         return jsonify({
             "success": False,
-            "error": str(e)
+            "error": "Failed to get active calls"
         }), 500

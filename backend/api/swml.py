@@ -1,14 +1,12 @@
 from flask import Blueprint, jsonify, request
-from utils.signalwire import SignalWireClient
+from utils.signalwire import get_client
+from utils.security import bounded_page
 from concurrent.futures import ThreadPoolExecutor
 import logging
 import time
 
 logger = logging.getLogger(__name__)
 swml_bp = Blueprint('swml', __name__)
-
-# Initialize SignalWire client
-sw_client = None
 
 # Listing all scripts' metadata (no addresses) is one cheap paginated call;
 # fetching each script's addresses is a separate, slower request. Cache the
@@ -19,21 +17,11 @@ CACHE_TTL_SECONDS = 60
 ADDRESS_FETCH_WORKERS = 10
 
 
-def init_signalwire_client():
-    global sw_client
-    try:
-        sw_client = SignalWireClient()
-        logger.info("SignalWire client initialized for swml")
-    except Exception as e:
-        logger.error(f"Failed to initialize SignalWire client: {e}")
-        sw_client = None
-
-
 def _get_scripts_meta():
     if _scripts_meta_cache["data"] is not None and time.time() < _scripts_meta_cache["expires_at"]:
         return _scripts_meta_cache["data"]
 
-    scripts = sw_client.list_swml_scripts()
+    scripts = get_client().list_swml_scripts()
     _scripts_meta_cache["data"] = scripts
     _scripts_meta_cache["expires_at"] = time.time() + CACHE_TTL_SECONDS
     return scripts
@@ -41,7 +29,7 @@ def _get_scripts_meta():
 
 def _fetch_with_addresses(script):
     try:
-        addresses = sw_client.list_swml_script_addresses(script['id'])
+        addresses = get_client().list_swml_script_addresses(script['id'])
     except Exception as e:
         logger.warning(f"Failed to load addresses for script {script.get('id')}: {e}")
         addresses = []
@@ -56,17 +44,13 @@ def get_swml_scripts():
     addresses up front (fetching addresses is one REST call per script).
     """
     try:
-        if not sw_client:
-            init_signalwire_client()
-
-        if not sw_client:
+        if not get_client():
             return jsonify({
                 "success": False,
                 "error": "SignalWire client not configured"
             }), 500
 
-        offset = request.args.get('offset', 0, type=int)
-        limit = request.args.get('limit', 10, type=int)
+        offset, limit = bounded_page(request)
 
         scripts = _get_scripts_meta()
         page = scripts[offset:offset + limit]
@@ -87,5 +71,5 @@ def get_swml_scripts():
         logger.error(f"Error listing SWML scripts: {str(e)}")
         return jsonify({
             "success": False,
-            "error": str(e)
+            "error": "Failed to list SWML scripts"
         }), 500
