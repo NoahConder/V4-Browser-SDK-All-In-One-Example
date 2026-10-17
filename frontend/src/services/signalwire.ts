@@ -17,8 +17,10 @@ import type {
   SessionDiagnostics,
   QualityLevel,
   NetworkIssue,
+  RecoveryEvent,
+  RecoveryState,
 } from '@signalwire/js';
-import { combineLatest, distinctUntilChanged, of, switchMap } from 'rxjs';
+import { ReplaySubject, combineLatest, distinctUntilChanged, of, switchMap } from 'rxjs';
 import type { Observable, Subscription } from 'rxjs';
 import type { TokenData } from '../types';
 import axios from 'axios';
@@ -124,6 +126,11 @@ export interface SignalWireCallbacks {
   // gesture on this page yet, e.g. a call reattached after a reload). The UI
   // shows a tap-to-enable control that calls resumeRemoteAudio().
   onRemoteAudioBlocked?: () => void;
+  // call.recoveryState$ for the current call, and whether media is currently
+  // down without the call having ended (see monitorPeerConnection). Both are
+  // low-frequency and drive the call screen's "Reconnecting…" state.
+  onRecoveryStateChange?: (state: RecoveryState) => void;
+  onMediaDisruptionChange?: (disrupted: boolean) => void;
 }
 
 // What the browser does when a constraint isn't specified (and what
@@ -194,7 +201,23 @@ class SignalWireService {
   private callErrorsSub: Subscription | null = null;
   private screenShareSub: Subscription | null = null;
   private qualitySub: Subscription | null = null;
+  private recoveryStateSub: Subscription | null = null;
+  private recoveryEventSub: Subscription | null = null;
   private remoteAudioCheckInterval: ReturnType<typeof setInterval> | null = null;
+
+  // Per-call media-disruption tracking (see monitorPeerConnection). The
+  // disposers remove our RTCPeerConnection listeners on call end -- the old
+  // connection's 'closed' event fires after hangup(), and must not tear down
+  // whatever call is current by then.
+  private monitoredPc: RTCPeerConnection | null = null;
+  private pcListenerDisposers: Array<() => void> = [];
+  private mediaDisruptionTimer: ReturnType<typeof setTimeout> | null = null;
+  private mediaDisruptionTimerExtended: boolean = false;
+  private lastRecoveryState: RecoveryState = 'idle';
+  private isMediaDisrupted: boolean = false;
+  // Replays the current call's recent recovery events to late subscribers
+  // (the call-stats sheet is opened mid-call).
+  private recoveryEvents$ = new ReplaySubject<RecoveryEvent>(10);
 
   // Video elements attached by CallScreen; may be set before or after streams arrive.
   private localVideoEl: HTMLVideoElement | null = null;
@@ -218,6 +241,8 @@ class SignalWireService {
   private onQualityChange: ((state: CallQualityState) => void) | null = null;
   private onCallMediaError: ((error: MediaAccessError | MediaTrackError) => void) | null = null;
   private onRemoteAudioBlocked: (() => void) | null = null;
+  private onRecoveryStateChange: ((state: RecoveryState) => void) | null = null;
+  private onMediaDisruptionChange: ((disrupted: boolean) => void) | null = null;
 
   async initialize(callbacks: SignalWireCallbacks = {}) {
     if (this.isInitializing || this.isInitialized) {
@@ -246,6 +271,8 @@ class SignalWireService {
       this.onQualityChange = callbacks.onQualityChange || null;
       this.onCallMediaError = callbacks.onCallMediaError || null;
       this.onRemoteAudioBlocked = callbacks.onRemoteAudioBlocked || null;
+      this.onRecoveryStateChange = callbacks.onRecoveryStateChange || null;
+      this.onMediaDisruptionChange = callbacks.onMediaDisruptionChange || null;
 
       // Create credential provider with automatic refresh
       const credentialProvider = {
@@ -519,6 +546,10 @@ class SignalWireService {
         this.onCallStatusChange?.('connecting');
       } else if (status === 'ringing') {
         this.onCallStatusChange?.('ringing');
+      } else if (status === 'recovering') {
+        // In the CallStatus union but not emitted by rc.5 (recovery is
+        // reported on recoveryState$); handled in case a later SDK does.
+        this.setMediaDisrupted(true);
       } else if (status === 'connected') {
         if (this.pendingTransferDestination) {
           console.log('[transfer] Call is still connected on this leg -- the transfer did not take the call away, so it likely failed or was not accepted by the destination');
@@ -631,6 +662,52 @@ class SignalWireService {
     this.screenShareSub = call.self$
       .pipe(switchMap((self) => self.screenShareStatus$))
       .subscribe((status) => this.onScreenShareStatusChange?.(status));
+
+    // The SDK's own recovery (CallRecoveryManager: debouncing -> recovering
+    // -> cooldown -> idle). Note it is driven by the stats monitor, browser
+    // offline events and WebSocket re-auth -- NOT by ICE state, so it can be
+    // 'idle' while the peer connection is down; monitorPeerConnection's grace
+    // timer covers that case.
+    this.lastRecoveryState = 'idle';
+    this.recoveryEvents$ = new ReplaySubject<RecoveryEvent>(10);
+    this.recoveryStateSub = call.recoveryState$.subscribe((state) => {
+      console.log('[recovery] state:', state);
+      this.lastRecoveryState = state;
+      this.onRecoveryStateChange?.(state);
+      this.setMediaDisrupted(state === 'debouncing' || state === 'recovering' || this.isPeerConnectionDown());
+    });
+    this.recoveryEventSub = call.recoveryEvent$.subscribe((event) => {
+      console.log('[recovery]', event.action, '-', event.reason, event.attempt != null ? `(${event.attempt}/${event.maxAttempts})` : '');
+      this.recoveryEvents$.next(event);
+      if (this.currentCall !== call) return;
+      if (event.action === 'max_attempts_reached') {
+        // The SDK follows this with a fatal network error and status$
+        // 'failed'; ending here too keeps call-end detection redundant.
+        this.handleCallEnded();
+      } else if (event.action === 'reinvite_succeeded') {
+        // New transceivers/tracks after an ICE restart or re-invite: re-pick
+        // up remote media and re-apply a local mute to the new sender track.
+        if (this.monitoredPc) this.checkReceivers(this.monitoredPc);
+        this.applyMicMute();
+      }
+    });
+  }
+
+  // Deduped so the store isn't poked on every repeated ICE/recovery event.
+  private setMediaDisrupted(disrupted: boolean) {
+    if (this.isMediaDisrupted === disrupted) return;
+    this.isMediaDisrupted = disrupted;
+    this.onMediaDisruptionChange?.(disrupted);
+  }
+
+  private isPeerConnectionDown(): boolean {
+    const state = this.monitoredPc?.iceConnectionState;
+    return state === 'disconnected' || state === 'failed';
+  }
+
+  // Recent recovery events for the current call (replayed on subscribe).
+  getRecoveryEvents$(): Observable<RecoveryEvent> {
+    return this.recoveryEvents$.asObservable();
   }
 
   private setAudioProcessing(state: AudioProcessingState) {
@@ -655,10 +732,29 @@ class SignalWireService {
     this.callErrorsSub = null;
     this.screenShareSub?.unsubscribe();
     this.screenShareSub = null;
+    this.recoveryStateSub?.unsubscribe();
+    this.recoveryStateSub = null;
+    this.recoveryEventSub?.unsubscribe();
+    this.recoveryEventSub = null;
     if (this.remoteAudioCheckInterval) {
       clearInterval(this.remoteAudioCheckInterval);
       this.remoteAudioCheckInterval = null;
     }
+    this.clearMediaDisruptionTimer();
+    this.pcListenerDisposers.forEach((dispose) => dispose());
+    this.pcListenerDisposers = [];
+    this.monitoredPc = null;
+    this.lastRecoveryState = 'idle';
+    // Not via setMediaDisrupted() -- the store's own reset covers the UI.
+    this.isMediaDisrupted = false;
+  }
+
+  private clearMediaDisruptionTimer() {
+    if (this.mediaDisruptionTimer) {
+      clearTimeout(this.mediaDisruptionTimer);
+      this.mediaDisruptionTimer = null;
+    }
+    this.mediaDisruptionTimerExtended = false;
   }
 
   // CallScreen calls these with its <video> refs on mount/unmount. If a stream
@@ -710,7 +806,7 @@ class SignalWireService {
     const pc = call.rtcPeerConnection;
     if (pc) {
       console.log('PC available immediately, state:', pc.connectionState, 'ice:', pc.iceConnectionState);
-      this.monitorPeerConnection(pc);
+      this.monitorPeerConnection(pc, call);
       return;
     }
 
@@ -725,7 +821,7 @@ class SignalWireService {
           clearInterval(this.remoteAudioCheckInterval);
           this.remoteAudioCheckInterval = null;
         }
-        this.monitorPeerConnection(rtcPC);
+        this.monitorPeerConnection(rtcPC, call);
       } else if (attempts > 30) {
         console.warn('Gave up waiting for RTCPeerConnection');
         if (this.remoteAudioCheckInterval) {
@@ -736,9 +832,25 @@ class SignalWireService {
     }, 500);
   }
 
-  private monitorPeerConnection(pc: RTCPeerConnection) {
+  // Remote-media pickup and media-loss handling on the call's peer connection.
+  // Every handler checks the call is still current, and the listeners are
+  // removed in cleanupCallSubscriptions() (pcListenerDisposers).
+  private monitorPeerConnection(pc: RTCPeerConnection, call: Call) {
+    this.monitoredPc = pc;
+    const listen = <K extends keyof RTCPeerConnectionEventMap>(
+      type: K,
+      handler: (event: RTCPeerConnectionEventMap[K]) => void,
+    ) => {
+      const guarded = (event: RTCPeerConnectionEventMap[K]) => {
+        if (this.currentCall !== call) return;
+        handler(event);
+      };
+      pc.addEventListener(type, guarded);
+      this.pcListenerDisposers.push(() => pc.removeEventListener(type, guarded));
+    };
+
     // Listen for track events (addEventListener doesn't overwrite the SDK's ontrack handler)
-    pc.addEventListener('track', (event) => {
+    listen('track', (event) => {
       console.log('PC track event:', event.track.kind, 'streams:', event.streams.length);
       if (event.track.kind === 'audio' || event.track.kind === 'video') {
         const stream = event.streams[0] || new MediaStream([event.track]);
@@ -749,29 +861,60 @@ class SignalWireService {
     // Check existing receivers — tracks may already be there
     this.checkReceivers(pc);
 
-    // Also re-check when ICE connects (remote media starts flowing)
-    // and detect call end as fallback when status$ doesn't fire
-    pc.addEventListener('iceconnectionstatechange', () => {
-      console.log('ICE connection state:', pc.iceConnectionState);
-      if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+    // Media state. 'connected'/'completed' also means remote media (re)starts
+    // flowing, so re-check receivers. 'disconnected'/'failed' is a media
+    // disruption, not a call end: the SDK may be recovering it (ICE restart,
+    // then a relay-only restart), so show "Reconnecting…" and give it the
+    // grace window below. Only 'closed' -- produced by the SDK's own destroy
+    // -- is terminal here; the other end signals are status$ and
+    // recoveryEvent$ (see CLAUDE.md's call-ended detection note).
+    const onMediaStateChange = () => {
+      const ice = pc.iceConnectionState;
+      const conn = pc.connectionState;
+      console.log('PC state:', conn, 'ice:', ice);
+      if (ice === 'closed' || conn === 'closed') {
+        console.log('Peer connection closed - ending call as fallback');
+        this.handleCallEnded();
+      } else if (ice === 'disconnected' || ice === 'failed' || conn === 'failed') {
+        this.setMediaDisrupted(true);
+        this.armMediaDisruptionTimer(pc, call);
+      } else if (ice === 'connected' || ice === 'completed') {
         this.checkReceivers(pc);
-      } else if (pc.iceConnectionState === 'closed' || pc.iceConnectionState === 'failed') {
-        console.log('ICE closed/failed - triggering call cleanup as fallback');
-        if (this.currentCall) {
-          this.handleCallEnded();
-        }
+        this.clearMediaDisruptionTimer();
+        this.setMediaDisrupted(this.lastRecoveryState === 'debouncing' || this.lastRecoveryState === 'recovering');
       }
-    });
+    };
+    listen('iceconnectionstatechange', onMediaStateChange);
+    listen('connectionstatechange', onMediaStateChange);
+  }
 
-    pc.addEventListener('connectionstatechange', () => {
-      console.log('PC connection state:', pc.connectionState);
-      if (pc.connectionState === 'closed' || pc.connectionState === 'failed') {
-        console.log('PC closed/failed - triggering call cleanup as fallback');
-        if (this.currentCall) {
-          this.handleCallEnded();
-        }
+  // How long media may stay down before the call is given up on: the SDK's
+  // whole recovery budget (debounce + every ICE-restart attempt) plus slack --
+  // 2 + 3*5 + 5 = 22 s on rc.5's defaults. Needed because the SDK's recovery
+  // manager doesn't watch ICE state: if its stats trigger never fires, nothing
+  // else would ever end a call whose peer connection has died. If the SDK is
+  // still mid-'recovering' when the timer fires, it's extended once by one
+  // more attempt.
+  private armMediaDisruptionTimer(pc: RTCPeerConnection, call: Call) {
+    if (this.mediaDisruptionTimer || !this.client) return;
+    const prefs = this.client.preferences;
+    const attemptMs = prefs.iceRestartTimeout * 1000;
+    const graceMs = prefs.recoveryDebounceTime * 1000 + prefs.maxRecoveryAttempts * attemptMs + 5000;
+    const onExpiry = () => {
+      this.mediaDisruptionTimer = null;
+      if (this.currentCall !== call) return;
+      const ice = pc.iceConnectionState;
+      if (ice === 'connected' || ice === 'completed') return;
+      if (this.lastRecoveryState === 'recovering' && !this.mediaDisruptionTimerExtended) {
+        console.log(`Media still down after ${graceMs} ms but the SDK is recovering - waiting one more attempt`);
+        this.mediaDisruptionTimerExtended = true;
+        this.mediaDisruptionTimer = setTimeout(onExpiry, attemptMs);
+        return;
       }
-    });
+      console.warn(`Media did not recover (ice: ${ice}, recovery: ${this.lastRecoveryState}) - ending call as fallback`);
+      this.handleCallEnded();
+    };
+    this.mediaDisruptionTimer = setTimeout(onExpiry, graceMs);
   }
 
   private checkReceivers(pc: RTCPeerConnection) {

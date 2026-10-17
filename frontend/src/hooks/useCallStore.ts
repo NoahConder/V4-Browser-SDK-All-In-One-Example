@@ -21,6 +21,8 @@ const initialState: CallState = {
   callStatus: 'idle',
   connectedAt: null,
   needsAudioUnlock: false,
+  recoveryState: 'idle',
+  isMediaDisrupted: false,
   isVideoCall: false,
   isCameraOn: false,
   remoteHasVideo: false,

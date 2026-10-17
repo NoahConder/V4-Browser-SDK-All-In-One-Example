@@ -114,6 +114,7 @@ const CallScreen: React.FC<CallScreenProps> = ({
   const canSelectAudioOutput = useCallStore((s) => s.canSelectAudioOutput);
   const connectedAt = useCallStore((s) => s.connectedAt);
   const needsAudioUnlock = useCallStore((s) => s.needsAudioUnlock);
+  const isMediaDisrupted = useCallStore((s) => s.isMediaDisrupted);
   const setCallState = useCallStore((s) => s.setCallState);
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
@@ -271,16 +272,25 @@ const CallScreen: React.FC<CallScreenProps> = ({
                 }`}
               >
                 <div className="mb-2 inline-flex items-center gap-2 text-sm text-gray-400">
-                  {callStatus !== 'connected' && (
-                    <span className="h-1.5 w-1.5 rounded-full bg-ios-green motion-safe:animate-pulse" />
+                  {/* Media down but the call not over (ICE disconnected/failed
+                      or the SDK mid-recovery) -- the StatusBar dot stays bound
+                      to signaling (isClientReady); this one is about media. */}
+                  {(callStatus !== 'connected' || isMediaDisrupted) && (
+                    <span
+                      className={`h-1.5 w-1.5 rounded-full motion-safe:animate-pulse ${
+                        isMediaDisrupted ? 'bg-amber-400' : 'bg-ios-green'
+                      }`}
+                    />
                   )}
                   {isOnHold
                     ? 'On Hold'
-                    : callStatus === 'connected'
-                      ? 'Connected'
-                      : callStatus === 'ringing'
-                        ? 'Ringing…'
-                        : 'Calling…'}
+                    : isMediaDisrupted
+                      ? 'Reconnecting…'
+                      : callStatus === 'connected'
+                        ? 'Connected'
+                        : callStatus === 'ringing'
+                          ? 'Ringing…'
+                          : 'Calling…'}
                 </div>
                 <div className="text-2xl sm:text-3xl font-light mb-4 wrap-anywhere">{phoneNumber}</div>
                 {/* Like iOS, the timer appears once the call is answered. */}

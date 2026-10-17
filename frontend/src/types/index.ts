@@ -24,6 +24,13 @@ export interface CallState {
   // user gesture on this page yet -- e.g. a call reattached after a reload).
   // The call screen shows a tap-to-enable control until the user taps it.
   needsAudioUnlock: boolean;
+  // The SDK's CallRecoveryManager state for the current call (call.recoveryState$).
+  recoveryState: 'idle' | 'debouncing' | 'recovering' | 'cooldown';
+  // Media is currently down (ICE disconnected/failed, or the SDK is mid-
+  // recovery) but the call hasn't ended -- the call screen shows
+  // "Reconnecting…" instead of dropping to the dial pad. See CLAUDE.md's
+  // call-ended detection note.
+  isMediaDisrupted: boolean;
   isVideoCall: boolean;
   isCameraOn: boolean;
   remoteHasVideo: boolean;

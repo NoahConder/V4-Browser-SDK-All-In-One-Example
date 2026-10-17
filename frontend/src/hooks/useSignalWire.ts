@@ -143,6 +143,12 @@ export const useSignalWire = () => {
           onRemoteAudioBlocked: () => {
             setCallState({ needsAudioUnlock: true });
           },
+          onRecoveryStateChange: (recoveryState) => {
+            setCallState({ recoveryState });
+          },
+          onMediaDisruptionChange: (isMediaDisrupted) => {
+            setCallState({ isMediaDisrupted });
+          },
           onRemoteVideoChange: (hasVideo: boolean) => {
             setCallState({ remoteHasVideo: hasVideo });
           },
