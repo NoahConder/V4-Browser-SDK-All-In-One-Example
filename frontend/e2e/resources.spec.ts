@@ -1,31 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { ADDRESS_INPUT, drainLog, evalInApp, openDialer, stubCallMethods } from './helpers';
-
-// A fake SDK Directory built from real rxjs Observables (borrowed from one the
-// service returns, since bare specifiers don't resolve from page.evaluate):
-// page 1 loads when hasMore$ is subscribed; loadMore() appends page 2.
-const FAKE_DIRECTORY = `
-  const Observable = s.getIsNetworkHealthy$().constructor;
-  const subject = (initial) => {
-    const fns = new Set(); let value = initial;
-    return { next(v) { value = v; fns.forEach((f) => f(v)); }, obs: new Observable((sub) => { sub.next(value); const fn = (v) => sub.next(v); fns.add(fn); return () => fns.delete(fn); }) };
-  };
-  const addr = (id, type, name, channels) => ({ id, type, name, displayName: name, resourceId: 'res-' + id, channels });
-  const page1 = [
-    addr('a-alice', 'subscriber', 'Alice', { audio: '/private/alice?channel=audio', video: '/private/alice?channel=video' }),
-    addr('a-me', 'subscriber', 'swdialer', { audio: '/private/swdialer?channel=audio', video: '/private/swdialer?channel=video' }),
-    addr('a-room', 'room', 'Team Room', { audio: '/public/team-room?channel=audio', video: '/public/team-room?channel=video' }),
-  ];
-  const page2 = [addr('a-app', 'app', 'IVR App', { audio: '/public/ivr?channel=audio' })];
-  const addresses = subject([]); const loading = subject(false); const hasMore = subject(true);
-  const directory = {
-    addresses$: addresses.obs, loading$: loading.obs,
-    hasMore$: new Observable((sub) => { log('init'); loading.next(true); setTimeout(() => { addresses.next(page1); loading.next(false); }, 50); const inner = hasMore.obs.subscribe((v) => sub.next(v)); return () => inner.unsubscribe(); }),
-    loadMore() { log('loadMore'); loading.next(true); setTimeout(() => { addresses.next([...page1, ...page2]); hasMore.next(false); loading.next(false); }, 50); },
-  };
-  s.getDirectory$ = () => new Observable((sub) => { sub.next(directory); });
-  s.getOwnAddressIds = () => new Set(['a-me']);
-`;
+import { ADDRESS_INPUT, FAKE_DIRECTORY, drainLog, evalInApp, openDialer, stubCallMethods } from './helpers';
 
 const row = (page: import('@playwright/test').Page, label: string) =>
   page.locator(`#resources-tabpanel div:has(> div > span > span:text-is("${label}"))`);

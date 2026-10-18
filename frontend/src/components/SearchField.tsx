@@ -21,7 +21,7 @@ interface SearchFieldProps {
 function SearchField({ value, onChange, placeholder, label, status = '', className = 'mb-2' }: SearchFieldProps) {
   return (
     <div className={`relative ${className}`}>
-      <Search size={14} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500" />
+      <Search size={14} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-faint" />
       <input
         type="search"
         value={value}
@@ -34,14 +34,14 @@ function SearchField({ value, onChange, placeholder, label, status = '', classNa
         spellCheck={false}
         enterKeyHint="search"
         data-no-autofocus
-        className="w-full rounded-xl border border-white/10 bg-white/6 py-1.5 pl-8 pr-9 text-sm text-white outline-hidden placeholder:text-gray-500 [&::-webkit-search-cancel-button]:hidden [&::-webkit-search-decoration]:hidden"
+        className="w-full rounded-lg border border-edge-strong bg-surface-2 py-1.5 pl-8 pr-9 text-sm text-ink outline-hidden placeholder:text-faint focus:border-accent-edge focus:ring-2 focus:ring-accent-soft [&::-webkit-search-cancel-button]:hidden [&::-webkit-search-decoration]:hidden"
       />
       {value !== '' && (
         <button
           type="button"
           onClick={() => onChange('')}
           aria-label="Clear search"
-          className="absolute right-1 top-1/2 -translate-y-1/2 rounded-full p-2 text-gray-400 transition-colors hover:bg-white/10 hover:text-white"
+          className="absolute right-1 top-1/2 -translate-y-1/2 rounded-full p-2 text-muted transition-colors hover:bg-surface-hover hover:text-ink"
         >
           <X size={14} />
         </button>

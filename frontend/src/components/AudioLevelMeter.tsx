@@ -28,29 +28,29 @@ const AudioLevelMeter: React.FC<AudioLevelMeterProps> = ({ isMuted }) => {
       signalWireService.getRemoteAudioLevel$().subscribe((level) => scale(remoteBarRef.current, level)),
       signalWireService
         .getLocalSpeaking$()
-        .subscribe((speaking) => micRowRef.current?.classList.toggle('text-white', speaking)),
+        .subscribe((speaking) => micRowRef.current?.classList.toggle('text-ink', speaking)),
     ];
     return () => subs.forEach((sub) => sub.unsubscribe());
   }, []);
 
   return (
-    <div className="mx-auto mt-4 flex w-44 flex-col gap-1.5 text-gray-500 short:hidden" aria-hidden>
+    <div className="mx-auto mt-4 flex w-44 flex-col gap-1.5 text-faint short:hidden" aria-hidden>
       <div ref={micRowRef} className={`flex items-center gap-2 transition-colors ${isMuted ? 'opacity-40' : ''}`}>
         <Mic size={12} className="shrink-0" />
-        <div className="h-1 flex-1 overflow-hidden rounded-full bg-white/10">
+        <div className="h-1 flex-1 overflow-hidden rounded-full bg-surface-2">
           <div
             ref={micBarRef}
-            className="h-full w-full origin-left rounded-full bg-ios-green transition-transform duration-75"
+            className="h-full w-full origin-left rounded-full bg-success transition-transform duration-75"
             style={{ transform: 'scaleX(0)' }}
           />
         </div>
       </div>
       <div className="flex items-center gap-2">
         <Volume2 size={12} className="shrink-0" />
-        <div className="h-1 flex-1 overflow-hidden rounded-full bg-white/10">
+        <div className="h-1 flex-1 overflow-hidden rounded-full bg-surface-2">
           <div
             ref={remoteBarRef}
-            className="h-full w-full origin-left rounded-full bg-blue-400 transition-transform duration-75"
+            className="h-full w-full origin-left rounded-full bg-accent transition-transform duration-75"
             style={{ transform: 'scaleX(0)' }}
           />
         </div>

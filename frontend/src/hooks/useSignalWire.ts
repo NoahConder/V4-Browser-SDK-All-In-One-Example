@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import axios from 'axios';
 import {
   MediaAccessError,
   CallCreateError,
@@ -11,7 +12,7 @@ import {
 import { signalWireService, ClientNotReadyError, type SignalWireCallbacks } from '../services/signalwire';
 import { useCallStore } from './useCallStore';
 import { useRecentsStore } from './useRecentsStore';
-import { callsAPI } from '../services/api';
+import { callsAPI, describeFetchError } from '../services/api';
 import { formatPhoneNumber } from '../utils/address';
 import { log } from '../utils/log';
 
@@ -280,7 +281,10 @@ export const useSignalWire = () => {
         });
       } catch (err) {
         log.error('Failed to initialize SignalWire:', err);
-        setError('Failed to connect to SignalWire');
+        // A failed token request (backend down, wrong key, rate limit) gets
+        // its specific message; SDK-side failures keep the generic one.
+        const generic = 'Failed to connect to SignalWire';
+        setError(axios.isAxiosError(err) ? describeFetchError(err, generic) : generic);
         // App.tsx shows the error screen only once initialization has
         // settled; without this it would show the connecting spinner forever.
         setIsInitialized(true);

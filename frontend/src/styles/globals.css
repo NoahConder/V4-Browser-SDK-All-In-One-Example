@@ -3,41 +3,139 @@
 @config '../../tailwind.config.js';
 
 /*
-  The default border color has changed to `currentcolor` in Tailwind CSS v4,
-  so we've added these compatibility styles to make sure everything still
-  looks the same as it did with Tailwind CSS v3.
-
-  If we ever want to remove these styles, we need to add an explicit border
-  color utility to any element that depends on these defaults.
+  Token layer -- the SignalWire docs' design language (signalwire.com/docs,
+  measured 2026-10-18). Light values live in @theme so Tailwind emits
+  `bg-canvas`, `text-muted`, `border-edge`, `bg-accent`, ... utilities that
+  read `var(--color-*)` at use time; the [data-theme='dark'] block below
+  redefines the same variables, so every utility flips with the theme.
+  services/theme.ts sets data-theme from the Appearance setting (System /
+  Light / Dark). Components use these semantic names only -- never raw
+  palette utilities (bg-white/x, text-gray-x, emerald-*, ...).
 */
+@theme {
+  --font-sans: 'Lexend', 'Instrument Sans', ui-sans-serif, system-ui, sans-serif;
+  --font-display: 'Instrument Sans', 'Lexend', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+
+  /* Canvas and text */
+  --color-canvas: #fafbfc;
+  --color-ink: #2a2a2a;
+  --color-ink-strong: #070c2d;
+  --color-muted: #60646c;
+  --color-faint: #8b8d98;
+
+  /* Surfaces: cards are opaque; surface-2 is an alpha tint for inputs and
+     strips that sits on either canvas or card. */
+  --color-surface: #e8eaf0;
+  --color-surface-hover: #dfe1e8;
+  --color-surface-2: #0000330f;
+  --color-edge: #0000330f;
+  --color-edge-strong: #0009321f;
+  --color-scrim: #2a2a2a66;
+
+  /* Accent: SignalWire blue in light, turquoise in dark (as the docs do) */
+  --color-accent: #044ef4;
+  --color-accent-hover: #0544d3;
+  --color-accent-text: #104edd;
+  --color-accent-soft: #bbd1ff55;
+  --color-accent-edge: #acccff;
+  --color-on-accent: #ffffff;
+
+  /* Telephony semantics stay green/red in both themes */
+  --color-call: #46a758;
+  --color-call-hover: #3e9b4f;
+  --color-on-call: #ffffff;
+  --color-success: #46a758;
+  --color-success-text: #2a7e3b;
+  --color-grass-soft: #46a75826;
+  --color-grass-text: #2a7e3b;
+  --color-hangup: #e5484d;
+  --color-hangup-hover: #d93036;
+  --color-on-hangup: #ffffff;
+  --color-danger-text: #ce2c31;
+  --color-danger-soft: #e5484d26;
+  --color-warn: #ffc53d;
+  --color-warn-text: #ab6400;
+  --color-warn-soft: #ffc53d33;
+}
+
+:root {
+  --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.1);
+  color-scheme: light;
+}
+
+[data-theme='dark'] {
+  --color-canvas: #0e0e18;
+  --color-ink: #ffffff;
+  --color-ink-strong: #f0f0f4;
+  --color-muted: #b0b4ba;
+  --color-faint: #696e77;
+
+  --color-surface: #222436;
+  --color-surface-hover: #2b2d42;
+  --color-surface-2: #ddeaf814;
+  --color-edge: #ddeaf814;
+  --color-edge-strong: #d9edff24;
+  --color-scrim: #0e0e18b3;
+
+  --color-accent: #40e0d0;
+  --color-accent-hover: #2fd5c6;
+  --color-accent-text: #32d7c7;
+  --color-accent-soft: #00fe9820;
+  --color-accent-edge: #005750;
+  --color-on-accent: #0e0e18;
+
+  --color-call: #46a758;
+  --color-call-hover: #53b365;
+  --color-on-call: #ffffff;
+  --color-success: #46a758;
+  --color-success-text: #71d083;
+  --color-grass-soft: #46a75833;
+  --color-grass-text: #71d083;
+  --color-hangup: #e5484d;
+  --color-hangup-hover: #ec5d5e;
+  --color-on-hangup: #ffffff;
+  --color-danger-text: #ff9592;
+  --color-danger-soft: #e5484d33;
+  --color-warn: #ffc53d;
+  --color-warn-text: #ffca16;
+  --color-warn-soft: #ffc53d26;
+
+  --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  color-scheme: dark;
+}
+
+/* Tailwind 4 defaults the border color to currentcolor; the docs use a
+   hairline control border everywhere a border has no explicit color. */
 @layer base {
   *,
   ::after,
   ::before,
   ::backdrop,
   ::file-selector-button {
-    border-color: var(--color-gray-200, currentcolor);
+    border-color: var(--color-edge-strong);
   }
 }
 
+@utility shadow-card {
+  box-shadow: var(--shadow-card);
+}
+
 @utility app-shell {
-  /* Soft top-down glow over pure black -- depth without a loud gradient. */
-  @apply bg-black;
-  background-image: radial-gradient(
-    ellipse 120% 55% at 50% -10%,
-    rgba(99, 99, 102, 0.18),
-    transparent 60%
-  );
+  /* The flat canvas every screen sits on. */
+  @apply bg-canvas text-ink;
 }
 
 @utility glass-bar {
-  /* Frosted status bar / divider strip used at the top of every screen. */
-  @apply border-b border-white/6 bg-white/2 backdrop-blur-xl;
+  /* The docs' header: canvas at 70% over a 16px blur, hairline below. Used
+     for the status bar and the Inspector's tab strip. */
+  @apply border-b border-edge bg-canvas/70 backdrop-blur-lg;
 }
 
 @utility glass-panel {
-  /* Frosted card surface, used for the address input and info panels. */
-  @apply border border-white/10 bg-white/4 backdrop-blur-xl;
+  /* The docs' card: opaque surface, control border, soft shadow, no blur.
+     Used for the address field, header panels, sheets and banners. */
+  @apply border border-edge-strong bg-surface shadow-card;
 }
 
 @utility pb-safe {
@@ -52,7 +150,7 @@
 }
 
 @utility dial-button {
-  @apply rounded-full flex flex-col items-center justify-center transition-all duration-150 ease-out active:scale-90 shadow-[0_2px_10px_rgba(0,0,0,0.35)];
+  @apply rounded-full flex flex-col items-center justify-center transition-all duration-150 ease-out active:scale-90 shadow-card;
   width: 70px;
   height: 70px;
   flex-shrink: 0;
@@ -75,7 +173,7 @@
 }
 
 @utility dial-button-number {
-  @apply text-2xl sm:text-3xl font-light leading-none;
+  @apply font-display text-2xl sm:text-3xl font-medium leading-none tracking-tight;
 }
 
 @utility dial-button-letters {
@@ -84,11 +182,16 @@
 
 @layer base {
   body {
-    @apply bg-black text-white;
+    @apply bg-canvas text-ink font-sans;
     -webkit-tap-highlight-color: transparent;
     -webkit-touch-callout: none;
     -webkit-user-select: none;
     user-select: none;
+  }
+
+  h1,
+  h2 {
+    @apply font-display text-ink-strong tracking-tight;
   }
 
   #root {
@@ -97,14 +200,23 @@
     height: 100dvh;
   }
 
-  /* Desktop / tablet: a phone-width column, so the header controls sit next to
-     the dial pad instead of in the far corner of a wide window. Not on phones
-     in landscape (the `short` layouts need the full width). */
-  @media (min-width: 640px) and (min-height: 501px) {
+  /* Tablet and narrow desktop: a phone-width column, so the header controls
+     sit next to the dial pad instead of in the far corner of a wide window.
+     Not on phones in landscape (the `short` layouts need the full width), and
+     not from 1024px up, where the workbench puts panes beside the phone
+     (hooks/useMediaQuery.ts's WORKBENCH_QUERY must match the upper bound). */
+  @media (min-width: 640px) and (max-width: 1023px) and (min-height: 501px) {
     #root {
       max-width: 30rem;
       margin-inline: auto;
-      border-inline: 1px solid rgb(255 255 255 / 0.06);
+      border-inline: 1px solid var(--color-edge);
     }
   }
+}
+
+@utility workbench {
+  /* Desktop: Destinations | the phone column | Inspector. The side panes take
+     the extra width; the phone keeps its width (Workbench.tsx caps it). */
+  display: grid;
+  grid-template-columns: minmax(17rem, 1fr) minmax(0, 30rem) minmax(19rem, 1fr);
 }

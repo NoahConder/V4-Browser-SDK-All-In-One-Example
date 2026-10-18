@@ -22,18 +22,18 @@ const ErrorBanner: React.FC<ErrorBannerProps> = ({
   return (
     <div
       role={isError ? 'alert' : 'status'}
-      className={`glass-panel relative z-10 flex max-w-sm items-start gap-2 rounded-2xl px-4 py-3 text-sm ${
-        isError ? 'text-red-300' : 'text-gray-200'
+      className={`glass-panel relative z-10 flex max-w-sm items-start gap-2 rounded-xl px-4 py-2.5 text-sm ${
+        isError ? 'border-danger-text/30 text-danger-text' : 'text-ink'
       } ${className}`}
     >
-      <Icon size={16} className={`mt-0.5 shrink-0 ${isError ? 'text-red-400' : 'text-blue-400'}`} />
+      <Icon size={16} className={`mt-0.5 shrink-0 ${isError ? 'text-danger-text' : 'text-accent-text'}`} />
       <span className="flex-1 select-text">{message}</span>
       <button
         type="button"
         onClick={onDismiss}
         aria-label="Dismiss"
-        className={`-m-2 shrink-0 rounded-full p-3 transition-colors hover:bg-white/10 hover:text-white ${
-          isError ? 'text-red-300/70' : 'text-gray-400'
+        className={`-m-2 shrink-0 rounded-full p-3 transition-colors hover:bg-surface-hover hover:text-ink ${
+          isError ? 'text-danger-text/70' : 'text-muted'
         }`}
       >
         <X size={14} />

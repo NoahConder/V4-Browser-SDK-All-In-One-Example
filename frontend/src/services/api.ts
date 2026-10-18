@@ -18,6 +18,27 @@ const api = axios.create({
   },
 });
 
+// Human-readable copy for a failed backend request. axios's default message
+// ("Request failed with status code 502") says nothing a tester can act on.
+// The statuses are the backend's (utils/security.gate and the blueprints):
+// 429 is the per-IP rate limit, 401/503 mean the key or the backend's
+// configuration is off (the 503 body says which), 500 means a SignalWire REST
+// call failed (details in the backend log, never in the body), and 502/504
+// or no response at all mean Vite's /api proxy found nothing on :5001.
+export const describeFetchError = (err: unknown, fallback: string): string => {
+  if (axios.isAxiosError(err)) {
+    const status = err.response?.status;
+    const serverMessage = (err.response?.data as { error?: unknown } | undefined)?.error;
+    const detail = typeof serverMessage === 'string' ? serverMessage : null;
+    if (status === 429) return 'Too many requests — wait a moment and try again.';
+    if (status === 401) return 'The backend rejected the API key — restart the dev server after changing DIALER_API_KEY.';
+    if (status === 503) return `${detail ?? 'Backend unavailable'} — check backend/.env and the backend log.`;
+    if (status === 500) return "The backend couldn't complete the request — check its log.";
+    if (status === 502 || status === 504 || !err.response) return 'Backend unreachable — is the Flask server running on :5001?';
+  }
+  return err instanceof Error ? err.message : fallback;
+};
+
 export const authAPI = {
   async getToken(subscriberId?: string): Promise<TokenData> {
     // subscriberId is only ever a value the user picked from subscribersAPI.list()

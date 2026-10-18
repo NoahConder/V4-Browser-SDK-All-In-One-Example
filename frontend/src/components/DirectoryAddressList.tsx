@@ -4,7 +4,7 @@ import { combineLatest, of, switchMap } from 'rxjs';
 import { AddressRowList, type AddressRow } from './ResourceAddressList';
 import SearchField from './SearchField';
 import { signalWireService } from '../services/signalwire';
-import { matchStatus, normalizeQuery } from '../utils/search';
+import { matchStatus, matchesAddress, normalizeQuery } from '../utils/search';
 
 // 'app' | 'call' | 'room' | 'subscriber' -- the SDK uses this union but
 // doesn't export it by name.
@@ -12,10 +12,10 @@ type ResourceType = Address['type'];
 type TypeFilter = ResourceType | 'all';
 
 const TYPE_META: Record<ResourceType, { label: string; className: string }> = {
-  subscriber: { label: 'Subscriber', className: 'bg-emerald-500/15 text-emerald-400' },
-  room: { label: 'Room', className: 'bg-purple-500/15 text-purple-400' },
-  app: { label: 'App', className: 'bg-blue-500/15 text-blue-400' },
-  call: { label: 'Call', className: 'bg-amber-500/15 text-amber-400' },
+  subscriber: { label: 'Subscriber', className: 'bg-grass-soft text-grass-text' },
+  room: { label: 'Room', className: 'bg-accent-soft text-accent-text' },
+  app: { label: 'App', className: 'bg-accent-soft text-accent-text' },
+  call: { label: 'Call', className: 'bg-warn-soft text-warn-text' },
 };
 
 const FILTERS: Array<{ key: TypeFilter; label: string }> = [
@@ -24,15 +24,6 @@ const FILTERS: Array<{ key: TypeFilter; label: string }> = [
   { key: 'room', label: 'Rooms' },
   { key: 'app', label: 'Apps' },
 ];
-
-// Case-insensitive substring match over the raw fields (not the rendered
-// label, so " (you)" isn't searchable). The dial path is included without its
-// `?channel=` suffix -- otherwise "audio" would match everything -- which lets
-// "private" narrow to subscribers.
-const matchesQuery = (address: Address, needle: string): boolean => {
-  const path = (address.channels.audio ?? address.channels.video ?? address.channels.messaging ?? '').split('?')[0];
-  return [address.displayName, address.name, path].some((field) => !!field && field.toLowerCase().includes(needle));
-};
 
 interface DirectoryAddressListProps {
   onSelectAddress: (path: string, video: boolean, label?: string) => void;
@@ -103,7 +94,7 @@ function DirectoryAddressList({ onSelectAddress }: DirectoryAddressListProps) {
   const rows: AddressRow[] = addresses
     .filter(
       (address) =>
-        (filter === 'all' || address.type === filter) && (!isSearching || matchesQuery(address, needle)),
+        (filter === 'all' || address.type === filter) && (!isSearching || matchesAddress(address, needle)),
     )
     .flatMap((address) => {
       const audioPath = address.channels.audio ?? address.channels.video ?? address.channels.messaging;
@@ -117,7 +108,7 @@ function DirectoryAddressList({ onSelectAddress }: DirectoryAddressListProps) {
           label: `${address.displayName || address.name}${isSelf ? ' (you)' : ''}`,
           audioPath,
           videoPath,
-          badge: TYPE_META[address.type] ?? { label: address.type, className: 'bg-white/10 text-gray-300' },
+          badge: TYPE_META[address.type] ?? { label: address.type, className: 'bg-surface-2 text-muted' },
           disabled: isSelf,
           disabledReason: "This is the subscriber you're signed in as",
         },
@@ -148,8 +139,8 @@ function DirectoryAddressList({ onSelectAddress }: DirectoryAddressListProps) {
             type="button"
             onClick={() => setFilter(f.key)}
             aria-pressed={filter === f.key}
-            className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-medium transition-colors ${
-              filter === f.key ? 'bg-white/15 text-white' : 'text-gray-400 hover:text-white'
+            className={`shrink-0 rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+              filter === f.key ? 'bg-accent-soft text-accent-text' : 'text-muted hover:text-ink'
             }`}
           >
             {f.label}

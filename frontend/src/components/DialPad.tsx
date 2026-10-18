@@ -143,7 +143,7 @@ const DialPad: React.FC<DialPadProps> = ({
             {row.map((key) => (
               <button
                 key={key.number}
-                className="dial-button bg-white/6 border border-white/10 backdrop-blur-md hover:bg-white/10 disabled:opacity-40 disabled:active:scale-100"
+                className="dial-button bg-surface border border-edge-strong text-ink hover:bg-surface-hover disabled:opacity-40 disabled:active:scale-100"
                 aria-label={key.number === '0' && !onHide ? '0, hold for +' : undefined}
                 disabled={disabled}
                 {...(key.number === '0' && !onHide
@@ -152,7 +152,7 @@ const DialPad: React.FC<DialPadProps> = ({
               >
                 {key.special ? (
                   // Special characters with different sizes and positioning
-                  <span className={`font-light leading-none ${
+                  <span className={`font-display font-medium tracking-tight leading-none ${
                     key.number === '*'
                       ? 'text-6xl sm:text-7xl relative top-2.5'  // Asterisk lowered more for proper centering
                       : 'text-3xl sm:text-4xl'  // Hash stays normal
@@ -180,9 +180,9 @@ const DialPad: React.FC<DialPadProps> = ({
             onClick={onCall}
             onMouseDown={keepFocus}
             aria-label="End call"
-            className="dial-button bg-linear-to-b from-red-500 to-ios-red shadow-[0_4px_16px_rgba(255,59,48,0.35)] hover:brightness-110"
+            className="dial-button bg-hangup text-on-hangup hover:bg-hangup-hover"
           >
-            <PhoneOff size={32} fill="white" />
+            <PhoneOff size={32} fill="currentColor" />
           </button>
         ) : (
           <button
@@ -190,9 +190,9 @@ const DialPad: React.FC<DialPadProps> = ({
             onMouseDown={keepFocus}
             disabled={disabled}
             aria-label="Call"
-            className="dial-button bg-linear-to-b from-emerald-400 to-ios-green shadow-[0_4px_16px_rgba(52,199,89,0.35)] hover:brightness-110 disabled:opacity-40 disabled:active:scale-100"
+            className="dial-button bg-call text-on-call hover:bg-call-hover disabled:opacity-40 disabled:active:scale-100"
           >
-            <Phone size={32} fill="white" />
+            <Phone size={32} fill="currentColor" />
           </button>
         )}
 
@@ -200,7 +200,7 @@ const DialPad: React.FC<DialPadProps> = ({
           <button
             onClick={onHide}
             onMouseDown={keepFocus}
-            className="dial-button text-base text-gray-300 transition-colors hover:text-white shadow-none"
+            className="dial-button text-base text-muted transition-colors hover:text-ink shadow-none"
           >
             Hide
           </button>
@@ -210,11 +210,11 @@ const DialPad: React.FC<DialPadProps> = ({
             {...deleteHold.handlers}
             className={`dial-button border transition-colors ${
               isLongPressing
-                ? 'bg-red-500/80 border-red-400/50'
-                : 'bg-white/6 border-white/10 backdrop-blur-md hover:bg-white/10'
+                ? 'bg-hangup/80 border-hangup/50'
+                : 'bg-surface border-edge-strong hover:bg-surface-hover'
             }`}
           >
-            <Delete size={24} className={isLongPressing ? 'text-white animate-pulse' : 'text-gray-300'} />
+            <Delete size={24} className={isLongPressing ? 'text-ink animate-pulse' : 'text-muted'} />
           </button>
         ) : (
           <div className="dial-button invisible"></div>

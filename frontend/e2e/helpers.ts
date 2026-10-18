@@ -54,3 +54,53 @@ export const stubCallMethods = (page: Page) =>
 
 // The visible status line on the call screen ("Calling…", "Connected", …).
 export const callStatusText = (page: Page) => page.locator('[aria-live="polite"]').first().innerText();
+
+// A fake SDK Directory built from real rxjs Observables (borrowed from one the
+// service returns, since bare specifiers don't resolve from page.evaluate):
+// page 1 loads when hasMore$ is subscribed; loadMore() appends page 2.
+export const FAKE_DIRECTORY = `
+  const Observable = s.getIsNetworkHealthy$().constructor;
+  const subject = (initial) => {
+    const fns = new Set(); let value = initial;
+    return { next(v) { value = v; fns.forEach((f) => f(v)); }, obs: new Observable((sub) => { sub.next(value); const fn = (v) => sub.next(v); fns.add(fn); return () => fns.delete(fn); }) };
+  };
+  const addr = (id, type, name, channels) => ({ id, type, name, displayName: name, resourceId: 'res-' + id, channels });
+  const page1 = [
+    addr('a-alice', 'subscriber', 'Alice', { audio: '/private/alice?channel=audio', video: '/private/alice?channel=video' }),
+    addr('a-me', 'subscriber', 'swdialer', { audio: '/private/swdialer?channel=audio', video: '/private/swdialer?channel=video' }),
+    addr('a-room', 'room', 'Team Room', { audio: '/public/team-room?channel=audio', video: '/public/team-room?channel=video' }),
+  ];
+  const page2 = [addr('a-app', 'app', 'IVR App', { audio: '/public/ivr?channel=audio' })];
+  const addresses = subject([]); const loading = subject(false); const hasMore = subject(true);
+  const directory = {
+    addresses$: addresses.obs, loading$: loading.obs,
+    hasMore$: new Observable((sub) => { log('init'); loading.next(true); setTimeout(() => { addresses.next(page1); loading.next(false); }, 50); const inner = hasMore.obs.subscribe((v) => sub.next(v)); return () => inner.unsubscribe(); }),
+    loadMore() { log('loadMore'); loading.next(true); setTimeout(() => { addresses.next([...page1, ...page2]); hasMore.next(false); loading.next(false); }, 50); },
+  };
+  s.getDirectory$ = () => new Observable((sub) => { sub.next(directory); });
+  s.getOwnAddressIds = () => new Set(['a-me']);
+`;
+
+// Stubs for the service's live-metrics getters. `of` and a tiny subject stand
+// in for rxjs (bare specifiers don't resolve from page.evaluate; the sheet
+// only needs `.subscribe`).
+export const STATS_STUBS = `
+  const of = (value) => ({ subscribe: (fn) => { fn(value); return { unsubscribe() {} }; } });
+  const subject = (initial) => { const fns = new Set(); return { value: initial, next(v) { this.value = v; fns.forEach((f) => f(v)); }, asObservable() { return { subscribe: (fn) => { fn(this.value); fns.add(fn); return { unsubscribe: () => fns.delete(fn) }; } }; } }; };
+  window.__level = subject(0.04);
+  const sample = (i, lost) => ({ timestamp: Date.now() - (5 - i) * 1000, audio: { packetsReceived: 1000 + i * 50, packetsLost: lost, jitter: 7.4 }, video: { packetsReceived: 0, packetsLost: 0 }, roundTripTime: 42.3, availableOutgoingBitrate: 512000 });
+  s.getNetworkMetrics$ = () => of([sample(0, 10), sample(1, 10), sample(2, 10), sample(3, 10), sample(4, 12)]);
+  window.__issues = subject([]);
+  s.getNetworkIssues$ = () => window.__issues.asObservable();
+  s.getLocalAudioLevel$ = () => window.__level.asObservable();
+  s.getLocalSpeaking$ = () => of(false);
+  s.getRemoteAudioLevel$ = () => of(0.25);
+  s.getCurrentCallId = () => 'call-abc-123';
+  s.requestIceRestart = async () => { log('iceRestart'); };
+  s.getConnectionStats = async () => ({
+    candidatePair: { localType: 'relay', remoteType: 'host', protocol: 'udp', relayProtocol: 'tls', currentRoundTripTimeMs: 44 },
+    audioOutboundCodec: 'PCMU 8k (pt 0)', audioInboundCodec: 'PCMU 8k (pt 0)', videoOutboundCodec: null, videoInboundCodec: null,
+    bytesSent: 2300000, bytesReceived: 850000,
+  });
+  s.recoveryEvents$.next({ action: 'reinvite_started', reason: 'test', attempt: 1, maxAttempts: 3, timestamp: Date.now() });
+`;

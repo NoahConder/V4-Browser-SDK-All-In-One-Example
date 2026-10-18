@@ -25,8 +25,15 @@ export default defineConfig({
     {
       // The behavioral suite, on a phone-sized viewport with touch.
       name: 'phone',
-      testIgnore: /screens\.spec\.ts/,
+      testIgnore: /screens\.spec\.ts|workbench\.spec\.ts/,
       use: { ...devices['Desktop Chrome'], viewport: { width: 390, height: 844 }, hasTouch: true },
+    },
+    {
+      // The desktop workbench (Destinations | phone | Inspector), which only
+      // renders from 1024px up.
+      name: 'desktop',
+      testMatch: /workbench\.spec\.ts/,
+      use: { ...devices['Desktop Chrome'], viewport: { width: 1280, height: 800 } },
     },
     {
       // Non-asserting screenshots of every screen at four viewports, for

@@ -45,13 +45,13 @@ class ErrorBoundary extends Component<Props, State> {
       // Same card as App.tsx's connection-error screen.
       return (
         <div className="app-shell flex flex-col h-dvh items-center justify-center p-8">
-          <div className="glass-panel w-full max-w-sm rounded-2xl p-8 text-center">
-            <h1 className="text-2xl font-semibold mb-4 text-red-400">Something went wrong</h1>
-            <p className="text-gray-400 mb-8">The dialer hit an unexpected error. Reload to start over.</p>
+          <div className="glass-panel w-full max-w-sm rounded-xl p-8 text-center">
+            <h1 className="text-2xl font-semibold mb-4 text-danger-text">Something went wrong</h1>
+            <p className="text-muted mb-8">The dialer hit an unexpected error. Reload to start over.</p>
             <button
               type="button"
               onClick={() => window.location.reload()}
-              className="w-full rounded-xl border border-white/10 bg-white/6 px-6 py-3 font-medium text-white backdrop-blur-md transition-all hover:bg-white/10 active:scale-[0.98]"
+              className="w-full rounded-lg border border-edge-strong bg-surface-2 px-6 py-3 font-medium text-ink transition-all hover:bg-surface-hover active:scale-[0.98]"
             >
               Reload
             </button>

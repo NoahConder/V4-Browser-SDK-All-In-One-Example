@@ -1,29 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { drainLog, evalInApp, openDialer, setState } from './helpers';
-
-// Stubs for the service's live-metrics getters. `of` and a tiny subject stand
-// in for rxjs (bare specifiers don't resolve from page.evaluate; the sheet
-// only needs `.subscribe`).
-const STUBS = `
-  const of = (value) => ({ subscribe: (fn) => { fn(value); return { unsubscribe() {} }; } });
-  const subject = (initial) => { const fns = new Set(); return { value: initial, next(v) { this.value = v; fns.forEach((f) => f(v)); }, asObservable() { return { subscribe: (fn) => { fn(this.value); fns.add(fn); return { unsubscribe: () => fns.delete(fn) }; } }; } }; };
-  window.__level = subject(0.04);
-  const sample = (i, lost) => ({ timestamp: Date.now() - (5 - i) * 1000, audio: { packetsReceived: 1000 + i * 50, packetsLost: lost, jitter: 7.4 }, video: { packetsReceived: 0, packetsLost: 0 }, roundTripTime: 42.3, availableOutgoingBitrate: 512000 });
-  s.getNetworkMetrics$ = () => of([sample(0, 10), sample(1, 10), sample(2, 10), sample(3, 10), sample(4, 12)]);
-  window.__issues = subject([]);
-  s.getNetworkIssues$ = () => window.__issues.asObservable();
-  s.getLocalAudioLevel$ = () => window.__level.asObservable();
-  s.getLocalSpeaking$ = () => of(false);
-  s.getRemoteAudioLevel$ = () => of(0.25);
-  s.getCurrentCallId = () => 'call-abc-123';
-  s.requestIceRestart = async () => { log('iceRestart'); };
-  s.getConnectionStats = async () => ({
-    candidatePair: { localType: 'relay', remoteType: 'host', protocol: 'udp', relayProtocol: 'tls', currentRoundTripTimeMs: 44 },
-    audioOutboundCodec: 'PCMU 8k (pt 0)', audioInboundCodec: 'PCMU 8k (pt 0)', videoOutboundCodec: null, videoInboundCodec: null,
-    bytesSent: 2300000, bytesReceived: 850000,
-  });
-  s.recoveryEvents$.next({ action: 'reinvite_started', reason: 'test', attempt: 1, maxAttempts: 3, timestamp: Date.now() });
-`;
+import { STATS_STUBS, drainLog, evalInApp, openDialer, setState } from './helpers';
 
 declare global {
   interface Window {
@@ -35,13 +11,13 @@ declare global {
 test.describe('call statistics and audio meter', () => {
   test.beforeEach(async ({ page }) => {
     await openDialer(page);
-    await evalInApp(page, STUBS);
+    await evalInApp(page, STATS_STUBS);
     await setState(page, { isInCall: true, callStatus: 'connected', connectedAt: Date.now() - 5000, remoteNumber: '+15551234567' });
     await expect(page.locator('button[aria-label="Call statistics"]')).toBeVisible();
   });
 
   test('the meter follows the mic level without re-rendering', async ({ page }) => {
-    const bar = page.locator('.bg-ios-green.origin-left');
+    const bar = page.locator('.bg-success.origin-left');
     await expect(bar).toHaveCSS('transform', /matrix\(0\.2,/);
     await page.evaluate(() => window.__level.next(0.64));
     await expect(bar).toHaveCSS('transform', /matrix\(0\.8,/);

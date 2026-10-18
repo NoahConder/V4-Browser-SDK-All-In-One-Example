@@ -1,4 +1,5 @@
 import type { LogLevel } from '@signalwire/js';
+import { THEME_PREFERENCES, type ThemePreference } from './theme';
 
 export type AudioCodec = 'opus' | 'PCMU' | 'PCMA';
 
@@ -20,6 +21,9 @@ export interface DialerSettings {
   relayOnly: boolean;
   // This app's own debug logging (utils/log.ts).
   debugLogs: boolean;
+  // Light/dark appearance (services/theme.ts). Not SDK state: applied by
+  // applyTheme(), never by signalwire.ts.
+  theme: ThemePreference;
 }
 
 // Matches the behavior before settings existed: G.711 first (PCMU, then
@@ -30,6 +34,7 @@ export const DEFAULT_SETTINGS: DialerSettings = {
   logWsTraffic: false,
   relayOnly: false,
   debugLogs: false,
+  theme: 'system',
 };
 
 const STORAGE_KEY = 'dialer_settings';
@@ -54,6 +59,9 @@ export function loadSettings(): DialerSettings {
       logWsTraffic: typeof parsed.logWsTraffic === 'boolean' ? parsed.logWsTraffic : DEFAULT_SETTINGS.logWsTraffic,
       relayOnly: typeof parsed.relayOnly === 'boolean' ? parsed.relayOnly : DEFAULT_SETTINGS.relayOnly,
       debugLogs: typeof parsed.debugLogs === 'boolean' ? parsed.debugLogs : DEFAULT_SETTINGS.debugLogs,
+      theme: THEME_PREFERENCES.includes(parsed.theme as ThemePreference)
+        ? (parsed.theme as ThemePreference)
+        : DEFAULT_SETTINGS.theme,
     };
   } catch {
     return { ...DEFAULT_SETTINGS };

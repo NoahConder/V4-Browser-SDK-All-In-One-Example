@@ -1,0 +1,110 @@
+import { expect, test } from '@playwright/test';
+import { ADDRESS_INPUT, FAKE_DIRECTORY, STATS_STUBS, evalInApp, openDialer, setState, stubCallMethods } from './helpers';
+
+// The desktop workbench (components/Workbench.tsx), which App.tsx renders from
+// 1024px up: Destinations | the phone column | Inspector. Runs in the
+// `desktop` project (1280x800); the phone suite never sees it.
+const SUBSCRIBERS = {
+  success: true,
+  data: [
+    {
+      id: 'sub-noah',
+      display_name: 'noah.test',
+      email: 'noah.test@not-real.com',
+      addresses: [{ id: 'a1', name: 'noah-test', display_name: 'noah.test', channels: { audio: '/private/noah-test?channel=audio', video: '/private/noah-test?channel=video' } }],
+    },
+  ],
+  total: 1,
+  offset: 0,
+  limit: 10,
+  has_more: false,
+};
+
+test.describe('Desktop workbench', () => {
+  test.beforeEach(async ({ page }) => {
+    await openDialer(page);
+    await stubCallMethods(page);
+  });
+
+  test('lays out Destinations, the phone and the Inspector; the phone header has no panel icons', async ({ page }) => {
+    await expect(page.getByRole('region', { name: 'Destinations' })).toBeVisible();
+    await expect(page.getByRole('region', { name: 'Inspector' })).toBeVisible();
+    await expect(page.locator('button[aria-label="Diagnostics"]')).toHaveCount(0);
+    await expect(page.locator('button[aria-label="Dialable Resources"]')).toHaveCount(0);
+    // The panes are regions, not dialogs, so they didn't take the focus.
+    await expect(page.locator(ADDRESS_INPUT)).toBeFocused();
+    await expect(page.getByRole('tab', { name: 'Session' })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByRole('region', { name: 'Inspector' })).toContainText('Signed in as');
+  });
+
+  test('picking a Directory row fills the address field and the pane stays open', async ({ page }) => {
+    await evalInApp(page, FAKE_DIRECTORY);
+    const destinations = page.getByRole('region', { name: 'Destinations' });
+    // The Directory mounted before the fake was installed; switching tabs
+    // remounts it against the fake.
+    await destinations.getByRole('tab', { name: 'Recents' }).click();
+    await destinations.getByRole('tab', { name: 'Directory' }).click();
+    const alice = destinations.locator('div:has(> div > span > span:text-is("Alice"))');
+    await alice.locator('button:has-text("Video")').click();
+    await expect(page.locator(ADDRESS_INPUT)).toHaveValue('/private/alice?channel=video');
+    await expect(page.locator('button[aria-label="Video call on"]')).toHaveCount(1);
+    await expect(alice).toBeVisible();
+  });
+
+  test('the identity chip selects the Subscribers tab', async ({ page }) => {
+    await page.route('**/api/subscribers*', (route) => route.fulfill({ json: SUBSCRIBERS }));
+    await page.click('button[title^="Signed in as"]');
+    const destinations = page.getByRole('region', { name: 'Destinations' });
+    await expect(destinations.getByRole('tab', { name: 'Subscribers' })).toHaveAttribute('aria-selected', 'true');
+    await expect(destinations.getByText('noah.test')).toBeVisible();
+  });
+
+  test('a call switches the Inspector to Call, whose numbers stay after hangup', async ({ page }) => {
+    await evalInApp(page, STATS_STUBS);
+    await setState(page, {
+      isInCall: true,
+      callStatus: 'connected',
+      connectedAt: Date.now() - 5000,
+      remoteNumber: '+15551234567',
+      qualityLevel: 'good',
+      qualityScore: 4.2,
+    });
+    const inspector = page.getByRole('region', { name: 'Inspector' });
+    await expect(inspector.getByRole('tab', { name: 'Call' })).toHaveAttribute('aria-selected', 'true');
+    await expect(inspector).toContainText('good · 4.2 / 5');
+    await expect(inspector).toContainText('42 ms');
+    await expect(inspector).toContainText('PCMU 8k (pt 0)');
+    await expect(inspector).toContainText('call-abc-123');
+    await expect(inspector.locator('button:has-text("Request ICE Restart")')).toBeEnabled();
+
+    // Hang up: the phone returns to the dialer, the Inspector keeps the numbers.
+    await evalInApp(page, 'store.getState().resetCallState();');
+    await expect(page.locator(ADDRESS_INPUT)).toBeVisible();
+    await expect(inspector).toContainText('these are its final readings');
+    await expect(inspector).toContainText('good · 4.2 / 5');
+    await expect(inspector).toContainText('42 ms');
+    await expect(inspector).toContainText('call-abc-123');
+    await expect(inspector.locator('button:has-text("Request ICE Restart")')).toBeDisabled();
+  });
+
+  test('the Events tab shows what the service logged', async ({ page }) => {
+    await page.getByRole('tab', { name: 'Events' }).click();
+    await evalInApp(page, "s.logEvent('call', 'Status: ringing');");
+    await expect(page.getByRole('region', { name: 'Inspector' })).toContainText('Status: ringing');
+  });
+
+  test('the call screen adds Hold, Transfer and Share to the control grid', async ({ page }) => {
+    await setState(page, { isInCall: true, callStatus: 'connected', connectedAt: Date.now(), remoteNumber: '+15551234567' });
+    await expect(page.locator('button[aria-label="Hold call"]')).toBeVisible();
+    await expect(page.locator('button[aria-label="Transfer call"]')).toBeVisible();
+    const share = page.locator('button[aria-label="Start screen share"]');
+    await expect(share).toBeDisabled();
+    await setState(page, { canScreenShare: true });
+    await expect(share).toBeEnabled();
+    // The quality badge selects the Call tab rather than opening a sheet.
+    await page.getByRole('tab', { name: 'Events' }).click();
+    await page.click('button[aria-label="Call statistics"]');
+    await expect(page.getByRole('tab', { name: 'Call' })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.locator('[role="dialog"]:has-text("Call Statistics")')).toHaveCount(0);
+  });
+});

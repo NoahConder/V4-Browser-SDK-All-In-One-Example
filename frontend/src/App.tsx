@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import Dialer from './components/Dialer';
+import Workbench from './components/Workbench';
+import { WORKBENCH_QUERY, useMediaQuery } from './hooks/useMediaQuery';
 import { useSignalWire } from './hooks/useSignalWire';
 import { signalWireService } from './services/signalwire';
 import { toneService } from './services/tones';
@@ -8,6 +10,11 @@ import { log } from './utils/log';
 function App() {
   const { isInitialized, error } = useSignalWire();
   const [permissionsGranted, setPermissionsGranted] = useState(false);
+  // Wide screens get the workbench (Destinations | phone | Inspector); phones,
+  // tablets and short windows get the phone column with its header panels.
+  // Call state and the dial field live in stores, so resizing across the
+  // breakpoint mid-call just re-homes the same screen.
+  const isWorkbench = useMediaQuery(WORKBENCH_QUERY);
 
   useEffect(() => {
     // Handle proper cleanup only on page unload
@@ -65,9 +72,9 @@ function App() {
   if (!permissionsGranted) {
     return (
       <div className="app-shell flex flex-col h-dvh items-center justify-center p-8">
-        <div className="glass-panel w-full max-w-sm rounded-2xl p-8 text-center">
+        <div className="glass-panel w-full max-w-sm rounded-xl p-8 text-center">
           <h1 className="text-2xl font-semibold mb-4">Microphone Permission Required</h1>
-          <p className="text-gray-400 mb-8">
+          <p className="text-muted mb-8">
             Please allow microphone access to make and receive calls
           </p>
           <button
@@ -80,7 +87,7 @@ function App() {
                 alert('Microphone permission is required to use this app');
               }
             }}
-            className="w-full rounded-xl bg-linear-to-b from-emerald-400 to-ios-green px-6 py-3 font-medium text-white shadow-[0_4px_16px_rgba(52,199,89,0.35)] transition-all hover:brightness-110 active:scale-[0.98]"
+            className="w-full rounded-lg bg-accent px-6 py-3 font-medium text-on-accent transition-all hover:bg-accent-hover active:scale-[0.98]"
           >
             Grant Permission
           </button>
@@ -95,8 +102,8 @@ function App() {
     return (
       <div className="app-shell flex flex-col h-dvh items-center justify-center">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-ios-green mb-4 mx-auto"></div>
-          <p className="text-gray-400">Connecting to SignalWire...</p>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-accent mb-4 mx-auto"></div>
+          <p className="text-muted">Connecting to SignalWire...</p>
         </div>
       </div>
     );
@@ -105,12 +112,12 @@ function App() {
   if (error) {
     return (
       <div className="app-shell flex flex-col h-dvh items-center justify-center p-8">
-        <div className="glass-panel w-full max-w-sm rounded-2xl p-8 text-center">
-          <h1 className="text-2xl font-semibold mb-4 text-red-400">Connection Error</h1>
-          <p className="text-gray-400 mb-8">{error}</p>
+        <div className="glass-panel w-full max-w-sm rounded-xl p-8 text-center">
+          <h1 className="text-2xl font-semibold mb-4 text-danger-text">Connection Error</h1>
+          <p className="text-muted mb-8">{error}</p>
           <button
             onClick={() => window.location.reload()}
-            className="w-full rounded-xl border border-white/10 bg-white/6 px-6 py-3 font-medium text-white backdrop-blur-md transition-all hover:bg-white/10 active:scale-[0.98]"
+            className="w-full rounded-lg border border-edge-strong bg-surface-2 px-6 py-3 font-medium text-ink transition-all hover:bg-surface-hover active:scale-[0.98]"
           >
             Retry
           </button>
@@ -119,7 +126,7 @@ function App() {
     );
   }
 
-  return <Dialer />;
+  return isWorkbench ? <Workbench /> : <Dialer />;
 }
 
 export default App;

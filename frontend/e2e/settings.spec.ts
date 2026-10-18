@@ -63,7 +63,7 @@ test.describe('Diagnostics & Settings', () => {
   test('explains that the codec order does not apply to phone numbers', async ({ page }) => {
     const panel = page.locator('[role="dialog"][aria-labelledby="diagnostics-title"]');
     await expect(panel).toContainText('calls to phone numbers use G.711');
-    const hint = panel.getByText('the codec order below has no effect');
+    const hint = panel.getByText('the codec order above has no effect');
     const field = page.locator('input[aria-label="Number or address to test"]');
     await expect(hint).toHaveCount(0);
     await field.fill('5551234567');
@@ -100,4 +100,29 @@ test('device-switch notices appear as dismissible info banners', async ({ page }
   await expect(notice).toBeVisible();
   await notice.locator('button[aria-label="Dismiss"]').click();
   await expect(notice).toHaveCount(0);
+});
+
+// Appearance (services/theme.ts): System follows prefers-color-scheme live;
+// an explicit choice wins, persists in dialer_settings and applies before the
+// first render on reload.
+test('Appearance follows the system scheme, persists an override and applies it on reload', async ({ page }) => {
+  const theme = () => page.evaluate(() => document.documentElement.dataset.theme);
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await openDialer(page);
+  expect(await theme()).toBe('dark');
+  await page.emulateMedia({ colorScheme: 'light' });
+  await expect.poll(theme).toBe('light');
+
+  await page.click('button[aria-label="Diagnostics"]');
+  await page.selectOption('select[aria-label="Appearance"]', 'dark');
+  await expect.poll(theme).toBe('dark');
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('dialer_settings') ?? '{}').theme)).toBe('dark');
+  // The OS no longer matters once overridden.
+  await page.emulateMedia({ colorScheme: 'light' });
+  await page.waitForTimeout(50);
+  expect(await theme()).toBe('dark');
+
+  await page.reload();
+  await page.locator(ADDRESS_INPUT).waitFor();
+  expect(await theme()).toBe('dark');
 });

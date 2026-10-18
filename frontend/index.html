@@ -9,11 +9,23 @@
          anyway. viewport-fit=cover plus the pt-safe/pb-safe utilities handle
          the notch and home indicator. -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <meta name="theme-color" content="#000000" />
-    <meta name="color-scheme" content="dark" />
+    <!-- The docs' canvas colors, one per scheme; services/theme.ts rewrites
+         them when the Appearance setting overrides the system. -->
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#fafbfc" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0e0e18" />
+    <meta name="color-scheme" content="light dark" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <!-- The docs' type: Lexend for text, Instrument Sans for display,
+         JetBrains Mono for addresses and figures. System fonts fill in offline
+         (see --font-* in globals.css). -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@500;600;700&family=JetBrains+Mono:wght@400;500&family=Lexend:wght@400;500;600&display=swap"
+    />
     <title>SignalWire Dialer</title>
   </head>
   <body>

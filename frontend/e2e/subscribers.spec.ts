@@ -24,7 +24,7 @@ const SUBSCRIBERS = {
 };
 
 const row = (page: import('@playwright/test').Page, name: string) =>
-  page.locator(`[role="dialog"][aria-labelledby="subscriber-title"] div.rounded-xl:has(span.text-sm:has-text("${name}"))`);
+  page.locator(`[role="dialog"][aria-labelledby="subscriber-title"] div.rounded-lg:has(span.text-sm:has-text("${name}"))`);
 
 test.describe('Subscriber panel', () => {
   test.beforeEach(async ({ page }) => {

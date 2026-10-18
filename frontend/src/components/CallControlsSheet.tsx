@@ -87,7 +87,7 @@ const CallControlsSheet: React.FC<CallControlsSheetProps> = ({
       <SheetSwitch label="Noise Suppression" checked={isNoiseSuppressionOn} onChange={onToggleNoiseSuppression} />
       <SheetSwitch label="Auto Gain Control" checked={isAutoGainOn} onChange={onToggleAutoGain} />
 
-      <div className="mt-1 border-t border-white/10 pt-1">
+      <div className="mt-1 border-t border-edge-strong pt-1">
         <SheetRow icon={Download} label="Export Diagnostics" onClick={downloadDiagnostics} />
       </div>
     </SheetShell>

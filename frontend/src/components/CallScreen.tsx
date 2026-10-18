@@ -1,5 +1,18 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Phone, PhoneOff, MicOff, Volume2, Keyboard, Video, MoreHorizontal } from 'lucide-react';
+import {
+  Phone,
+  PhoneOff,
+  MicOff,
+  Volume2,
+  Keyboard,
+  Video,
+  MoreHorizontal,
+  Pause,
+  Play,
+  PhoneForwarded,
+  ScreenShare,
+  ScreenShareOff,
+} from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import DialPad from './DialPad';
 import ErrorBanner from './ErrorBanner';
@@ -12,6 +25,7 @@ import CallStatsSheet from './CallStatsSheet';
 import AudioLevelMeter from './AudioLevelMeter';
 import { useSignalWire } from '../hooks/useSignalWire';
 import { useCallStore } from '../hooks/useCallStore';
+import { useWorkbench } from '../hooks/useWorkbench';
 import { signalWireService } from '../services/signalwire';
 import { log } from '../utils/log';
 
@@ -64,15 +78,15 @@ const CallControl: React.FC<CallControlProps> = ({
       aria-pressed={active}
       className={`dial-button transition-all disabled:opacity-40 disabled:active:scale-100 ${
         danger
-          ? 'bg-linear-to-b from-red-500 to-ios-red shadow-[0_4px_16px_rgba(255,59,48,0.35)] hover:brightness-110'
+          ? 'bg-hangup text-on-hangup hover:bg-hangup-hover'
           : active
-            ? 'border border-white bg-white text-black'
-            : 'border border-white/10 bg-white/6 text-white backdrop-blur-md hover:bg-white/10'
+            ? 'border border-accent bg-accent text-on-accent'
+            : 'border border-edge-strong bg-surface text-ink hover:bg-surface-hover'
       }`}
     >
-      {danger ? <Icon size={32} fill="white" /> : <Icon size={24} />}
+      {danger ? <Icon size={32} fill="currentColor" /> : <Icon size={24} />}
     </button>
-    <span aria-hidden className="text-xs text-gray-300 short:text-[10px]">{label}</span>
+    <span aria-hidden className="text-xs text-muted short:text-[10px]">{label}</span>
   </div>
 );
 
@@ -122,6 +136,12 @@ const CallScreen: React.FC<CallScreenProps> = ({
   const needsAudioUnlock = useCallStore((s) => s.needsAudioUnlock);
   const isMediaDisrupted = useCallStore((s) => s.isMediaDisrupted);
   const setCallState = useCallStore((s) => s.setCallState);
+  // Inside the desktop workbench the stats live in the Inspector pane (so the
+  // badge and the More sheet select its Call tab instead of opening the
+  // sheet), and the control grid gains a row for Hold, Transfer and Share.
+  const workbench = useWorkbench();
+  const openStats = workbench ? workbench.openCallStats : () => setIsStatsSheetOpen(true);
+  const isScreenShareBusy = screenShareStatus === 'starting' || screenShareStatus === 'stopping';
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   // The key handler below is bound once; this keeps it on the latest prop.
@@ -200,12 +220,24 @@ const CallScreen: React.FC<CallScreenProps> = ({
   // a camera on mid-call (toggleCamera works on calls that started audio-only).
   const showVideoUI = isVideoCall || isCameraOn || remoteHasVideo;
 
+  // Shared by the main view and the in-call keypad. Hold wins over media loss
+  // because the SDK still reports the held call as connected.
+  const statusText = isOnHold
+    ? 'On Hold'
+    : isMediaDisrupted
+      ? 'Reconnecting…'
+      : callStatus === 'connected'
+        ? 'Connected'
+        : callStatus === 'ringing'
+          ? 'Ringing…'
+          : 'Calling…';
+
   return (
     <div className="app-shell flex flex-col h-dvh">
       {/* Status Bar - always visible */}
       <StatusBar>
         {(callStatus === 'connected' || isMediaDisrupted) && (
-          <CallQualityBadge onClick={() => setIsStatsSheetOpen(true)} />
+          <CallQualityBadge onClick={openStats} />
         )}
       </StatusBar>
 
@@ -225,7 +257,7 @@ const CallScreen: React.FC<CallScreenProps> = ({
           autoPlay
           muted
           playsInline
-          className={`absolute right-4 top-4 h-28 w-20 rounded-xl object-cover ring-1 ring-white/20 shadow-[0_4px_16px_rgba(0,0,0,0.5)] sm:h-36 sm:w-24 ${
+          className={`absolute right-4 top-4 h-28 w-20 rounded-lg object-cover ring-1 ring-edge-strong shadow-card sm:h-36 sm:w-24 ${
             showVideoUI && isCameraOn ? '' : 'hidden'
           }`}
         />
@@ -246,7 +278,7 @@ const CallScreen: React.FC<CallScreenProps> = ({
               signalWireService.resumeRemoteAudio();
               setCallState({ needsAudioUnlock: false });
             }}
-            className="glass-panel relative z-10 mx-auto mt-2 flex w-[calc(100%-2rem)] max-w-sm items-center justify-center gap-2 rounded-2xl px-4 py-3 text-sm font-medium text-white transition-colors hover:bg-white/10"
+            className="glass-panel relative z-10 mx-auto mt-2 flex w-[calc(100%-2rem)] max-w-sm items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-medium text-ink transition-colors hover:bg-surface-hover"
           >
             <Volume2 size={16} /> Tap to enable audio
           </button>
@@ -254,15 +286,24 @@ const CallScreen: React.FC<CallScreenProps> = ({
 
         {showDialPad ? (
           <div className="relative z-10 flex flex-1 flex-col min-h-0 overflow-y-auto short:flex-row short:items-center">
-            {/* DTMF Display - matches idle dialer's address input styling */}
-            <div className="flex-1 flex items-center justify-center px-6 py-4 short:px-4">
-              <div className="glass-panel flex w-full max-w-sm items-center justify-center rounded-2xl px-4 py-3">
+            {/* Status, number and timer stay in view while working an IVR -- the
+                far end and the stats don't pause for the keypad. Then the DTMF
+                display, matching the idle dialer's address input styling. */}
+            <div className="flex-1 flex flex-col items-center justify-center gap-3 px-6 py-4 short:px-4">
+              <div className="flex max-w-full flex-wrap items-center justify-center gap-x-2 gap-y-1 text-sm text-muted">
+                <span>{statusText}</span>
+                <span className="text-muted wrap-anywhere select-text">{phoneNumber}</span>
+                {connectedAt && (
+                  <span className="rounded-full bg-surface-2 px-2 py-0.5 font-mono tabular-nums">{formatDuration(callDuration)}</span>
+                )}
+              </div>
+              <div className="glass-panel flex w-full max-w-sm items-center justify-center rounded-xl px-4 py-3">
                 {dialPadInput ? (
-                  <div className="min-w-0 text-2xl sm:text-3xl font-light tracking-wide wrap-anywhere">
+                  <div className="min-w-0 font-mono text-2xl sm:text-3xl font-medium tracking-wide wrap-anywhere">
                     {dialPadInput}
                   </div>
                 ) : (
-                  <div className="text-lg sm:text-xl text-gray-500">
+                  <div className="text-lg sm:text-xl text-faint">
                     {callStatus === 'connected' ? 'Enter digits to send' : 'Keypad available once connected'}
                   </div>
                 )}
@@ -284,8 +325,8 @@ const CallScreen: React.FC<CallScreenProps> = ({
             {/* Call Info */}
             <div className="flex-1 flex flex-col justify-center items-center px-4 py-4 short:self-stretch">
               {!showVideoUI && (
-                <div className="mb-6 flex h-24 w-24 short:hidden items-center justify-center rounded-full bg-linear-to-b from-white/10 to-white/2 ring-1 ring-white/10 shadow-[0_8px_24px_rgba(0,0,0,0.4)]">
-                  <Phone size={36} className="text-gray-300" />
+                <div className="mb-6 flex h-24 w-24 short:hidden items-center justify-center rounded-full bg-surface ring-1 ring-edge-strong shadow-card">
+                  <Phone size={36} className="text-muted" />
                 </div>
               )}
               <div
@@ -293,31 +334,23 @@ const CallScreen: React.FC<CallScreenProps> = ({
                   showVideoUI ? 'mt-auto w-full bg-linear-to-t from-black/70 to-transparent px-4 pb-4 pt-10' : ''
                 }`}
               >
-                <div className="mb-2 inline-flex items-center gap-2 text-sm text-gray-400" aria-live="polite">
+                <div className="mb-2 inline-flex items-center gap-2 text-sm text-muted" aria-live="polite">
                   {/* Media down but the call not over (ICE disconnected/failed
                       or the SDK mid-recovery) -- the StatusBar dot stays bound
                       to signaling (isClientReady); this one is about media. */}
                   {(callStatus !== 'connected' || isMediaDisrupted) && (
                     <span
                       className={`h-1.5 w-1.5 rounded-full motion-safe:animate-pulse ${
-                        isMediaDisrupted ? 'bg-amber-400' : 'bg-ios-green'
+                        isMediaDisrupted ? 'bg-warn' : 'bg-success'
                       }`}
                     />
                   )}
-                  {isOnHold
-                    ? 'On Hold'
-                    : isMediaDisrupted
-                      ? 'Reconnecting…'
-                      : callStatus === 'connected'
-                        ? 'Connected'
-                        : callStatus === 'ringing'
-                          ? 'Ringing…'
-                          : 'Calling…'}
+                  {statusText}
                 </div>
-                <div className="text-2xl sm:text-3xl font-light mb-4 wrap-anywhere select-text">{phoneNumber}</div>
+                <div className="text-2xl sm:text-3xl font-display font-medium tracking-tight mb-4 wrap-anywhere select-text">{phoneNumber}</div>
                 {/* Like iOS, the timer appears once the call is answered. */}
                 {connectedAt && (
-                  <div className="inline-block rounded-full bg-white/5 px-3 py-1 text-lg sm:text-xl text-gray-300 tabular-nums">
+                  <div className="inline-block rounded-full bg-surface-2 px-3 py-1 font-mono text-lg sm:text-xl text-muted tabular-nums">
                     {formatDuration(callDuration)}
                   </div>
                 )}
@@ -347,6 +380,38 @@ const CallScreen: React.FC<CallScreenProps> = ({
                     ariaLabel="More call controls"
                     onClick={() => setIsControlsSheetOpen(true)}
                   />
+                  {workbench && (
+                    <>
+                      <CallControl
+                        icon={isOnHold ? Play : Pause}
+                        label={isOnHold ? 'Resume' : 'Hold'}
+                        ariaLabel={isOnHold ? 'Resume call' : 'Hold call'}
+                        active={isOnHold}
+                        onClick={toggleHold}
+                      />
+                      <CallControl
+                        icon={PhoneForwarded}
+                        label="Transfer"
+                        ariaLabel="Transfer call"
+                        onClick={() => setIsTransferModalOpen(true)}
+                      />
+                      {/* Straight from the click, no await first: getDisplayMedia
+                          needs the user gesture (see toggleScreenShare). */}
+                      <CallControl
+                        icon={screenShareStatus === 'started' ? ScreenShareOff : ScreenShare}
+                        label="Share"
+                        ariaLabel={screenShareStatus === 'started' ? 'Stop screen share' : 'Start screen share'}
+                        active={screenShareStatus === 'started'}
+                        disabled={!canScreenShare || isScreenShareBusy}
+                        title={
+                          canScreenShare
+                            ? undefined
+                            : 'Screen share is granted on video room and conference calls, not on 1:1 calls'
+                        }
+                        onClick={() => toggleScreenShare(shareScreenAudio)}
+                      />
+                    </>
+                  )}
                 </div>
               </div>
             </div>
@@ -368,7 +433,7 @@ const CallScreen: React.FC<CallScreenProps> = ({
           }}
           onOpenStats={() => {
             setIsControlsSheetOpen(false);
-            setIsStatsSheetOpen(true);
+            openStats();
           }}
           canScreenShare={canScreenShare}
           screenShareStatus={screenShareStatus}
@@ -397,7 +462,7 @@ const CallScreen: React.FC<CallScreenProps> = ({
 
         {isDevicePickerOpen && (
           <div className="absolute inset-0 z-20 flex flex-col justify-center">
-            <div className="absolute inset-0 bg-black/60" onClick={() => setIsDevicePickerOpen(false)} />
+            <div className="absolute inset-0 bg-scrim" onClick={() => setIsDevicePickerOpen(false)} />
             <DevicePicker isOpen onClose={() => setIsDevicePickerOpen(false)} />
           </div>
         )}

@@ -119,6 +119,26 @@ export interface ConnectionStatsSnapshot {
   bytesReceived: number;
 }
 
+// One line of the in-app event log: what the SDK and this app did, in order,
+// for a tester reading along -- status$ transitions, errors$/warnings$,
+// recovery and ICE, device changes, and the user's own actions. Kept in a
+// bounded ReplaySubject here and read straight from getEventLog$() by the
+// EventLog component, never through useCallStore (see CLAUDE.md's
+// high-frequency observables rule).
+export type AppEventKind = 'call' | 'media' | 'client' | 'error' | 'warning' | 'user';
+
+export interface AppEvent {
+  at: number;
+  kind: AppEventKind;
+  message: string;
+  // Short secondary text: an error message, a call id, a destination.
+  detail?: string;
+}
+
+const EVENT_LOG_SIZE = 200;
+
+const errorText = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+
 export interface SignalWireCallbacks {
   // `remoteNumber` is the display caller id (fromName, else from); `from` is
   // the raw address to redial, `callId` the SDK call id -- both for Recents.
@@ -290,6 +310,9 @@ class SignalWireService {
   // Replays the current call's recent recovery events to late subscribers
   // (the call-stats sheet is opened mid-call).
   private recoveryEvents$ = new ReplaySubject<RecoveryEvent>(10);
+  // See AppEvent. Bounded replay so a late subscriber (the Events section
+  // opening mid-call) gets the recent history.
+  private eventLog$ = new ReplaySubject<AppEvent>(EVENT_LOG_SIZE);
 
   // Video elements attached by CallScreen; may be set before or after streams arrive.
   private localVideoEl: HTMLVideoElement | null = null;
@@ -372,6 +395,7 @@ class SignalWireService {
           // app mints a plain SAT. See CLAUDE.md's Client Bound SAT note.
           const tokenData = await this.fetchTokenForSelectedSubscriber();
           this.currentToken = tokenData;
+          this.logEvent('client', 'Token minted', tokenData.subscriber_display_name);
           return {
             token: tokenData.token,
             expiry_at: Date.parse(tokenData.expires_at),
@@ -385,6 +409,7 @@ class SignalWireService {
           // silently fall back to the default subscriber mid-session.
           const tokenData = await authAPI.refreshToken(this.currentToken?.token, getSelectedSubscriberId());
           this.currentToken = tokenData;
+          this.logEvent('client', 'Token refreshed', tokenData.subscriber_display_name);
           return {
             token: tokenData.token,
             expiry_at: Date.parse(tokenData.expires_at),
@@ -434,6 +459,7 @@ class SignalWireService {
       // the UI via onClientError — everything else stays console-only.
       this.errorSub = this.client.errors$.subscribe((error) => {
         log.error('SignalWire error:', error);
+        this.logEvent('error', 'Client error', errorText(error));
         if (error instanceof TokenRefreshError || error instanceof InvalidCredentialsError) {
           this.onClientError?.('Your session could not be refreshed. Please reload the page to reconnect.');
         }
@@ -446,6 +472,7 @@ class SignalWireService {
       // silently die at SAT expiry.
       this.warningSub = this.client.warnings$.subscribe((warning) => {
         log.warn('SignalWire warning:', warning.code, warning.message);
+        this.logEvent('warning', warning.code, warning.message);
         if (warning.code === 'credential_no_refresh_handler') {
           this.onClientError?.('Your session will expire soon and cannot auto-refresh. Reload the page before it does to stay connected.');
         }
@@ -454,21 +481,37 @@ class SignalWireService {
       // Live readiness — can flip false again after this initial registration
       // (token refresh hiccup, network blip), so callers gate call-time actions
       // on isReady rather than only on the one-shot result of this method.
+      let lastReady: boolean | null = null;
       this.readySub = this.client.ready$.subscribe((ready) => {
         this.isReady = ready;
         this.onReadyChange?.(ready);
+        // The initial false is just "not yet": log the first true and every
+        // change after it.
+        if (ready !== lastReady && (ready || lastReady !== null)) {
+          this.logEvent('client', ready ? 'Connected and ready' : 'Connection lost — reconnecting');
+        }
+        lastReady = ready;
       });
 
       // Registration (reachability for incoming calls) is separate from
       // readiness: unregister() -- Do Not Disturb -- flips this alone.
+      let lastRegistered: boolean | null = null;
       this.registeredSub = this.client.isRegistered$.subscribe((registered) => {
         this.onRegisteredChange?.(registered);
+        if (registered !== lastRegistered && (registered || lastRegistered !== null)) {
+          this.logEvent(
+            'client',
+            registered ? 'Registered — reachable for incoming calls' : 'Unregistered — not receiving calls (Do Not Disturb)',
+          );
+        }
+        lastRegistered = registered;
       });
 
       // The SDK swaps devices by itself when one is unplugged/replugged or
       // the OS default changes; say so rather than leaving the user to wonder
       // why their audio moved.
       this.deviceRecoveredSub = this.client.deviceRecovered$.subscribe((event) => {
+        this.logEvent('media', 'Device switched by the SDK', describeDeviceRecovery(event));
         this.onClientNotice?.(describeDeviceRecovery(event));
       });
 
@@ -492,6 +535,7 @@ class SignalWireService {
           if (!this.autoRejectedCallIds.has(ringingCall.id)) {
             this.autoRejectedCallIds.add(ringingCall.id);
             log.debug('Already in a call - auto-rejecting incoming call from', callerId);
+            this.logEvent('call', 'Auto-rejected a second incoming call', callerId);
             this.onIncomingCallAutoRejected?.(callerId, ringingCall.from);
             ringingCall.reject();
           }
@@ -503,6 +547,7 @@ class SignalWireService {
 
         this.pendingCall = ringingCall;
         log.debug('Incoming call from:', callerId);
+        this.logEvent('call', 'Incoming call', `${callerId} · ${ringingCall.id}`);
 
         // Best-effort: mediaDirections reflects the inbound SDP offer, so a
         // video-enabled offer should show as something other than 'inactive'
@@ -517,6 +562,7 @@ class SignalWireService {
         // Watch for the caller hanging up before we answer
         const cleanupCanceled = () => {
           log.debug('Incoming call canceled by caller');
+          this.logEvent('call', 'Caller hung up before answer', callerId);
           toneService.stopIncomingCallTone();
           if (this.pendingCall?.id === ringingCall.id) {
             this.pendingCall = null;
@@ -558,6 +604,7 @@ class SignalWireService {
       this.isInitialized = true;
       this.isInitializing = false;
       log.debug('SignalWire service fully initialized');
+      this.logEvent('client', 'Signed in', `${this.getActiveSubscriberDisplayName() ?? 'default subscriber'} · SDK ${sdkVersion}`);
       return true;
     } catch (error) {
       log.error('Failed to initialize SignalWire:', error);
@@ -604,6 +651,7 @@ class SignalWireService {
         throw error;
       }
       log.warn('Saved subscriber was rejected by the backend - falling back to the default subscriber');
+      this.logEvent('warning', 'Saved subscriber rejected — using the default subscriber');
       localStorage.removeItem(SELECTED_SUBSCRIBER_KEY);
       this.onClientError?.('Your saved subscriber no longer exists, so you were connected as the default subscriber.');
       return authAPI.getToken(undefined);
@@ -628,6 +676,7 @@ class SignalWireService {
     if (!restored) return;
 
     log.debug('Adopting reattached call:', restored.id, 'status:', restored.status);
+    this.logEvent('call', 'Reattached to a call after reload/reconnect', `${restored.status} · ${restored.id}`);
     this.isMicMuted = false;
     this.remoteHasVideo = false;
     this.currentCall = restored;
@@ -650,6 +699,7 @@ class SignalWireService {
     // Subscribe to call status changes
     this.callStatusSub = call.status$.subscribe((status) => {
       log.debug('Call status:', status);
+      this.logEvent('call', `Status: ${status}`);
 
       if (status === 'trying' || status === 'connecting') {
         this.onCallStatusChange?.('connecting');
@@ -715,6 +765,13 @@ class SignalWireService {
     // promise.
     this.callErrorsSub = call.errors$.subscribe((callError) => {
       log.warn('[call.errors$]', callError.kind, 'fatal:', callError.fatal, 'leg:', callError.leg ?? 'main', callError.error);
+      this.logEvent(
+        'error',
+        `Call error (${callError.kind}${callError.leg && callError.leg !== 'main' ? `, ${callError.leg} leg` : ''}${
+          callError.fatal ? ', fatal' : ''
+        })`,
+        errorText(callError.error),
+      );
       if (callError.fatal) return;
       if (callError.leg && callError.leg !== 'main') return;
       const { error } = callError;
@@ -737,25 +794,43 @@ class SignalWireService {
       )
       .subscribe((granted) => {
         log.debug('[screenshare] capability granted:', granted);
+        if (granted) this.logEvent('call', 'Screen share capability granted by the server');
         this.onCanScreenShareChange?.(this.screenShareApiSupported && granted);
       });
 
     // Quality/network observables live directly on Call (not call.self), so
     // this is simpler than the self$ tier below -- no nullable intermediate.
+    let lastIssueTypes = new Set<NetworkIssue['type']>();
     this.qualitySub = combineLatest([
       call.qualityLevel$,
       call.qualityScore$,
       call.networkIssues$,
     ]).subscribe(([level, score, networkIssues]) => {
-      this.onQualityChange?.({ level, score, networkIssues: this.relevantIssues(networkIssues) });
+      const issues = this.relevantIssues(networkIssues);
+      this.onQualityChange?.({ level, score, networkIssues: issues });
+      // Issues ride along with the 1 Hz metrics; log each once as it appears
+      // and once as it clears.
+      const types = new Set(issues.map((issue) => issue.type));
+      for (const issue of issues) {
+        if (!lastIssueTypes.has(issue.type)) this.logEvent('warning', `Network issue: ${issue.type} (${issue.severity})`);
+      }
+      for (const type of lastIssueTypes) {
+        if (!types.has(type)) this.logEvent('media', `Network issue cleared: ${type}`);
+      }
+      lastIssueTypes = types;
     });
 
     // call.self is replaced wholesale on each call.joined event, so follow
     // whichever self is current. self$ never emits null (it withholds until
     // self exists), so there's no empty case to handle here.
+    let lastShareStatus: ScreenShareStatus | null = null;
     this.screenShareSub = call.self$
       .pipe(switchMap((self) => self.screenShareStatus$))
-      .subscribe((status) => this.onScreenShareStatusChange?.(status));
+      .subscribe((status) => {
+        this.onScreenShareStatusChange?.(status);
+        if (lastShareStatus !== null && status !== lastShareStatus) this.logEvent('media', `Screen share: ${status}`);
+        lastShareStatus = status;
+      });
 
     // The SDK's own recovery (CallRecoveryManager: debouncing -> recovering
     // -> cooldown -> idle). Note it is driven by the stats monitor, browser
@@ -766,12 +841,18 @@ class SignalWireService {
     this.recoveryEvents$ = new ReplaySubject<RecoveryEvent>(10);
     this.recoveryStateSub = call.recoveryState$.subscribe((state) => {
       log.debug('[recovery] state:', state);
+      if (state !== this.lastRecoveryState) this.logEvent('media', `Recovery: ${state}`);
       this.lastRecoveryState = state;
       this.onRecoveryStateChange?.(state);
       this.setMediaDisrupted(state === 'debouncing' || state === 'recovering' || this.isPeerConnectionDown());
     });
     this.recoveryEventSub = call.recoveryEvent$.subscribe((event) => {
       log.debug('[recovery]', event.action, '-', event.reason, event.attempt != null ? `(${event.attempt}/${event.maxAttempts})` : '');
+      this.logEvent(
+        'media',
+        `Recovery ${event.action}${event.attempt != null ? ` (${event.attempt}/${event.maxAttempts})` : ''}`,
+        event.reason,
+      );
       this.recoveryEvents$.next(event);
       if (this.currentCall !== call) return;
       if (event.action === 'max_attempts_reached') {
@@ -791,12 +872,23 @@ class SignalWireService {
   private setMediaDisrupted(disrupted: boolean) {
     if (this.isMediaDisrupted === disrupted) return;
     this.isMediaDisrupted = disrupted;
+    this.logEvent('media', disrupted ? 'Media disrupted — waiting for recovery' : 'Media flowing again');
     this.onMediaDisruptionChange?.(disrupted);
   }
 
   private isPeerConnectionDown(): boolean {
     const state = this.monitoredPc?.iceConnectionState;
     return state === 'disconnected' || state === 'failed';
+  }
+
+  // The in-app event log (see AppEvent): replays the last EVENT_LOG_SIZE
+  // entries to a new subscriber, then streams.
+  getEventLog$(): Observable<AppEvent> {
+    return this.eventLog$.asObservable();
+  }
+
+  private logEvent(kind: AppEventKind, message: string, detail?: string) {
+    this.eventLog$.next({ at: Date.now(), kind, message, detail });
   }
 
   // Recent recovery events for the current call (replayed on subscribe).
@@ -1088,12 +1180,16 @@ class SignalWireService {
     // grace window below. Only 'closed' -- produced by the SDK's own destroy
     // -- is terminal here; the other end signals are status$ and
     // recoveryEvent$ (see CLAUDE.md's call-ended detection note).
+    let lastIce: RTCIceConnectionState | null = null;
     const onMediaStateChange = () => {
       const ice = pc.iceConnectionState;
       const conn = pc.connectionState;
       log.debug('PC state:', conn, 'ice:', ice);
+      if (ice !== lastIce) this.logEvent('media', `ICE ${ice}`, `peer connection ${conn}`);
+      lastIce = ice;
       if (ice === 'closed' || conn === 'closed') {
         log.debug('Peer connection closed - ending call as fallback');
+        this.logEvent('call', 'Peer connection closed — ending the call');
         this.handleCallEnded();
       } else if (ice === 'disconnected' || ice === 'failed' || conn === 'failed') {
         this.setMediaDisrupted(true);
@@ -1132,6 +1228,7 @@ class SignalWireService {
         return;
       }
       log.warn(`Media did not recover (ice: ${ice}, recovery: ${this.lastRecoveryState}) - ending call as fallback`);
+      this.logEvent('error', 'Media did not recover — ending the call', `ICE ${ice}, recovery ${this.lastRecoveryState}`);
       this.handleCallEnded();
     };
     this.mediaDisruptionTimer = setTimeout(onExpiry, graceMs);
@@ -1255,6 +1352,7 @@ class SignalWireService {
       this.dialCancelled = false;
       const formattedNumber = this.withVideoChannel(this.normalizeDestination(phoneNumber), video);
       log.debug('Dialing:', formattedNumber);
+      this.logEvent('user', video ? 'Dialing (video)' : 'Dialing', formattedNumber);
 
       const call = await this.client.dial(formattedNumber, {
         audio: true,
@@ -1265,6 +1363,7 @@ class SignalWireService {
       // has already reset, so don't adopt the call -- end it.
       if (this.dialCancelled) {
         log.debug('Dial resolved after the user hung up - ending the call');
+        this.logEvent('call', 'Dial cancelled before it connected', call.id);
         call.hangup().catch((error) => {
           log.debug('Hangup of cancelled dial (ignored):', error);
         });
@@ -1277,9 +1376,11 @@ class SignalWireService {
       this.setupRemoteAudioFallback(call);
 
       log.debug('Call initiated successfully');
+      this.logEvent('call', 'Call created', call.id);
       return call;
     } catch (error) {
       log.error('Failed to make call:', error);
+      this.logEvent('error', 'Dial failed', errorText(error));
       throw error;
     } finally {
       this.isDialing = false;
@@ -1291,13 +1392,17 @@ class SignalWireService {
     if (!call) {
       // No Call object yet, but dial() may still be in flight -- make
       // makeCall() hang it up when it resolves instead of adopting it.
-      if (this.isDialing) this.dialCancelled = true;
+      if (this.isDialing) {
+        this.dialCancelled = true;
+        this.logEvent('user', 'Hang up while still dialing');
+      }
       return;
     }
 
     // Eagerly clean up state so incoming calls aren't blocked by stale references.
     // Don't wait for the SDK's status$ to emit 'disconnected' — it may be delayed
     // or never fire if the call was still in ICE negotiation.
+    this.logEvent('user', 'Hang up');
     toneService.playDisconnectTone();
     this.handleCallEnded();
 
@@ -1351,6 +1456,7 @@ class SignalWireService {
 
     try {
       log.debug('Answering incoming call...');
+      this.logEvent('user', video ? 'Answered (video)' : 'Answered');
       toneService.stopIncomingCallTone();
 
       const call = this.pendingCall;
@@ -1365,6 +1471,7 @@ class SignalWireService {
       log.debug('Call answered successfully');
     } catch (error) {
       log.error('Failed to answer call:', error);
+      this.logEvent('error', 'Answer failed', errorText(error));
       this.pendingCall = null;
       throw error;
     }
@@ -1377,6 +1484,7 @@ class SignalWireService {
 
     try {
       log.debug('Rejecting incoming call...');
+      this.logEvent('user', 'Declined incoming call');
       toneService.stopIncomingCallTone();
       this.pendingCall.reject();
       this.pendingCall = null;
@@ -1401,6 +1509,7 @@ class SignalWireService {
     this.isMicMuted = muted;
     this.applyMicMute();
     log.debug(`Audio ${muted ? 'muted' : 'unmuted'}`);
+    this.logEvent('user', muted ? 'Muted (local track disabled)' : 'Unmuted');
   }
 
   // Disables both the local stream's mic track and the outgoing sender track:
@@ -1444,6 +1553,7 @@ class SignalWireService {
       await self.muteVideo();
     }
     log.debug(`Camera ${cameraOn ? 'enabled' : 'disabled'}`);
+    this.logEvent('user', cameraOn ? 'Camera on' : 'Camera off');
   }
 
   // No held$/isOnHold observable exists on Call -- the caller tracks hold
@@ -1479,6 +1589,7 @@ class SignalWireService {
 
   async toggleHold() {
     log.debug('[hold] Requested');
+    this.logEvent('user', 'Hold / resume requested');
 
     if (!this.currentCall) {
       log.error('[hold] Aborted -- no active call to hold');
@@ -1503,14 +1614,17 @@ class SignalWireService {
     }
     if (refusal) {
       log.error('[hold] refused by the server:', refusal);
+      this.logEvent('error', 'Hold refused by the server', refusal.message);
       throw new Error(`The server refused the hold request (${refusal.message.replace(/\.$/, '')}).`);
     }
     log.debug('[hold] call.toggleHold() resolved -- server acknowledged the state change');
+    this.logEvent('call', 'Hold / resume acknowledged by the server');
   }
 
   async transferCall(destination: string) {
     const formattedDestination = this.normalizeDestination(destination);
     log.debug('[transfer] Requested, raw input:', destination, '-> normalized:', formattedDestination);
+    this.logEvent('user', 'Transfer requested', formattedDestination);
 
     if (!this.currentCall) {
       log.error('[transfer] Aborted -- no active call to transfer');
@@ -1537,6 +1651,7 @@ class SignalWireService {
     }
     if (refusal) {
       log.error('[transfer] refused by the server:', refusal);
+      this.logEvent('error', 'Transfer refused by the server', refusal.message);
       throw new Error(`The server refused the transfer (${refusal.message.replace(/\.$/, '')}).`);
     }
     // Per the docs, resolving means the server ACCEPTED the request -- not
@@ -1544,6 +1659,7 @@ class SignalWireService {
     // this call to 'disconnected' (status$); if it stays 'connected', the
     // destination didn't take it.
     log.debug('[transfer] call.transfer() resolved -- server accepted the request');
+    this.logEvent('call', 'Transfer accepted by the server');
   }
 
   // start/stopScreenShare() live on call.self, gated by the caller on the
@@ -1566,6 +1682,7 @@ class SignalWireService {
       // which the caller treats as benign).
       case 'started':
       case 'starting':
+        this.logEvent('user', 'Stop screen share');
         await self.stopScreenShare();
         break;
       // The SDK says to treat 'stopping' as busy -- starting now could hit
@@ -1574,6 +1691,7 @@ class SignalWireService {
         log.debug('Screen share is still stopping - ignoring toggle');
         break;
       case 'none':
+        this.logEvent('user', withAudio ? 'Start screen share (with tab audio)' : 'Start screen share');
         await self.startScreenShare(withAudio ? { audio: true } : undefined);
         break;
     }
@@ -1596,6 +1714,7 @@ class SignalWireService {
       throw new Error("Couldn't change echo cancellation on your microphone.");
     }
     this.setAudioProcessing({ ...this.audioProcessing, echoCancellation: next });
+    this.logEvent('user', `Echo cancellation ${next ? 'on' : 'off'}`);
   }
 
   async toggleAutoGain() {
@@ -1605,6 +1724,7 @@ class SignalWireService {
       throw new Error("Couldn't change auto gain on your microphone.");
     }
     this.setAudioProcessing({ ...this.audioProcessing, autoGain: next });
+    this.logEvent('user', `Auto gain control ${next ? 'on' : 'off'}`);
   }
 
   async toggleNoiseSuppression() {
@@ -1614,6 +1734,7 @@ class SignalWireService {
       throw new Error("Couldn't change noise suppression on your microphone.");
     }
     this.setAudioProcessing({ ...this.audioProcessing, noiseSuppression: next });
+    this.logEvent('user', `Noise suppression ${next ? 'on' : 'off'}`);
   }
 
   private requireCurrentCall(): Call {
@@ -1663,6 +1784,7 @@ class SignalWireService {
 
   // Set by the device picker when the user picks a speaker/output device.
   setPreferredAudioOutputDevice(device: MediaDeviceInfo | null) {
+    this.logEvent('user', 'Speaker selected', device?.label || 'default');
     this.preferredOutputDevice = device;
     this.client?.selectAudioOutputDevice(device);
   }
@@ -1672,6 +1794,13 @@ class SignalWireService {
   // offer/answer and peer-connection creation respectively, so they apply to
   // the next call (no reload).
   applySettings(settings: DialerSettings) {
+    this.logEvent(
+      'user',
+      'Settings applied',
+      `codecs ${settings.audioCodecOrder.join(' > ')} · log ${settings.logLevel} · relay-only ${
+        settings.relayOnly ? 'on' : 'off'
+      } · WS trace ${settings.logWsTraffic ? 'on' : 'off'}`,
+    );
     setLogLevel(settings.logLevel);
     setDebugOptions({ logWsTraffic: settings.logWsTraffic });
     setDebugLogging(settings.debugLogs);
@@ -1693,6 +1822,7 @@ class SignalWireService {
   // Session-only: every page load registers again in initialize().
   async setDoNotDisturb(enabled: boolean): Promise<void> {
     if (!this.client) throw new Error('SignalWire client not initialized');
+    this.logEvent('user', enabled ? 'Do Not Disturb on — unregister()' : 'Do Not Disturb off — register()');
     if (enabled) {
       await this.client.unregister();
     } else {
@@ -1744,10 +1874,12 @@ class SignalWireService {
   }
 
   selectAudioInputDevice(device: MediaDeviceInfo | null) {
+    this.logEvent('user', 'Microphone selected', device?.label || 'default');
     this.client?.selectAudioInputDevice(device);
   }
 
   selectVideoInputDevice(device: MediaDeviceInfo | null) {
+    this.logEvent('user', 'Camera selected', device?.label || 'default');
     this.client?.selectVideoInputDevice(device);
   }
 
@@ -1774,8 +1906,19 @@ class SignalWireService {
       throw new Error('SignalWire client not initialized');
     }
     this.preflightInProgress = true;
+    this.logEvent('user', 'Connection test started', destination);
     try {
-      return await this.client.preflight(destination, options);
+      const result = await this.client.preflight(destination, options);
+      this.logEvent(
+        'client',
+        result.ok ? 'Connection test passed' : 'Connection test found issues',
+        // Defensive: the e2e suite's fake result has no warnings array.
+        result.warnings?.length ? result.warnings.join('; ') : undefined,
+      );
+      return result;
+    } catch (error) {
+      this.logEvent('error', 'Connection test failed', errorText(error));
+      throw error;
     } finally {
       this.preflightInProgress = false;
     }
@@ -1799,12 +1942,15 @@ class SignalWireService {
   // call-controls guide); digits tapped while it's still ringing are dropped.
   async sendDTMF(digit: string) {
     if (this.currentCall?.status === 'connected') {
+      this.logEvent('user', `DTMF ${digit}`);
       await this.currentCall.sendDigits(digit);
     }
   }
 
   private handleCallEnded() {
     log.debug('handleCallEnded - cleaning up');
+    // Guarded so the redundant end paths (endCall(), then status$) log once.
+    if (this.currentCall || this.pendingCall) this.logEvent('call', 'Call ended');
     const wasIncoming = this.wasIncomingCall;
 
     this.cleanupCallSubscriptions();

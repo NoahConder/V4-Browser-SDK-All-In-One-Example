@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Loader2, Phone, Video } from 'lucide-react';
-import axios from 'axios';
 import SearchField from './SearchField';
+import { describeFetchError } from '../services/api';
 import type { DialableAddress } from '../types';
 import { matchStatus } from '../utils/search';
 
@@ -53,15 +53,8 @@ function rowsFor<T extends DialableResource>(
   return rows;
 }
 
-// The listing scopes are rate limited (30/min); a 429 reads better than
-// axios's "Request failed with status code 429".
-const describeFetchError = (err: unknown, fallback: string): string => {
-  if (axios.isAxiosError(err) && err.response?.status === 429) return 'Too many requests — wait a moment and try again.';
-  return err instanceof Error ? err.message : fallback;
-};
-
 const DIAL_BUTTON_CLASS =
-  'flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-white/10 bg-white/6 px-3 py-2 text-xs font-medium text-gray-200 backdrop-blur-md transition-colors hover:bg-white/15 hover:text-white active:scale-[0.97] disabled:cursor-not-allowed disabled:border-white/5 disabled:bg-white/2 disabled:text-gray-600 disabled:hover:bg-white/2';
+  'flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-edge-strong bg-surface-2 px-3 py-2 text-xs font-medium text-ink transition-colors hover:bg-surface-hover hover:text-ink active:scale-[0.97] disabled:cursor-not-allowed disabled:border-edge disabled:bg-surface-2 disabled:text-faint disabled:hover:bg-surface-2';
 
 interface DialButtonsProps {
   audioPath: string;
@@ -109,6 +102,8 @@ interface AddressRowListProps {
   error: string | null;
   hasMore: boolean;
   onLoadMore: () => void;
+  // Re-fetches after a failed load; without it the error branch is a dead end.
+  onRetry?: () => void;
   // `label` is the row's display name, passed along for the Recents log.
   onSelectAddress: (path: string, video: boolean, label?: string) => void;
   emptyMessage: string;
@@ -128,6 +123,7 @@ export function AddressRowList({
   error,
   hasMore,
   onLoadMore,
+  onRetry,
   onSelectAddress,
   emptyMessage,
   loadingMessage,
@@ -136,36 +132,49 @@ export function AddressRowList({
 }: AddressRowListProps) {
   if (isLoading) {
     return (
-      <div className="flex items-center gap-2 py-4 text-sm text-gray-400">
+      <div className="flex items-center gap-2 py-4 text-sm text-muted">
         <Loader2 size={16} className="animate-spin" /> {loadingMessage}
       </div>
     );
   }
 
   if (error) {
-    return <div className="py-4 text-sm text-red-400">{error}</div>;
+    return (
+      <div className="flex items-center justify-between gap-3 py-4 text-sm text-danger-text">
+        <span>{error}</span>
+        {onRetry && (
+          <button
+            type="button"
+            onClick={onRetry}
+            className="shrink-0 rounded-full border border-edge-strong bg-surface-2 px-3 py-1 text-xs font-medium text-ink transition-colors hover:bg-surface-hover"
+          >
+            Retry
+          </button>
+        )}
+      </div>
+    );
   }
 
   if (rows.length === 0) {
-    return <div className="py-4 text-sm text-gray-400">{emptyMessage}</div>;
+    return <div className="py-4 text-sm text-muted">{emptyMessage}</div>;
   }
 
   return (
     <div className="space-y-1">
       {rows.map((row) => (
-        <div key={row.key} className="rounded-lg px-2 py-2 transition-colors hover:bg-white/6">
+        <div key={row.key} className="rounded-lg px-2 py-2 transition-colors hover:bg-surface-hover">
           <div className="mb-1.5 flex flex-col">
             <span className="flex min-w-0 items-center gap-2">
-              <span className="truncate text-sm font-medium text-white">{row.label}</span>
+              <span className="truncate text-sm font-medium text-ink">{row.label}</span>
               {row.badge && (
                 <span
-                  className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider ${row.badge.className}`}
+                  className={`shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider ${row.badge.className}`}
                 >
                   {row.badge.label}
                 </span>
               )}
             </span>
-            <span className="truncate text-xs text-gray-500">{row.audioPath}</span>
+            <span className="truncate font-mono text-[11px] text-faint">{row.audioPath}</span>
           </div>
 
           <DialButtons
@@ -184,7 +193,7 @@ export function AddressRowList({
           type="button"
           onClick={onLoadMore}
           disabled={isLoadingMore}
-          className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg py-2.5 text-xs font-medium text-gray-400 transition-colors hover:bg-white/10 hover:text-white disabled:opacity-50"
+          className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg py-2.5 text-xs font-medium text-muted transition-colors hover:bg-surface-hover hover:text-ink disabled:opacity-50"
         >
           {isLoadingMore ? <Loader2 size={14} className="animate-spin" /> : null}
           {isLoadingMore ? loadingMoreMessage : loadMoreLabel}
@@ -193,7 +202,7 @@ export function AddressRowList({
         // A narrowed Directory keeps loading pages without offering the
         // button, so still show that something is happening.
         isLoadingMore && (
-          <div className="mt-2 flex items-center justify-center gap-2 py-2.5 text-xs text-gray-400">
+          <div className="mt-2 flex items-center justify-center gap-2 py-2.5 text-xs text-muted">
             <Loader2 size={14} className="animate-spin" /> {loadingMoreMessage}
           </div>
         )
@@ -231,6 +240,8 @@ function ResourceAddressList<T extends DialableResource>({
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
+  // Bumped by Retry to re-run the first-page fetch after a failure.
+  const [reloadKey, setReloadKey] = useState(0);
   // Bumped whenever the list is reset (query change, unmount), so a response
   // to an earlier page-0 or load-more request can't land on a newer list.
   const generationRef = useRef(0);
@@ -240,8 +251,8 @@ function ResourceAddressList<T extends DialableResource>({
     return () => clearTimeout(timer);
   }, [query]);
 
-  // Fetches the first page fresh on mount and whenever the debounced query
-  // changes -- this is a testing tool, so we favor freshness over caching. The
+  // Fetches the first page fresh on mount, whenever the debounced query
+  // changes, and on Retry -- this is a testing tool, so we favor freshness over caching. The
   // parent panel remounts this component (via a `key`) whenever the active tab
   // or open state changes, which is what drives "fetch fresh every time the
   // panel/tab opens".
@@ -270,7 +281,7 @@ function ResourceAddressList<T extends DialableResource>({
     return () => {
       generationRef.current += 1;
     };
-  }, [fetchPage, debouncedQuery]);
+  }, [fetchPage, debouncedQuery, reloadKey]);
 
   const handleLoadMore = () => {
     const generation = generationRef.current;
@@ -309,6 +320,7 @@ function ResourceAddressList<T extends DialableResource>({
         error={error}
         hasMore={hasMore}
         onLoadMore={handleLoadMore}
+        onRetry={() => setReloadKey((key) => key + 1)}
         onSelectAddress={onSelectAddress}
         emptyMessage={debouncedQuery ? `No matches for "${debouncedQuery}".` : emptyMessage}
         loadingMessage={debouncedQuery ? 'Searching…' : loadingMessage}

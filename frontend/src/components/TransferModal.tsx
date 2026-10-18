@@ -47,22 +47,22 @@ const TransferModal: React.FC<TransferModalProps> = ({ isOpen, onClose, onTransf
 
   return (
     <div className="absolute inset-0 z-30 flex items-center justify-center px-6">
-      <div className="absolute inset-0 bg-black/70" onClick={handleClose} />
+      <div className="absolute inset-0 bg-scrim" onClick={handleClose} />
 
       <div
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="transfer-title"
-        className="glass-panel relative z-10 w-full max-w-sm rounded-2xl p-5"
+        className="glass-panel relative z-10 w-full max-w-sm rounded-xl p-5"
       >
         <div className="mb-4 flex items-center justify-between">
-          <h2 id="transfer-title" className="text-lg font-medium text-white">Transfer Call</h2>
+          <h2 id="transfer-title" className="text-lg font-medium text-ink">Transfer Call</h2>
           <button
             type="button"
             onClick={handleClose}
             aria-label="Close"
-            className="-m-2 rounded-full p-3 text-gray-400 transition-colors hover:bg-white/10 hover:text-white"
+            className="-m-2 rounded-full p-3 text-muted transition-colors hover:bg-surface-hover hover:text-ink"
           >
             <X size={16} />
           </button>
@@ -81,17 +81,17 @@ const TransferModal: React.FC<TransferModalProps> = ({ isOpen, onClose, onTransf
           onKeyDown={(e) => e.key === 'Enter' && handleTransfer()}
           placeholder="Number or address"
           disabled={isSubmitting}
-          className="mb-3 w-full rounded-xl border border-white/10 bg-white/6 px-4 py-3 text-white outline-hidden placeholder:text-gray-500 disabled:opacity-50"
+          className="mb-3 w-full rounded-lg border border-edge-strong bg-surface-2 px-4 py-3 text-ink outline-hidden placeholder:text-faint focus:border-accent-edge focus:ring-2 focus:ring-accent-soft disabled:opacity-50"
         />
 
-        {error && <p className="mb-3 text-sm text-red-400">{error}</p>}
+        {error && <p className="mb-3 text-sm text-danger-text">{error}</p>}
 
         <div className="flex gap-3">
           <button
             type="button"
             onClick={handleClose}
             disabled={isSubmitting}
-            className="flex-1 rounded-xl border border-white/10 bg-white/6 px-4 py-2.5 font-medium text-white transition-colors hover:bg-white/10 disabled:opacity-50"
+            className="flex-1 rounded-lg border border-edge-strong bg-surface-2 px-4 py-2.5 font-medium text-ink transition-colors hover:bg-surface-hover disabled:opacity-50"
           >
             Cancel
           </button>
@@ -99,7 +99,7 @@ const TransferModal: React.FC<TransferModalProps> = ({ isOpen, onClose, onTransf
             type="button"
             onClick={handleTransfer}
             disabled={!destination.trim() || isSubmitting}
-            className="flex-1 rounded-xl bg-linear-to-b from-emerald-400 to-ios-green px-4 py-2.5 font-medium text-white transition-all hover:brightness-110 disabled:opacity-50"
+            className="flex-1 rounded-lg bg-accent px-4 py-2.5 font-medium text-on-accent transition-all hover:bg-accent-hover disabled:opacity-50"
           >
             {isSubmitting ? 'Transferring…' : 'Transfer'}
           </button>

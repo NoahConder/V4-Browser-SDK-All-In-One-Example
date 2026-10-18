@@ -24,7 +24,8 @@ test('installable: manifest, icons, zoomable viewport, theme color', async ({ pa
   const viewport = (await page.locator('meta[name="viewport"]').getAttribute('content')) ?? '';
   expect(viewport).not.toContain('user-scalable=no');
   expect(viewport).toContain('viewport-fit=cover');
-  await expect(page.locator('meta[name="theme-color"]')).toHaveCount(1);
+  // One theme-color per color scheme (the docs' light and dark canvases).
+  await expect(page.locator('meta[name="theme-color"]')).toHaveCount(2);
   await expect(page.locator('link[rel="manifest"]')).toHaveCount(1);
   await expect(page.locator('.glass-bar.pt-safe')).toHaveCount(1);
 });
@@ -34,7 +35,9 @@ test('header panels are modal dialogs that trap and return focus', async ({ page
   await page.click('button[aria-label="Diagnostics"]');
   const dialog = page.locator('[role="dialog"][aria-labelledby="diagnostics-title"]');
   await expect(dialog).toHaveAttribute('aria-modal', 'true');
-  expect(await activeDescription(page)).toBe('input[Number or address to test]');
+  // Nothing in this panel wants the keyboard on open (the test field opts out
+  // like the search boxes do), so focus lands on the first control.
+  expect(await activeDescription(page)).toBe('button[Close]');
   await page.keyboard.press('Escape');
   await expect(dialog).toHaveCount(0);
   expect(await activeDescription(page)).toBe('button[Diagnostics]');

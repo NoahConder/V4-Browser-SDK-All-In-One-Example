@@ -6,11 +6,11 @@ const LEVEL_META: Record<
   'excellent' | 'good' | 'fair' | 'poor' | 'critical',
   { icon: React.ElementType; className: string }
 > = {
-  excellent: { icon: SignalHigh, className: 'text-ios-green' },
-  good: { icon: SignalHigh, className: 'text-ios-green' },
-  fair: { icon: SignalMedium, className: 'text-yellow-400' },
-  poor: { icon: SignalLow, className: 'text-orange-400' },
-  critical: { icon: SignalZero, className: 'text-ios-red' },
+  excellent: { icon: SignalHigh, className: 'text-success-text' },
+  good: { icon: SignalHigh, className: 'text-success-text' },
+  fair: { icon: SignalMedium, className: 'text-warn-text' },
+  poor: { icon: SignalLow, className: 'text-warn-text' },
+  critical: { icon: SignalZero, className: 'text-danger-text' },
 };
 
 interface CallQualityBadgeProps {
@@ -28,7 +28,7 @@ const CallQualityBadge: React.FC<CallQualityBadgeProps> = ({ onClick }) => {
 
   const { icon: Icon, className } = qualityLevel
     ? LEVEL_META[qualityLevel]
-    : { icon: Activity, className: 'text-gray-400' };
+    : { icon: Activity, className: 'text-muted' };
   const title = qualityLevel
     ? `Call quality: ${qualityLevel}${qualityScore != null ? ` (${qualityScore.toFixed(1)}/5)` : ''} — tap for statistics`
     : 'Call statistics';
@@ -39,10 +39,10 @@ const CallQualityBadge: React.FC<CallQualityBadgeProps> = ({ onClick }) => {
       onClick={onClick}
       aria-label="Call statistics"
       title={title}
-      className={`flex h-10 items-center gap-1 rounded-full px-2 transition-colors hover:bg-white/10 ${className}`}
+      className={`flex h-10 items-center gap-1 rounded-md px-2 transition-colors hover:bg-surface-hover ${className}`}
     >
       <Icon size={14} />
-      {networkIssueCount > 0 && <AlertTriangle size={11} className="text-yellow-400" />}
+      {networkIssueCount > 0 && <AlertTriangle size={11} className="text-warn-text" />}
     </button>
   );
 };

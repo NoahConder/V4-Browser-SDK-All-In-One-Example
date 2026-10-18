@@ -3,19 +3,27 @@ import { useEffect, useRef } from 'react';
 const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
-// Modal behavior for the sheets, modals and header panels: moves focus inside
+// Dialog behavior for the sheets, modals and header panels: moves focus inside
 // on open (the first field -- skipping ones marked `data-no-autofocus`, such as
 // the resources panel's search box, so phones don't get the keyboard the moment
 // the panel opens -- else the first control), keeps Tab cycling within,
 // closes on Escape, and returns focus to whatever opened it on close. Attach
-// the returned ref to the dialog's root element and give it role="dialog",
-// aria-modal="true" and a label.
+// the returned ref to the dialog's root element and give it role="dialog" and
+// a label, plus aria-modal="true" unless `trapFocus` is off.
 //
 // (Naming note: Tailwind scans source text -- comments included -- for class
 // candidates, and the usual word for "the wrapping element" is also one of
 // its layout utilities, which breaks the build with the raw `short` screen.
 // Hence `dialogEl`.)
-export function useDialog(isOpen: boolean, onClose: () => void) {
+export interface DialogOptions {
+  // Keep Tab cycling inside the element (an aria-modal dialog). A non-modal
+  // panel -- the call-stats sheet, read alongside the call controls -- passes
+  // false: focus still moves in on open and back to the opener on close, and
+  // Escape still closes, but Tab leaves normally and nothing is dimmed.
+  trapFocus?: boolean;
+}
+
+export function useDialog(isOpen: boolean, onClose: () => void, { trapFocus = true }: DialogOptions = {}) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
@@ -28,7 +36,9 @@ export function useDialog(isOpen: boolean, onClose: () => void) {
     const focusables = () => Array.from(dialogEl.querySelectorAll<HTMLElement>(FOCUSABLE));
 
     (
-      dialogEl.querySelector<HTMLElement>('input:not([data-no-autofocus]), select, textarea') ?? focusables()[0]
+      dialogEl.querySelector<HTMLElement>(
+        'input:not([data-no-autofocus]), select:not([data-no-autofocus]), textarea:not([data-no-autofocus])',
+      ) ?? focusables()[0]
     )?.focus();
 
     const onKeyDown = (e: KeyboardEvent) => {
@@ -38,7 +48,7 @@ export function useDialog(isOpen: boolean, onClose: () => void) {
         onCloseRef.current();
         return;
       }
-      if (e.key !== 'Tab') return;
+      if (e.key !== 'Tab' || !trapFocus) return;
       const items = focusables();
       if (items.length === 0) return;
       const first = items[0];
@@ -56,7 +66,7 @@ export function useDialog(isOpen: boolean, onClose: () => void) {
       dialogEl.removeEventListener('keydown', onKeyDown);
       opener?.focus();
     };
-  }, [isOpen]);
+  }, [isOpen, trapFocus]);
 
   return dialogRef;
 }

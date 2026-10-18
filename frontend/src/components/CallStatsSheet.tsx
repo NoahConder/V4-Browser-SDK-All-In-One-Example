@@ -1,15 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
-import type { NetworkIssue, NetworkMetrics, RecoveryEvent } from '@signalwire/js';
+import type { NetworkIssue, NetworkMetrics, QualityLevel, RecoveryEvent } from '@signalwire/js';
 import { SheetRow, SheetSection, SheetShell, SheetStat } from './SheetPrimitives';
 import { useCallStore } from '../hooks/useCallStore';
 import { signalWireService, type ConnectionStatsSnapshot } from '../services/signalwire';
-
-interface CallStatsSheetProps {
-  isOpen: boolean;
-  onClose: () => void;
-  onRequestIceRestart: () => void;
-}
 
 const STATS_POLL_MS = 2000;
 const DASH = '—';
@@ -61,27 +55,62 @@ const describeIssue = (issue: NetworkIssue): string => {
   return parts.join(' · ');
 };
 
+interface CallStatsBodyProps {
+  onRequestIceRestart: () => void;
+  // The sheet closes itself after an ICE restart request; the Inspector pane stays.
+  onAfterIceRestart?: () => void;
+}
+
 // Live call statistics for testers: the SDK's network metrics (RTT, jitter,
 // loss, bandwidth estimate) and active network issues, the negotiated codecs
-// and ICE path from
-// getStats(), the SDK's recovery state and recent recovery events, and the
-// call id. Opened from the quality badge or the More sheet.
+// and ICE path from getStats(), the SDK's recovery state and recent recovery
+// events, and the call id. Rendered by the phone's Call Statistics sheet
+// (below) and, always mounted, by the workbench's Inspector.
 //
-// Subscribes to the per-second metrics and polls getStats() itself, and only
-// while open -- component-local rather than via the store, so nothing else
-// re-renders on every tick (see CLAUDE.md's subscription-placement note).
-const CallStatsSheet: React.FC<CallStatsSheetProps> = ({ isOpen, onClose, onRequestIceRestart }) => {
+// Subscribes to the per-second metrics and polls getStats() itself -- component-
+// local rather than via the store, so nothing else re-renders on every tick
+// (see CLAUDE.md's subscription-placement note). Subscriptions run only while
+// a call is up; afterwards the last reading stays so the numbers can be read
+// after hangup.
+export function CallStatsBody({ onRequestIceRestart, onAfterIceRestart }: CallStatsBodyProps) {
   const [metrics, setMetrics] = useState<NetworkMetrics[]>([]);
   const [issues, setIssues] = useState<NetworkIssue[]>([]);
   const [events, setEvents] = useState<RecoveryEvent[]>([]);
   const [connection, setConnection] = useState<ConnectionStatsSnapshot | null>(null);
+  const [callId, setCallId] = useState<string | null>(null);
+  const [quality, setQuality] = useState<{ level: QualityLevel | null; score: number | null }>({ level: null, score: null });
   const [copied, setCopied] = useState(false);
+  const isInCall = useCallStore((s) => s.isInCall);
+  const connectedAt = useCallStore((s) => s.connectedAt);
   const qualityLevel = useCallStore((s) => s.qualityLevel);
   const qualityScore = useCallStore((s) => s.qualityScore);
   const recoveryState = useCallStore((s) => s.recoveryState);
 
+  // The store resets quality on call end; keep the last reading with the rest.
   useEffect(() => {
-    if (!isOpen) return;
+    if (isInCall) setQuality({ level: qualityLevel, score: qualityScore });
+  }, [isInCall, qualityLevel, qualityScore]);
+
+  // The service's passthroughs bind to the current Call at subscribe time, and
+  // isInCall goes true before dial() has a Call to bind to, so (re)subscribe
+  // when the call connects as well. null = no call: unsubscribe and keep the
+  // snapshot; a new call (null -> a key) starts it fresh.
+  const callKey = connectedAt ?? (isInCall ? 0 : null);
+  const hadCallRef = useRef(false);
+  useEffect(() => {
+    if (callKey === null) {
+      hadCallRef.current = false;
+      return;
+    }
+    if (!hadCallRef.current) {
+      setConnection(null);
+      setCallId(null);
+    }
+    hadCallRef.current = true;
+    // Replayed/current values arrive again on (re)subscribe.
+    setMetrics([]);
+    setIssues([]);
+    setEvents([]);
     const subs = [
       signalWireService.getNetworkMetrics$().subscribe(setMetrics),
       signalWireService.getNetworkIssues$().subscribe(setIssues),
@@ -90,8 +119,10 @@ const CallStatsSheet: React.FC<CallStatsSheetProps> = ({ isOpen, onClose, onRequ
     ];
     let cancelled = false;
     const poll = async () => {
+      const liveId = signalWireService.getCurrentCallId();
+      if (liveId && !cancelled) setCallId(liveId);
       const snapshot = await signalWireService.getConnectionStats().catch(() => null);
-      if (!cancelled) setConnection(snapshot);
+      if (snapshot && !cancelled) setConnection(snapshot);
     };
     void poll();
     const interval = setInterval(poll, STATS_POLL_MS);
@@ -99,11 +130,8 @@ const CallStatsSheet: React.FC<CallStatsSheetProps> = ({ isOpen, onClose, onRequ
       cancelled = true;
       clearInterval(interval);
       subs.forEach((sub) => sub.unsubscribe());
-      setEvents([]);
     };
-  }, [isOpen]);
-
-  if (!isOpen) return null;
+  }, [callKey]);
 
   const latest = metrics.length > 0 ? metrics[metrics.length - 1] : null;
   const previous = metrics.length > 1 ? metrics[metrics.length - 2] : null;
@@ -115,7 +143,6 @@ const CallStatsSheet: React.FC<CallStatsSheetProps> = ({ isOpen, onClose, onRequ
           latest.audio.packetsReceived - previous.audio.packetsReceived,
         )
       : null;
-  const callId = signalWireService.getCurrentCallId();
   const pair = connection?.candidatePair ?? null;
   const videoCodec = connection ? connection.videoOutboundCodec ?? connection.videoInboundCodec : null;
   const isRecoveryBusy = recoveryState === 'debouncing' || recoveryState === 'recovering';
@@ -132,12 +159,19 @@ const CallStatsSheet: React.FC<CallStatsSheetProps> = ({ isOpen, onClose, onRequ
   };
 
   return (
-    <SheetShell title="Call Statistics" onClose={onClose}>
+    <>
+      {!isInCall && (
+        <p className="px-3 pb-1 text-xs text-faint">
+          {callId
+            ? 'The last call has ended; these are its final readings.'
+            : 'Place or answer a call to see its statistics here. The last call’s numbers stay after hangup.'}
+        </p>
+      )}
       <SheetSection label="Network" />
       <SheetStat
         label="Quality"
         value={
-          qualityLevel ? `${qualityLevel}${qualityScore != null ? ` · ${qualityScore.toFixed(1)} / 5` : ''}` : DASH
+          quality.level ? `${quality.level}${quality.score != null ? ` · ${quality.score.toFixed(1)} / 5` : ''}` : DASH
         }
         hint="SDK MOS from RTT, jitter and loss over the whole call"
       />
@@ -165,7 +199,7 @@ const CallStatsSheet: React.FC<CallStatsSheetProps> = ({ isOpen, onClose, onRequ
         hint="SDK issue detector: spikes vs. the first 10 s, per-second loss, stalled inbound media — so it can disagree with Quality"
       />
       {issues.length > 0 && (
-        <ul className="px-3 pb-1 text-xs text-gray-400">
+        <ul className="px-3 pb-1 font-mono text-[11px] text-muted">
           {issues.map((issue) => (
             <li key={issue.type} className="truncate select-text">
               {describeIssue(issue)}
@@ -210,10 +244,10 @@ const CallStatsSheet: React.FC<CallStatsSheetProps> = ({ isOpen, onClose, onRequ
       <SheetSection label="Recovery" />
       <SheetStat label="State" value={recoveryState} hint="SDK CallRecoveryManager state" />
       {events.length > 0 && (
-        <ul className="px-3 pb-1 text-xs text-gray-400">
+        <ul className="px-3 pb-1 font-mono text-[11px] text-muted">
           {events.map((event, i) => (
             <li key={`${event.timestamp}-${i}`} className="truncate select-text">
-              <span className="tabular-nums text-gray-500">{formatClock(event.timestamp)}</span> {event.action}
+              <span className="tabular-nums text-faint">{formatClock(event.timestamp)}</span> {event.action}
               {event.attempt != null ? ` (${event.attempt}/${event.maxAttempts})` : ''} — {event.reason}
             </li>
           ))}
@@ -222,15 +256,43 @@ const CallStatsSheet: React.FC<CallStatsSheetProps> = ({ isOpen, onClose, onRequ
       <SheetRow
         icon={RefreshCw}
         label={isRecoveryBusy ? 'Recovery in progress…' : 'Request ICE Restart'}
-        disabled={isRecoveryBusy}
+        disabled={isRecoveryBusy || !isInCall}
         onClick={() => {
           onRequestIceRestart();
-          onClose();
+          onAfterIceRestart?.();
         }}
       />
 
       <SheetSection label="Call" />
       <SheetStat label="Call ID" value={copied ? 'Copied' : (callId ?? DASH)} onCopy={callId ? copyCallId : undefined} />
+    </>
+  );
+}
+
+interface CallStatsSheetProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onRequestIceRestart: () => void;
+}
+
+// The phone's Call Statistics panel, opened from the quality badge or the More
+// sheet. Non-modal and hung from the top so Mute, End and the meters stay in
+// use while it's read -- a bottom sheet covered exactly the controls a tester
+// wants to press while watching the numbers.
+const CallStatsSheet: React.FC<CallStatsSheetProps> = ({ isOpen, onClose, onRequestIceRestart }) => {
+  if (!isOpen) return null;
+
+  return (
+    <SheetShell
+      title="Call Statistics"
+      onClose={onClose}
+      anchor="top"
+      modal={false}
+      // Landscape phones lay the call out side by side, so the panel hangs
+      // over the info column on the left and leaves the control grid clear.
+      panelClassName="max-h-[55dvh] short:mx-4 short:max-h-[calc(100%-1rem)] short:w-[calc(50%-1.5rem)]"
+    >
+      <CallStatsBody onRequestIceRestart={onRequestIceRestart} onAfterIceRestart={onClose} />
     </SheetShell>
   );
 };

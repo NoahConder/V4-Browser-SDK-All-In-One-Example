@@ -10,22 +10,13 @@ export default {
         // Phones in landscape (and other very short viewports): layouts switch
         // from a stacked column to side-by-side so nothing overlaps or scrolls.
         short: { raw: '(max-height: 500px)' },
+        // Tablets and desktop: room for a word under each header icon. The
+        // same condition gives #root its phone-width column in globals.css;
+        // landscape phones are excluded by the height clause.
+        desk: { raw: '(min-width: 640px) and (min-height: 501px)' },
       },
-      colors: {
-        'ios-gray': {
-          900: '#1c1c1e',
-          800: '#2c2c2e',
-          700: '#3a3a3c',
-          600: '#48484a',
-          500: '#636366',
-          400: '#8e8e93',
-        },
-        'ios-green': '#34c759',
-        'ios-red': '#ff3b30',
-      },
-      fontFamily: {
-        'sf': ['SF Pro Display', '-apple-system', 'BlinkMacSystemFont', 'system-ui', 'sans-serif'],
-      },
+      // Colors and fonts are the semantic tokens in src/styles/globals.css
+      // (@theme), not Tailwind config.
     },
   },
   plugins: [],

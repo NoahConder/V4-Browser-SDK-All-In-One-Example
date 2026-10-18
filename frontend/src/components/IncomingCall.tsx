@@ -30,16 +30,16 @@ const IncomingCall: React.FC<IncomingCallProps> = ({
       {/* Caller Info */}
       <div className="flex-1 flex flex-col justify-center items-center px-6 short:self-stretch">
         <div className="max-w-full text-center">
-          <div className="mb-4 inline-flex items-center gap-2 text-sm text-gray-400">
-            <span className="h-1.5 w-1.5 rounded-full bg-ios-green motion-safe:animate-pulse" />
+          <div className="mb-4 inline-flex items-center gap-2 text-sm text-muted">
+            <span className="h-1.5 w-1.5 rounded-full bg-success motion-safe:animate-pulse" />
             {isVideoCall ? 'Incoming video call' : 'Incoming call'}
           </div>
-          <div className="text-3xl font-light mb-8 wrap-anywhere select-text short:mb-0">{phoneNumber}</div>
+          <div className="text-3xl font-display font-medium tracking-tight mb-8 wrap-anywhere select-text short:mb-0">{phoneNumber}</div>
 
           {/* Avatar placeholder */}
-          <div className="relative mx-auto mb-8 flex h-32 w-32 short:hidden items-center justify-center rounded-full bg-linear-to-b from-white/10 to-white/2 ring-1 ring-white/10 shadow-[0_8px_24px_rgba(0,0,0,0.4)]">
-            <span className="absolute inset-0 rounded-full ring-1 ring-ios-green/30 motion-safe:animate-ping" />
-            {isVideoCall ? <Video size={48} className="text-gray-300" /> : <Phone size={48} className="text-gray-300" />}
+          <div className="relative mx-auto mb-8 flex h-32 w-32 short:hidden items-center justify-center rounded-full bg-surface ring-1 ring-edge-strong shadow-card">
+            <span className="absolute inset-0 rounded-full ring-1 ring-call/30 motion-safe:animate-ping" />
+            {isVideoCall ? <Video size={48} className="text-muted" /> : <Phone size={48} className="text-muted" />}
           </div>
         </div>
       </div>
@@ -52,26 +52,26 @@ const IncomingCall: React.FC<IncomingCallProps> = ({
             <button
               onClick={onReject}
               aria-label="Decline"
-              className="dial-button bg-linear-to-b from-red-500 to-ios-red shadow-[0_4px_16px_rgba(255,59,48,0.35)] hover:brightness-110"
+              className="dial-button bg-hangup text-on-hangup hover:bg-hangup-hover"
             >
-              <PhoneOff size={32} fill="white" />
+              <PhoneOff size={32} fill="currentColor" />
             </button>
-            <span className="text-xs text-gray-400 mt-2">Decline</span>
+            <span className="text-xs text-muted mt-2">Decline</span>
           </div>
 
           {/* Answer Button */}
           <div className="flex flex-col items-center">
             <div className="relative">
-              <span className="absolute inset-0 rounded-full bg-ios-green/40 motion-safe:animate-ping" />
+              <span className="absolute inset-0 rounded-full bg-call/40 motion-safe:animate-ping" />
               <button
                 onClick={onAnswer}
                 aria-label="Accept"
-                className="dial-button relative bg-linear-to-b from-emerald-400 to-ios-green shadow-[0_4px_16px_rgba(52,199,89,0.4)] hover:brightness-110"
+                className="dial-button relative bg-call text-on-call hover:bg-call-hover"
               >
-                <Phone size={32} fill="white" />
+                <Phone size={32} fill="currentColor" />
               </button>
             </div>
-            <span className="text-xs text-gray-400 mt-2">Accept</span>
+            <span className="text-xs text-muted mt-2">Accept</span>
           </div>
         </div>
       </div>
