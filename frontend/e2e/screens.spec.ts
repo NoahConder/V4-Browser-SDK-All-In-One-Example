@@ -4,8 +4,8 @@ import { ADDRESS_INPUT, openDialer, setState, stubCallMethods } from './helpers'
 // Non-asserting screenshots of each screen at four viewports, for eyeballing
 // layout changes. Only the `shots` project runs this file:
 // `npm run test:shots`, then look in e2e/screenshots/.
-// Dark is the default run (the devcontainer's Chromium prefers dark); the two
-// `-light` entries repeat the phone and the workbench in the light theme.
+// Dark is the app's default theme; the two `-light` entries repeat the phone
+// and the workbench with the Appearance setting on Light.
 const VIEWPORTS: Record<string, { width: number; height: number; colorScheme?: 'light' | 'dark' }> = {
   iphone: { width: 390, height: 844 },
   se: { width: 320, height: 568 },
@@ -36,6 +36,9 @@ for (const [name, viewport] of Object.entries(VIEWPORTS)) {
   test(`screens at ${name}`, async ({ page }) => {
     await page.setViewportSize({ width: viewport.width, height: viewport.height });
     await page.emulateMedia({ colorScheme: viewport.colorScheme ?? 'dark' });
+    if (viewport.colorScheme === 'light') {
+      await page.addInitScript(() => localStorage.setItem('dialer_settings', JSON.stringify({ theme: 'light' })));
+    }
     await openDialer(page);
     await stubCallMethods(page);
     const shot: Shot = (state) => page.screenshot({ path: `e2e/screenshots/${name}-${state}.png` });
@@ -51,8 +54,10 @@ for (const [name, viewport] of Object.entries(VIEWPORTS)) {
       await shot('03-recents');
       await page.getByRole('tab', { name: 'Events' }).click();
       await shot('04-events');
-      await page.getByRole('tab', { name: 'Session' }).click();
-      await shot('05-session');
+      await page.getByRole('tab', { name: 'Devices' }).click();
+      await shot('05-devices');
+      await page.getByRole('tab', { name: 'Diagnostics' }).click();
+      await shot('06-diagnostics');
       await page.getByRole('tab', { name: 'Directory' }).click();
       await callScreens(page, shot);
       await shot('12-stats');

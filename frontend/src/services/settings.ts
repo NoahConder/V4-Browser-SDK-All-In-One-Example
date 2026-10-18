@@ -27,14 +27,15 @@ export interface DialerSettings {
 }
 
 // Matches the behavior before settings existed: G.711 first (PCMU, then
-// PCMA), Opus after; SDK logs at 'warn'.
+// PCMA), Opus after; SDK logs at 'warn'. Dark by default: the Appearance
+// setting offers System and Light.
 export const DEFAULT_SETTINGS: DialerSettings = {
   audioCodecOrder: ['PCMU', 'PCMA', 'opus'],
   logLevel: 'warn',
   logWsTraffic: false,
   relayOnly: false,
   debugLogs: false,
-  theme: 'system',
+  theme: 'dark',
 };
 
 const STORAGE_KEY = 'dialer_settings';

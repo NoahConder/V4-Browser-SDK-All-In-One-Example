@@ -2,8 +2,8 @@ import { expect, test } from '@playwright/test';
 import { ADDRESS_INPUT, FAKE_DIRECTORY, STATS_STUBS, evalInApp, openDialer, setState, stubCallMethods } from './helpers';
 
 // The desktop workbench (components/Workbench.tsx), which App.tsx renders from
-// 1024px up: Destinations | the phone column | Inspector. Runs in the
-// `desktop` project (1280x800); the phone suite never sees it.
+// 1024px up: the bar, then Destinations | the call stage | Inspector. Runs in
+// the `desktop` project (1280x800); the phone suite never sees it.
 const SUBSCRIBERS = {
   success: true,
   data: [
@@ -26,14 +26,14 @@ test.describe('Desktop workbench', () => {
     await stubCallMethods(page);
   });
 
-  test('lays out Destinations, the phone and the Inspector; the phone header has no panel icons', async ({ page }) => {
+  test('lays out Destinations, the call stage and the Inspector; the bar has no panel buttons', async ({ page }) => {
     await expect(page.getByRole('region', { name: 'Destinations' })).toBeVisible();
     await expect(page.getByRole('region', { name: 'Inspector' })).toBeVisible();
     await expect(page.locator('button[aria-label="Diagnostics"]')).toHaveCount(0);
     await expect(page.locator('button[aria-label="Dialable Resources"]')).toHaveCount(0);
     // The panes are regions, not dialogs, so they didn't take the focus.
     await expect(page.locator(ADDRESS_INPUT)).toBeFocused();
-    await expect(page.getByRole('tab', { name: 'Session' })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByRole('tab', { name: 'Diagnostics' })).toHaveAttribute('aria-selected', 'true');
     await expect(page.getByRole('region', { name: 'Inspector' })).toContainText('Signed in as');
   });
 
@@ -59,7 +59,7 @@ test.describe('Desktop workbench', () => {
     await expect(destinations.getByText('noah.test')).toBeVisible();
   });
 
-  test('a call switches the Inspector to Call, whose numbers stay after hangup', async ({ page }) => {
+  test('a call switches the Inspector to Quality, whose numbers stay after hangup', async ({ page }) => {
     await evalInApp(page, STATS_STUBS);
     await setState(page, {
       isInCall: true,
@@ -70,14 +70,14 @@ test.describe('Desktop workbench', () => {
       qualityScore: 4.2,
     });
     const inspector = page.getByRole('region', { name: 'Inspector' });
-    await expect(inspector.getByRole('tab', { name: 'Call' })).toHaveAttribute('aria-selected', 'true');
+    await expect(inspector.getByRole('tab', { name: 'Quality' })).toHaveAttribute('aria-selected', 'true');
     await expect(inspector).toContainText('good · 4.2 / 5');
     await expect(inspector).toContainText('42 ms');
     await expect(inspector).toContainText('PCMU 8k (pt 0)');
     await expect(inspector).toContainText('call-abc-123');
     await expect(inspector.locator('button:has-text("Request ICE Restart")')).toBeEnabled();
 
-    // Hang up: the phone returns to the dialer, the Inspector keeps the numbers.
+    // Hang up: the stage returns to the dialer, the Inspector keeps the numbers.
     await evalInApp(page, 'store.getState().resetCallState();');
     await expect(page.locator(ADDRESS_INPUT)).toBeVisible();
     await expect(inspector).toContainText('these are its final readings');
@@ -93,7 +93,7 @@ test.describe('Desktop workbench', () => {
     await expect(page.getByRole('region', { name: 'Inspector' })).toContainText('Status: ringing');
   });
 
-  test('the call screen adds Hold, Transfer and Share to the control grid', async ({ page }) => {
+  test('the call toolbar carries Hold, Transfer and Share', async ({ page }) => {
     await setState(page, { isInCall: true, callStatus: 'connected', connectedAt: Date.now(), remoteNumber: '+15551234567' });
     await expect(page.locator('button[aria-label="Hold call"]')).toBeVisible();
     await expect(page.locator('button[aria-label="Transfer call"]')).toBeVisible();
@@ -101,10 +101,48 @@ test.describe('Desktop workbench', () => {
     await expect(share).toBeDisabled();
     await setState(page, { canScreenShare: true });
     await expect(share).toBeEnabled();
-    // The quality badge selects the Call tab rather than opening a sheet.
+    // The quality badge selects the Quality tab rather than opening a sheet.
     await page.getByRole('tab', { name: 'Events' }).click();
     await page.click('button[aria-label="Call statistics"]');
-    await expect(page.getByRole('tab', { name: 'Call' })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByRole('tab', { name: 'Quality' })).toHaveAttribute('aria-selected', 'true');
     await expect(page.locator('[role="dialog"]:has-text("Call Statistics")')).toHaveCount(0);
+  });
+
+  test('a side pane folds to a rail and back', async ({ page }) => {
+    const destinations = page.getByRole('region', { name: 'Destinations' });
+    await page.click('button[aria-label="Collapse Destinations"]');
+    await expect(destinations.getByRole('tab', { name: 'Directory' })).toBeHidden();
+    // The fold persists across a reload, and the rail reopens the pane.
+    await page.reload();
+    await page.locator(ADDRESS_INPUT).waitFor();
+    await expect(destinations.getByRole('tab', { name: 'Directory' })).toBeHidden();
+    await page.click('button[aria-label="Expand Destinations"]');
+    await expect(destinations.getByRole('tab', { name: 'Directory' })).toBeVisible();
+    await expect(page.locator(ADDRESS_INPUT)).toBeEditable();
+  });
+
+  test("the address field's History button selects the Recents tab", async ({ page }) => {
+    await page.click('button[aria-label="Recent calls"]');
+    await expect(page.getByRole('region', { name: 'Destinations' }).getByRole('tab', { name: 'Recents' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+  });
+
+  test('the Devices tab enables audio processing once a call is up', async ({ page }) => {
+    await page.getByRole('tab', { name: 'Devices' }).click();
+    const echo = page.locator('button[role="switch"]:has-text("Echo Cancellation")');
+    await expect(echo).toBeDisabled();
+    await setState(page, { isInCall: true, callStatus: 'connected', connectedAt: Date.now(), remoteNumber: '+15551234567' });
+    await expect(echo).toBeEnabled();
+  });
+
+  test('a code link opens a popover naming the SDK API and the file, and Escape closes it', async ({ page }) => {
+    await page.click('button[aria-label="Where\'s the code: Place a call"]');
+    const popover = page.getByRole('group', { name: 'Code for Place a call' });
+    await expect(popover).toContainText('client.dial');
+    await expect(popover.locator('a[href*="github.com"]').first()).toHaveAttribute('href', /Dialer\.tsx$/);
+    await page.keyboard.press('Escape');
+    await expect(popover).toHaveCount(0);
   });
 });

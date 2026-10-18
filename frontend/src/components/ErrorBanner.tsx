@@ -22,7 +22,7 @@ const ErrorBanner: React.FC<ErrorBannerProps> = ({
   return (
     <div
       role={isError ? 'alert' : 'status'}
-      className={`glass-panel relative z-10 flex max-w-sm items-start gap-2 rounded-xl px-4 py-2.5 text-sm ${
+      className={`glass-panel relative z-10 flex max-w-xl items-start gap-2 rounded-xl px-4 py-2.5 text-sm ${
         isError ? 'border-danger-text/30 text-danger-text' : 'text-ink'
       } ${className}`}
     >

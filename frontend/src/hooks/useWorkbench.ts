@@ -8,8 +8,11 @@ export interface WorkbenchApi {
   // Select the Destinations pane's Subscribers tab (the identity chip's
   // action; on phones the chip opens the Subscriber panel instead).
   openSubscribers: () => void;
-  // Select the Inspector's Call tab (the quality badge's and the More sheet's
-  // action; on phones they open the Call Statistics sheet instead).
+  // Select the Destinations pane's Recents tab (the address field's History
+  // button; on phones it opens the resources panel on Recents).
+  openRecents: () => void;
+  // Select the Inspector's Quality tab (the quality badge's and the More
+  // sheet's action; on phones they open the Call Statistics sheet instead).
   openCallStats: () => void;
 }
 

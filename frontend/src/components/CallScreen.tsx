@@ -1,22 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import {
-  Phone,
-  PhoneOff,
-  MicOff,
-  Volume2,
-  Keyboard,
-  Video,
-  MoreHorizontal,
-  Pause,
-  Play,
-  PhoneForwarded,
-  ScreenShare,
-  ScreenShareOff,
-} from 'lucide-react';
-import type { LucideIcon } from 'lucide-react';
+import { Check, Copy, Volume2 } from 'lucide-react';
 import DialPad from './DialPad';
 import ErrorBanner from './ErrorBanner';
-import StatusBar from './StatusBar';
+import AppBar from './AppBar';
+import CallToolbar from './CallToolbar';
+import CodeRef from './CodeRef';
 import CallControlsSheet from './CallControlsSheet';
 import TransferModal from './TransferModal';
 import DevicePicker from './DevicePicker';
@@ -42,54 +30,6 @@ interface CallScreenProps {
   onToggleCamera: () => void;
 }
 
-interface CallControlProps {
-  icon: LucideIcon;
-  label: string;
-  // Accessible name when the short visible label isn't descriptive enough.
-  ariaLabel?: string;
-  onClick: () => void;
-  // Toggles: highlighted (white) while the feature is on. The icon stays the
-  // same either way, like iOS -- swapping it (Mic/MicOff, Volume2/VolumeX) made
-  // the off state read as "muted".
-  active?: boolean;
-  danger?: boolean;
-  disabled?: boolean;
-  // Tooltip, mainly to explain a disabled control.
-  title?: string;
-}
-
-const CallControl: React.FC<CallControlProps> = ({
-  icon: Icon,
-  label,
-  ariaLabel,
-  onClick,
-  active,
-  danger,
-  disabled,
-  title,
-}) => (
-  <div className="flex flex-col items-center gap-1.5 short:gap-0.5">
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      title={title}
-      aria-label={ariaLabel ?? label}
-      aria-pressed={active}
-      className={`dial-button transition-all disabled:opacity-40 disabled:active:scale-100 ${
-        danger
-          ? 'bg-hangup text-on-hangup hover:bg-hangup-hover'
-          : active
-            ? 'border border-accent bg-accent text-on-accent'
-            : 'border border-edge-strong bg-surface text-ink hover:bg-surface-hover'
-      }`}
-    >
-      {danger ? <Icon size={32} fill="currentColor" /> : <Icon size={24} />}
-    </button>
-    <span aria-hidden className="text-xs text-muted short:text-[10px]">{label}</span>
-  </div>
-);
-
 const CallScreen: React.FC<CallScreenProps> = ({
   phoneNumber,
   onEndCall,
@@ -112,6 +52,10 @@ const CallScreen: React.FC<CallScreenProps> = ({
   // Kept here (not in the sheet, which unmounts on close) so it survives
   // reopening the sheet. Best-effort: Chrome/Edge tabs and windows only.
   const [shareScreenAudio, setShareScreenAudio] = useState(false);
+  // The SDK's call id for the status strip (the stats sheet and the Inspector
+  // show it too). Polled: the Call exists only once dial() resolves.
+  const [callId, setCallId] = useState<string | null>(null);
+  const [copiedCallId, setCopiedCallId] = useState(false);
   const {
     sendDTMF,
     toggleHold,
@@ -141,7 +85,6 @@ const CallScreen: React.FC<CallScreenProps> = ({
   // sheet), and the control grid gains a row for Hold, Transfer and Share.
   const workbench = useWorkbench();
   const openStats = workbench ? workbench.openCallStats : () => setIsStatsSheetOpen(true);
-  const isScreenShareBusy = screenShareStatus === 'starting' || screenShareStatus === 'stopping';
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   // The key handler below is bound once; this keeps it on the latest prop.
@@ -169,6 +112,24 @@ const CallScreen: React.FC<CallScreenProps> = ({
     return () => clearInterval(interval);
   }, [connectedAt]);
   const callDuration = connectedAt ? Math.max(0, Math.floor((now - connectedAt) / 1000)) : 0;
+
+  useEffect(() => {
+    const poll = () => setCallId(signalWireService.getCurrentCallId());
+    poll();
+    const interval = setInterval(poll, 2000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const copyCallId = async () => {
+    if (!callId) return;
+    try {
+      await navigator.clipboard.writeText(callId);
+      setCopiedCallId(true);
+      setTimeout(() => setCopiedCallId(false), 1500);
+    } catch {
+      // Clipboard unavailable (e.g. insecure context); the id is selectable.
+    }
+  };
 
   // Handle keyboard input for DTMF during calls. Escape closes the sheet /
   // device picker (TransferModal handles its own).
@@ -233,35 +194,11 @@ const CallScreen: React.FC<CallScreenProps> = ({
           : 'Calling…';
 
   return (
-    <div className="app-shell flex flex-col h-dvh">
-      {/* Status Bar - always visible */}
-      <StatusBar>
-        {(callStatus === 'connected' || isMediaDisrupted) && (
-          <CallQualityBadge onClick={openStats} />
-        )}
-      </StatusBar>
+    <div className={`app-shell flex flex-col ${workbench ? 'h-full min-h-0' : 'h-dvh'}`}>
+      {/* Inside the workbench the bar is the workbench's own, above the panes. */}
+      {!workbench && <AppBar />}
 
-      {/* Main Content Container */}
-      <div className="relative flex-1 flex flex-col min-h-0 overflow-hidden">
-        {/* Video layer -- always mounted (regardless of showDialPad/showVideoUI) so
-            the service's ref attach survives both toggling mid-call; visibility is
-            purely CSS (hidden, not unmounted) so the stream keeps decoding underneath. */}
-        <video
-          ref={remoteVideoRef}
-          autoPlay
-          playsInline
-          className={`absolute inset-0 h-full w-full bg-black object-cover ${showVideoUI ? '' : 'hidden'}`}
-        />
-        <video
-          ref={localVideoRef}
-          autoPlay
-          muted
-          playsInline
-          className={`absolute right-4 top-4 h-28 w-20 rounded-lg object-cover ring-1 ring-edge-strong shadow-card sm:h-36 sm:w-24 ${
-            showVideoUI && isCameraOn ? '' : 'hidden'
-          }`}
-        />
-
+      <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
         {callError && (
           <ErrorBanner message={callError} onDismiss={() => setCallState({ callError: null })} />
         )}
@@ -278,66 +215,28 @@ const CallScreen: React.FC<CallScreenProps> = ({
               signalWireService.resumeRemoteAudio();
               setCallState({ needsAudioUnlock: false });
             }}
-            className="glass-panel relative z-10 mx-auto mt-2 flex w-[calc(100%-2rem)] max-w-sm items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-medium text-ink transition-colors hover:bg-surface-hover"
+            className="glass-panel relative z-10 mx-auto mt-2 flex w-[calc(100%-2rem)] max-w-xl items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-medium text-ink transition-colors hover:bg-surface-hover"
           >
             <Volume2 size={16} /> Tap to enable audio
           </button>
         )}
 
-        {showDialPad ? (
-          <div className="relative z-10 flex flex-1 flex-col min-h-0 overflow-y-auto short:flex-row short:items-center">
-            {/* Status, number and timer stay in view while working an IVR -- the
-                far end and the stats don't pause for the keypad. Then the DTMF
-                display, matching the idle dialer's address input styling. */}
-            <div className="flex-1 flex flex-col items-center justify-center gap-3 px-6 py-4 short:px-4">
-              <div className="flex max-w-full flex-wrap items-center justify-center gap-x-2 gap-y-1 text-sm text-muted">
-                <span>{statusText}</span>
-                <span className="text-muted wrap-anywhere select-text">{phoneNumber}</span>
-                {connectedAt && (
-                  <span className="rounded-full bg-surface-2 px-2 py-0.5 font-mono tabular-nums">{formatDuration(callDuration)}</span>
-                )}
-              </div>
-              <div className="glass-panel flex w-full max-w-sm items-center justify-center rounded-xl px-4 py-3">
-                {dialPadInput ? (
-                  <div className="min-w-0 font-mono text-2xl sm:text-3xl font-medium tracking-wide wrap-anywhere">
-                    {dialPadInput}
-                  </div>
-                ) : (
-                  <div className="text-lg sm:text-xl text-faint">
-                    {callStatus === 'connected' ? 'Enter digits to send' : 'Keypad available once connected'}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Dial Pad with End and Hide buttons */}
-            <div className="pb-safe sm:pb-8 short:flex-1 short:py-2">
-              <DialPad
-                onKeyPress={handleDialPadKey}
-                onCall={onEndCall}
-                onHide={() => setShowDialPad(false)}
-                disabled={callStatus !== 'connected'}
-              />
-            </div>
-          </div>
-        ) : (
-          <div className="relative z-10 flex flex-1 flex-col min-h-0 overflow-y-auto short:flex-row short:items-center">
-            {/* Call Info */}
-            <div className="flex-1 flex flex-col justify-center items-center px-4 py-4 short:self-stretch">
-              {!showVideoUI && (
-                <div className="mb-6 flex h-24 w-24 short:hidden items-center justify-center rounded-full bg-surface ring-1 ring-edge-strong shadow-card">
-                  <Phone size={36} className="text-muted" />
-                </div>
-              )}
-              <div
-                className={`max-w-full text-center ${
-                  showVideoUI ? 'mt-auto w-full bg-linear-to-t from-black/70 to-transparent px-4 pb-4 pt-10' : ''
-                }`}
-              >
-                <div className="mb-2 inline-flex items-center gap-2 text-sm text-muted" aria-live="polite">
-                  {/* Media down but the call not over (ICE disconnected/failed
-                      or the SDK mid-recovery) -- the StatusBar dot stays bound
-                      to signaling (isClientReady); this one is about media. */}
+        {/* The call card: status strip, media (or the DTMF pad), meters and the
+            toolbar. It fills a phone's screen; in the workbench it is a card in
+            the center column. */}
+        <div
+          className={`relative z-10 flex min-h-0 flex-1 flex-col overflow-y-auto ${
+            workbench ? 'items-center px-6 py-4' : ''
+          }`}
+        >
+          <div className={`flex min-h-0 flex-col ${workbench ? 'glass-panel w-full max-w-3xl rounded-xl' : 'flex-1'}`}>
+            {/* Status strip. The status line is the first polite live region on
+                the screen (the e2e helpers read it). Media down but the call not
+                over (ICE disconnected/failed or the SDK mid-recovery): the bar's
+                dot stays bound to signaling (isClientReady); this one is media. */}
+            <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2 px-4 pb-3 pt-4 sm:px-6">
+              <div className="min-w-0">
+                <div className="inline-flex items-center gap-2 text-sm text-muted" aria-live="polite">
                   {(callStatus !== 'connected' || isMediaDisrupted) && (
                     <span
                       className={`h-1.5 w-1.5 rounded-full motion-safe:animate-pulse ${
@@ -347,76 +246,117 @@ const CallScreen: React.FC<CallScreenProps> = ({
                   )}
                   {statusText}
                 </div>
-                <div className="text-2xl sm:text-3xl font-display font-medium tracking-tight mb-4 wrap-anywhere select-text">{phoneNumber}</div>
-                {/* Like iOS, the timer appears once the call is answered. */}
+                <div className="mt-1 font-display text-2xl font-medium tracking-tight wrap-anywhere select-text sm:text-3xl">
+                  {phoneNumber}
+                </div>
+                {callId && (
+                  <div className="mt-1 flex items-center gap-1 text-xs text-faint">
+                    <span className="truncate font-mono select-text" title="Call ID">
+                      {callId}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={copyCallId}
+                      aria-label="Copy Call ID"
+                      className="-m-1 shrink-0 rounded-md p-1.5 text-faint transition-colors hover:bg-surface-hover hover:text-ink"
+                    >
+                      {copiedCallId ? <Check size={12} /> : <Copy size={12} />}
+                    </button>
+                  </div>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                {/* The timer appears once the far end answers. */}
                 {connectedAt && (
-                  <div className="inline-block rounded-full bg-surface-2 px-3 py-1 font-mono text-lg sm:text-xl text-muted tabular-nums">
+                  <div className="inline-block rounded-md bg-surface-2 px-2.5 py-1 font-mono text-lg tabular-nums text-ink sm:text-xl">
                     {formatDuration(callDuration)}
                   </div>
                 )}
-                {callStatus === 'connected' && <AudioLevelMeter isMuted={isMuted} />}
+                {(callStatus === 'connected' || isMediaDisrupted) && <CallQualityBadge onClick={openStats} />}
+                <CodeRef feature="lifecycle" />
               </div>
             </div>
 
-            {/* Call Controls - Bottom buttons */}
-            <div className="pb-safe sm:pb-8 short:flex-1 short:py-2">
-              <div className="flex justify-center items-center w-full px-4">
-                <div className="grid grid-cols-3 gap-3 sm:gap-4 short:gap-2" style={{ maxWidth: '260px' }}>
-                  <CallControl icon={MicOff} label="Mute" active={isMuted} onClick={onToggleMute} />
-                  <CallControl icon={Keyboard} label="Keypad" onClick={() => setShowDialPad(true)} />
-                  <CallControl
-                    icon={Volume2}
-                    label="Speaker"
-                    active={isSpeakerOn}
-                    onClick={onToggleSpeaker}
-                    disabled={!canSelectAudioOutput}
-                    title={canSelectAudioOutput ? undefined : 'Choosing an audio output is not supported in this browser'}
-                  />
-                  <CallControl icon={Video} label="Camera" active={isCameraOn} onClick={onToggleCamera} />
-                  <CallControl icon={PhoneOff} label="End" ariaLabel="End call" danger onClick={onEndCall} />
-                  <CallControl
-                    icon={MoreHorizontal}
-                    label="More"
-                    ariaLabel="More call controls"
-                    onClick={() => setIsControlsSheetOpen(true)}
-                  />
-                  {workbench && (
-                    <>
-                      <CallControl
-                        icon={isOnHold ? Play : Pause}
-                        label={isOnHold ? 'Resume' : 'Hold'}
-                        ariaLabel={isOnHold ? 'Resume call' : 'Hold call'}
-                        active={isOnHold}
-                        onClick={toggleHold}
-                      />
-                      <CallControl
-                        icon={PhoneForwarded}
-                        label="Transfer"
-                        ariaLabel="Transfer call"
-                        onClick={() => setIsTransferModalOpen(true)}
-                      />
-                      {/* Straight from the click, no await first: getDisplayMedia
-                          needs the user gesture (see toggleScreenShare). */}
-                      <CallControl
-                        icon={screenShareStatus === 'started' ? ScreenShareOff : ScreenShare}
-                        label="Share"
-                        ariaLabel={screenShareStatus === 'started' ? 'Stop screen share' : 'Start screen share'}
-                        active={screenShareStatus === 'started'}
-                        disabled={!canScreenShare || isScreenShareBusy}
-                        title={
-                          canScreenShare
-                            ? undefined
-                            : 'Screen share is granted on video room and conference calls, not on 1:1 calls'
-                        }
-                        onClick={() => toggleScreenShare(shareScreenAudio)}
-                      />
-                    </>
+            {/* Video layer -- always mounted (regardless of showDialPad/showVideoUI)
+                so the service's ref attach survives both toggling mid-call;
+                visibility is purely CSS (hidden, not unmounted) so the stream keeps
+                decoding underneath. */}
+            <div
+              className={`relative overflow-hidden bg-black ${
+                showVideoUI && !showDialPad ? (workbench ? 'aspect-video' : 'min-h-0 flex-1') : 'hidden'
+              }`}
+            >
+              <video ref={remoteVideoRef} autoPlay playsInline className="absolute inset-0 h-full w-full object-cover" />
+              <video
+                ref={localVideoRef}
+                autoPlay
+                muted
+                playsInline
+                className={`absolute bottom-3 right-3 h-28 w-20 rounded-lg object-cover ring-1 ring-edge-strong shadow-card sm:h-36 sm:w-24 ${
+                  isCameraOn ? '' : 'hidden'
+                }`}
+              />
+            </div>
+
+            {/* The DTMF pad: the far end and the statistics don't pause for it,
+                so the status strip stays in view above. */}
+            {showDialPad && (
+              <div className="flex flex-col items-center gap-3 px-4 py-3 sm:px-6">
+                <div className="flex w-full max-w-sm items-center justify-center rounded-lg border border-edge-strong bg-surface-2 px-4 py-3">
+                  {dialPadInput ? (
+                    <div className="min-w-0 font-mono text-2xl font-medium tracking-wide wrap-anywhere sm:text-3xl">
+                      {dialPadInput}
+                    </div>
+                  ) : (
+                    <div className="text-base text-faint">
+                      {callStatus === 'connected' ? 'Enter digits to send' : 'Keypad available once connected'}
+                    </div>
                   )}
                 </div>
+                {/* Smaller in the workbench card so End stays above the fold. */}
+                <div className={workbench ? 'w-full max-w-[13rem]' : 'w-full'}>
+                  <DialPad mode="dtmf" onKeyPress={handleDialPadKey} disabled={callStatus !== 'connected'} />
+                </div>
               </div>
+            )}
+
+            {/* Audio-only on a phone: the toolbar sits at the bottom. */}
+            {!showDialPad && !showVideoUI && !workbench && <div className="flex-1" />}
+
+            {callStatus === 'connected' && (
+              <div className="flex items-center justify-center gap-1 px-4">
+                <AudioLevelMeter isMuted={isMuted} />
+                <span className="mt-4 hidden desk:inline-flex">
+                  <CodeRef feature="meters" />
+                </span>
+              </div>
+            )}
+
+            <div className={`px-4 pt-4 sm:px-6 ${workbench ? 'pb-5' : 'pb-safe'}`}>
+              <CallToolbar
+                isMuted={isMuted}
+                onToggleMute={onToggleMute}
+                isKeypadOpen={showDialPad}
+                onToggleKeypad={() => setShowDialPad((prev) => !prev)}
+                isCameraOn={isCameraOn}
+                onToggleCamera={onToggleCamera}
+                isOnHold={isOnHold}
+                onToggleHold={toggleHold}
+                onOpenTransfer={() => setIsTransferModalOpen(true)}
+                canScreenShare={canScreenShare}
+                screenShareStatus={screenShareStatus}
+                /* Straight from the click, no await first: getDisplayMedia
+                   needs the user gesture (see toggleScreenShare). */
+                onToggleScreenShare={() => toggleScreenShare(shareScreenAudio)}
+                isSpeakerOn={isSpeakerOn}
+                canSelectAudioOutput={canSelectAudioOutput}
+                onToggleSpeaker={onToggleSpeaker}
+                onOpenMore={() => setIsControlsSheetOpen(true)}
+                onEndCall={onEndCall}
+              />
             </div>
           </div>
-        )}
+        </div>
 
         <CallControlsSheet
           isOpen={isControlsSheetOpen}

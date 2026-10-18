@@ -1,5 +1,5 @@
 {
-  "name": "SignalWire Dialer",
+  "name": "SignalWire Browser SDK Dialer",
   "short_name": "Dialer",
   "description": "Web dialer and testing workbench for the SignalWire Browser SDK",
   "start_url": "/",

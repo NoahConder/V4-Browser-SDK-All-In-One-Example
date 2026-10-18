@@ -1,5 +1,8 @@
 import React, { useEffect } from 'react';
 import { Phone, PhoneOff, Video } from 'lucide-react';
+import AppBar from './AppBar';
+import CodeRef from './CodeRef';
+import { useWorkbench } from '../hooks/useWorkbench';
 
 interface IncomingCallProps {
   phoneNumber: string;
@@ -8,13 +11,17 @@ interface IncomingCallProps {
   onReject: () => void;
 }
 
+// A ringing inbound call (client.incomingCalls$): who is calling and two
+// wide buttons. Enter answers, Escape declines. Inside the workbench the bar
+// is the workbench's own, above all three panes.
 const IncomingCall: React.FC<IncomingCallProps> = ({
   phoneNumber,
   isVideoCall,
   onAnswer,
   onReject,
 }) => {
-  // Enter answers, Escape declines.
+  const workbench = useWorkbench();
+
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.repeat) return;
@@ -26,52 +33,42 @@ const IncomingCall: React.FC<IncomingCallProps> = ({
   }, [onAnswer, onReject]);
 
   return (
-    <div className="app-shell flex flex-col h-dvh overflow-y-auto short:flex-row short:items-center">
-      {/* Caller Info */}
-      <div className="flex-1 flex flex-col justify-center items-center px-6 short:self-stretch">
-        <div className="max-w-full text-center">
-          <div className="mb-4 inline-flex items-center gap-2 text-sm text-muted">
-            <span className="h-1.5 w-1.5 rounded-full bg-success motion-safe:animate-pulse" />
-            {isVideoCall ? 'Incoming video call' : 'Incoming call'}
-          </div>
-          <div className="text-3xl font-display font-medium tracking-tight mb-8 wrap-anywhere select-text short:mb-0">{phoneNumber}</div>
+    <div className={`app-shell flex flex-col ${workbench ? 'h-full min-h-0' : 'h-dvh'}`}>
+      {!workbench && <AppBar />}
 
-          {/* Avatar placeholder */}
-          <div className="relative mx-auto mb-8 flex h-32 w-32 short:hidden items-center justify-center rounded-full bg-surface ring-1 ring-edge-strong shadow-card">
-            <span className="absolute inset-0 rounded-full ring-1 ring-call/30 motion-safe:animate-ping" />
-            {isVideoCall ? <Video size={48} className="text-muted" /> : <Phone size={48} className="text-muted" />}
+      <div className="flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto px-4 py-6">
+        <div className={`w-full max-w-xl ${workbench ? 'glass-panel rounded-xl p-6' : 'px-2'}`}>
+          <div className="flex items-center justify-between gap-3">
+            <div className="inline-flex items-center gap-2 text-sm text-muted">
+              <span className="h-1.5 w-1.5 rounded-full bg-success motion-safe:animate-pulse" />
+              {isVideoCall ? 'Incoming video call' : 'Incoming call'}
+              {isVideoCall && <Video size={14} className="text-faint" />}
+            </div>
+            <CodeRef feature="incoming" />
           </div>
-        </div>
-      </div>
+          <div className="mt-2 font-display text-3xl font-medium tracking-tight wrap-anywhere select-text sm:text-4xl">
+            {phoneNumber}
+          </div>
 
-      {/* Action Buttons - using same size as dial pad */}
-      <div className="flex justify-center items-center w-full px-4 pb-safe sm:pb-8 short:w-auto short:flex-1 short:py-2">
-        <div className="flex gap-8">
-          {/* Reject Button */}
-          <div className="flex flex-col items-center">
+          <div className="mt-8 grid grid-cols-2 gap-3">
             <button
+              type="button"
               onClick={onReject}
               aria-label="Decline"
-              className="dial-button bg-hangup text-on-hangup hover:bg-hangup-hover"
+              className="flex h-14 items-center justify-center gap-2 rounded-lg bg-hangup text-sm font-semibold text-on-hangup shadow-card transition-colors hover:bg-hangup-hover"
             >
-              <PhoneOff size={32} fill="currentColor" />
+              <PhoneOff size={22} fill="currentColor" />
+              <span>Decline</span>
             </button>
-            <span className="text-xs text-muted mt-2">Decline</span>
-          </div>
-
-          {/* Answer Button */}
-          <div className="flex flex-col items-center">
-            <div className="relative">
-              <span className="absolute inset-0 rounded-full bg-call/40 motion-safe:animate-ping" />
-              <button
-                onClick={onAnswer}
-                aria-label="Accept"
-                className="dial-button relative bg-call text-on-call hover:bg-call-hover"
-              >
-                <Phone size={32} fill="currentColor" />
-              </button>
-            </div>
-            <span className="text-xs text-muted mt-2">Accept</span>
+            <button
+              type="button"
+              onClick={onAnswer}
+              aria-label="Accept"
+              className="flex h-14 items-center justify-center gap-2 rounded-lg bg-call text-sm font-semibold text-on-call shadow-card transition-colors hover:bg-call-hover"
+            >
+              <Phone size={22} fill="currentColor" />
+              <span>Accept</span>
+            </button>
           </div>
         </div>
       </div>

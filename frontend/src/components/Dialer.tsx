@@ -1,7 +1,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Activity, AtSign, History, List, Phone, Slash, SlidersHorizontal, User, Video, VideoOff, X } from 'lucide-react';
+import { Activity, AtSign, ChevronDown, ChevronUp, History, List, Phone, Slash, SlidersHorizontal, User, Video, VideoOff, X } from 'lucide-react';
 import DialPad from './DialPad';
-import StatusBar from './StatusBar';
+import AppBar from './AppBar';
 import CallScreen from './CallScreen';
 import IncomingCall from './IncomingCall';
 import DialableResourcesPanel, { type ResourceTab } from './DialableResourcesPanel';
@@ -10,6 +10,7 @@ import DiagnosticsPanel from './DiagnosticsPanel';
 import SubscriberPicker from './SubscriberPicker';
 import ErrorBanner from './ErrorBanner';
 import AddressSuggestions from './AddressSuggestions';
+import CodeRef from './CodeRef';
 import { useAddressSuggestions, type AddressSuggestion } from '../hooks/useAddressSuggestions';
 import { useCallStore } from '../hooks/useCallStore';
 import { useDialFieldStore } from '../hooks/useDialFieldStore';
@@ -46,6 +47,19 @@ const ADDRESS_FONT_SIZES_PX = [24, 20, 18, 16, 14, 12];
 
 let measureContext: CanvasRenderingContext2D | null = null;
 
+// Desktop only: the keypad is folded away by default (a tester types or picks
+// a destination; the pad is mostly for DTMF once in a call) and the choice
+// persists. Phones always show it.
+const KEYPAD_PREF_KEY = 'dialer_keypad';
+
+const loadKeypadPref = (): boolean => {
+  try {
+    return localStorage.getItem(KEYPAD_PREF_KEY) === '1';
+  } catch {
+    return false;
+  }
+};
+
 const fitAddressFontSize = (input: HTMLInputElement, text: string): number => {
   measureContext ??= document.createElement('canvas').getContext('2d');
   const style = getComputedStyle(input);
@@ -76,6 +90,17 @@ const Dialer: React.FC = () => {
   const workbench = useWorkbench();
   const [isCallingInProgress, setIsCallingInProgress] = useState(false);
   const [isAddressInputFocused, setIsAddressInputFocused] = useState(false);
+  const [showKeypad, setShowKeypad] = useState(loadKeypadPref);
+  const toggleKeypad = () => {
+    setShowKeypad((prev) => {
+      try {
+        localStorage.setItem(KEYPAD_PREF_KEY, prev ? '0' : '1');
+      } catch {
+        // Storage unavailable: the choice just doesn't persist.
+      }
+      return !prev;
+    });
+  };
   // Suggestions under the field while it has focus and at least two characters
   // (Recents, then the loaded Directory). Picking one fills the field and
   // dismisses the list for that exact value; Escape dismisses it too, until
@@ -323,18 +348,15 @@ const Dialer: React.FC = () => {
 
   // Show dialer
   return (
-    <div className="app-shell relative flex flex-col h-dvh">
-      {/* Status Bar + header panels. z-30 so the panels (positioned absolutely
-          just below the bar) overlay the dial pad instead of pushing it down. */}
+    <div className={`app-shell relative flex flex-col ${workbench ? 'h-full min-h-0' : 'h-dvh'}`}>
+      {/* Top bar + header panels. z-30 so the panels (positioned absolutely
+          just below the bar) overlay the dial pad instead of pushing it down.
+          Inside the workbench the bar is the workbench's own (Workbench.tsx),
+          above all three panes, so the call stage renders none. */}
       <div className="relative z-30">
-        {/* Inside the workbench the header keeps only the identity chip (which
-            selects the Subscribers tab in the Destinations pane) and the title. */}
-        <StatusBar
-          hasIcons={!workbench}
-          onIdentityClick={workbench ? workbench.openSubscribers : () => toggleHeaderPanel('subscriber')}
-        >
-          {!workbench &&
-            HEADER_PANEL_BUTTONS.map(({ panel, label, short, icon: Icon }) => {
+        {!workbench && (
+        <AppBar onIdentityClick={() => toggleHeaderPanel('subscriber')}>
+          {HEADER_PANEL_BUTTONS.map(({ panel, label, short, icon: Icon }) => {
             const isOpen = activeHeaderPanel === panel;
             return (
               <button
@@ -344,7 +366,7 @@ const Dialer: React.FC = () => {
                 aria-label={label}
                 title={label}
                 aria-pressed={isOpen}
-                className={`flex h-10 w-10 flex-col items-center justify-center gap-0.5 rounded-full transition-colors hover:bg-surface-hover hover:text-ink desk:h-12 desk:w-16 desk:rounded-lg ${
+                className={`flex h-10 w-10 flex-col items-center justify-center gap-0.5 rounded-lg transition-colors hover:bg-surface-hover hover:text-ink desk:h-12 desk:w-16 ${
                   isOpen ? 'bg-accent-soft text-accent-text' : 'text-muted'
                 }`}
               >
@@ -355,7 +377,8 @@ const Dialer: React.FC = () => {
               </button>
             );
           })}
-        </StatusBar>
+        </AppBar>
+        )}
 
         {!workbench && (
           <div className="absolute inset-x-0 top-full">
@@ -387,11 +410,16 @@ const Dialer: React.FC = () => {
         )}
       </div>
 
-      {/* Main Content Container -- scrolls rather than overlapping if it ever
-          outgrows the screen; side-by-side on short (landscape phone) screens. */}
+      {/* Main content -- scrolls rather than overlapping if it ever outgrows
+          the screen; side-by-side on short (landscape phone) screens. In the
+          workbench the stage is top-aligned, like the panes beside it. */}
       <div className="flex-1 flex flex-col min-h-0 overflow-y-auto short:flex-row short:items-center">
-        {/* To Address Input -- type a number, SIP URI, or Fabric address directly */}
-        <div className="flex-1 flex flex-col items-center justify-center px-4 py-3 min-[360px]:px-6 short:px-4">
+        {/* Address field -- type a number, SIP URI, or Fabric address directly */}
+        <div
+          className={`flex flex-col items-center px-4 py-3 min-[360px]:px-6 short:px-4 ${
+            workbench ? 'w-full pt-10' : 'flex-1 justify-center'
+          }`}
+        >
           {/* In this column (not a full-width row above it) so it takes space
               from the address area rather than pushing the dial pad off small
               and landscape screens. */}
@@ -410,7 +438,7 @@ const Dialer: React.FC = () => {
               className="mb-2 w-full"
             />
           )}
-          <div className="relative w-full max-w-sm">
+          <div className="relative w-full max-w-xl">
           <div
             className={`glass-panel flex w-full items-center gap-2 rounded-xl px-3 min-[360px]:gap-3 min-[360px]:px-4 py-3 transition-colors ${
               isAddressInputFocused ? 'border-accent-edge bg-surface' : ''
@@ -466,6 +494,10 @@ const Dialer: React.FC = () => {
               <button
                 type="button"
                 onClick={() => {
+                  if (workbench) {
+                    workbench.openRecents();
+                    return;
+                  }
                   setResourcesTab('recents');
                   setActiveHeaderPanel('resources');
                 }}
@@ -477,22 +509,6 @@ const Dialer: React.FC = () => {
               </button>
             )}
 
-            {/* Video toggle -- obeyed by handleCall when placing the next call */}
-            <button
-              type="button"
-              onClick={toggleWantsVideo}
-              disabled={isInCall || isCallingInProgress}
-              aria-label={wantsVideo ? 'Video call on' : 'Video call off'}
-              title={wantsVideo ? 'Video call on' : 'Video call off'}
-              aria-pressed={wantsVideo}
-              className={`shrink-0 flex h-9 w-9 items-center justify-center rounded-full border transition-colors disabled:opacity-50 ${
-                wantsVideo
-                  ? 'bg-accent text-on-accent border-accent'
-                  : 'bg-surface-2 text-muted border-edge-strong hover:bg-surface-hover'
-              }`}
-            >
-              {wantsVideo ? <Video size={18} /> : <VideoOff size={18} />}
-            </button>
           </div>
 
           <AddressSuggestions
@@ -504,27 +520,86 @@ const Dialer: React.FC = () => {
           />
           </div>
 
-          {/* Dropped while an error is showing: the badge icon already says the
-              same thing, and on small phones the banner plus this label push
-              the Call button off-screen. */}
-          {phoneNumber && !callError && (
-            <div className="mt-3 text-xs font-medium uppercase tracking-wider text-faint">
-              {addressMeta.label}
+          {/* The address type, the video choice and Call. The label is dropped
+              while an error is showing: the badge icon already says the same
+              thing, and on small phones the banner plus the label push the
+              keypad down. */}
+          <div className="mt-3 flex w-full max-w-xl items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-1">
+              {/* No room for it beside Video and Call on 320px phones. */}
+              <span className="hidden truncate text-xs font-medium uppercase tracking-wider text-faint min-[360px]:inline">
+                {phoneNumber && !callError ? addressMeta.label : ''}
+              </span>
+              <CodeRef feature="dial" align="left" />
             </div>
-          )}
+            <div className="flex shrink-0 items-center gap-2">
+              {/* Video toggle -- obeyed by handleCall when placing the next call */}
+              <button
+                type="button"
+                onClick={toggleWantsVideo}
+                disabled={isInCall || isCallingInProgress}
+                aria-label={wantsVideo ? 'Video call on' : 'Video call off'}
+                title={wantsVideo ? 'Video call on' : 'Video call off'}
+                aria-pressed={wantsVideo}
+                className={`flex h-11 items-center gap-2 rounded-lg border px-3 text-sm font-medium transition-colors disabled:opacity-50 ${
+                  wantsVideo
+                    ? 'border-accent bg-accent text-on-accent'
+                    : 'border-edge-strong bg-surface text-muted hover:bg-surface-hover hover:text-ink'
+                }`}
+              >
+                {wantsVideo ? <Video size={16} /> : <VideoOff size={16} />}
+                <span>Video</span>
+              </button>
+              {/* mousedown is swallowed so the click doesn't take focus from
+                  the address input (see DialPad's keepFocus). */}
+              <button
+                type="button"
+                onClick={handleCall}
+                onMouseDown={(e) => e.preventDefault()}
+                disabled={isInCall || isCallingInProgress}
+                aria-label="Call"
+                className="flex h-11 items-center gap-2 rounded-lg bg-call px-5 text-sm font-semibold text-on-call shadow-card transition-colors hover:bg-call-hover disabled:opacity-40"
+              >
+                <Phone size={16} fill="currentColor" />
+                <span>Call</span>
+              </button>
+            </div>
+          </div>
         </div>
 
-        {/* Dial Pad Container */}
-        <div className="pb-safe sm:pb-8 short:flex-1 short:py-2">
-          <DialPad
-            onKeyPress={handleKeyInput}
-            onCall={handleCall}
-            onDelete={handleDelete}
-            onClearAll={handleClearAll}
-            hasNumber={phoneNumber.length > 0}
-            disabled={isInCall || isCallingInProgress}
-          />
-        </div>
+        {/* First-visit orientation, while there's nothing in the field. */}
+        {workbench && !phoneNumber && (
+          <p className="mx-auto mb-4 max-w-xl px-4 text-center text-sm text-muted">
+            Type a phone number, a SIP URI (<span className="font-mono">sip:user@host</span>) or a Fabric address (
+            <span className="font-mono">/public/room</span>), or pick one from Destinations. Typing searches Recents and the
+            Directory.
+          </p>
+        )}
+
+        {/* The keypad: always on phones; folded behind a toggle in the workbench. */}
+        {workbench && (
+          <button
+            type="button"
+            onClick={toggleKeypad}
+            aria-pressed={showKeypad}
+            className="mx-auto mb-2 flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm text-muted transition-colors hover:bg-surface-hover hover:text-ink"
+          >
+            {showKeypad ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+            {showKeypad ? 'Hide keypad' : 'Show keypad'}
+          </button>
+        )}
+        {(!workbench || showKeypad) && (
+          <div className={workbench ? 'px-4 pb-8' : 'px-4 pb-safe sm:pb-8 short:flex-1 short:py-2'}>
+            <DialPad
+              mode="dial"
+              onKeyPress={handleKeyInput}
+              onDelete={handleDelete}
+              onClearAll={handleClearAll}
+              hasNumber={phoneNumber.length > 0}
+              disabled={isInCall || isCallingInProgress}
+            />
+          </div>
+        )}
       </div>
     </div>
   );

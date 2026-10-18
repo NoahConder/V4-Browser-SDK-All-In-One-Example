@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { Phone, PhoneOff, Delete } from 'lucide-react';
+import { Delete } from 'lucide-react';
 import { DialPadKey } from '../types';
 import { toneService } from '../services/tones';
 
@@ -66,15 +66,14 @@ function useLongPress({ holdMs, onTap, onHold, disabled }: LongPressOptions) {
 
 interface DialPadProps {
   onKeyPress: (key: string) => void;
-  onCall: () => void;
+  // 'dial' is the idle dialer's pad: hold 0 for '+', and a Delete key that
+  // clears everything when held. 'dtmf' is the in-call pad: digits only --
+  // every digit has already been sent, so there is nothing to delete.
+  mode: 'dial' | 'dtmf';
   onDelete?: () => void;
-  onClearAll?: () => void; // Optional callback for clearing all
+  onClearAll?: () => void;
   hasNumber?: boolean;
   disabled?: boolean;
-  // In-call (DTMF) keypad, like iOS: the bottom row becomes [ ][End][Hide] --
-  // onCall is the red End button, and there's no delete since every digit has
-  // already been sent.
-  onHide?: () => void;
 }
 
 const dialPadKeys: DialPadKey[][] = [
@@ -100,15 +99,19 @@ const dialPadKeys: DialPadKey[][] = [
   ],
 ];
 
+// The 12-key pad (globals.css's keypad-grid / key-button), flat and sized by
+// its column, plus a Delete row in dial mode. Key tones come from the shared
+// tone service.
 const DialPad: React.FC<DialPadProps> = ({
   onKeyPress,
-  onCall,
+  mode,
   onDelete,
   onClearAll,
-  hasNumber,
+  hasNumber = false,
   disabled = false,
-  onHide,
 }) => {
+  const isDial = mode === 'dial';
+
   const handleKeyPress = (key: string) => {
     if (!disabled) {
       onKeyPress(key);
@@ -120,6 +123,7 @@ const DialPad: React.FC<DialPadProps> = ({
   // only -- there's no '+' in DTMF), as the key's label advertises.
   const deleteHold = useLongPress({
     holdMs: 2000,
+    disabled: !hasNumber,
     onTap: () => onDelete?.(),
     onHold: () => (onClearAll ? onClearAll() : onDelete?.()),
   });
@@ -132,94 +136,61 @@ const DialPad: React.FC<DialPadProps> = ({
       toneService.playDtmf('0');
     },
   });
-  const isLongPressing = deleteHold.isHolding;
+  const isClearing = deleteHold.isHolding;
 
   return (
-    <div className="flex justify-center items-center w-full px-4">
-      <div className="grid grid-cols-3 gap-3 sm:gap-4 short:gap-2" style={{ maxWidth: '260px' }}>
-        {/* Number Keys */}
-        {dialPadKeys.map((row, rowIndex) => (
-          <React.Fragment key={rowIndex}>
-            {row.map((key) => (
-              <button
-                key={key.number}
-                className="dial-button bg-surface border border-edge-strong text-ink hover:bg-surface-hover disabled:opacity-40 disabled:active:scale-100"
-                aria-label={key.number === '0' && !onHide ? '0, hold for +' : undefined}
-                disabled={disabled}
-                {...(key.number === '0' && !onHide
-                  ? zeroHold.handlers
-                  : { onClick: () => handleKeyPress(key.number), onMouseDown: keepFocus })}
-              >
-                {key.special ? (
-                  // Special characters with different sizes and positioning
-                  <span className={`font-display font-medium tracking-tight leading-none ${
-                    key.number === '*'
-                      ? 'text-6xl sm:text-7xl relative top-2.5'  // Asterisk lowered more for proper centering
-                      : 'text-3xl sm:text-4xl'  // Hash stays normal
-                  }`}>{key.number}</span>
-                ) : (
-                  <>
-                    <span className="dial-button-number">{key.number}</span>
-                    {key.letters && (
-                      <span className="dial-button-letters">
-                        {key.letters.trim() || '\u00A0'} {/* Non-breaking space for alignment */}
-                      </span>
-                    )}
-                  </>
-                )}
-              </button>
-            ))}
-          </React.Fragment>
-        ))}
+    <div className="keypad-grid mx-auto">
+      {dialPadKeys.map((row, rowIndex) => (
+        <React.Fragment key={rowIndex}>
+          {row.map((key) => (
+            <button
+              key={key.number}
+              className="key-button"
+              aria-label={key.number === '0' && isDial ? '0, hold for +' : undefined}
+              disabled={disabled}
+              {...(key.number === '0' && isDial
+                ? zeroHold.handlers
+                : { onClick: () => handleKeyPress(key.number), onMouseDown: keepFocus })}
+            >
+              {key.special ? (
+                <span
+                  className={`font-display font-medium leading-none tracking-tight ${
+                    key.number === '*' ? 'relative top-1.5 text-4xl' : 'text-2xl'
+                  }`}
+                >
+                  {key.number}
+                </span>
+              ) : (
+                <>
+                  <span className="dial-button-number">{key.number}</span>
+                  {key.letters && (
+                    <span className="dial-button-letters">
+                      {key.letters.trim() || '\u00A0'} {/* Non-breaking space for alignment */}
+                    </span>
+                  )}
+                </>
+              )}
+            </button>
+          ))}
+        </React.Fragment>
+      ))}
 
-        {/* Bottom Row: Empty, Call (or End), Delete (or Hide) */}
-        <div className="dial-button invisible"></div>
-
-        {onHide ? (
-          <button
-            onClick={onCall}
-            onMouseDown={keepFocus}
-            aria-label="End call"
-            className="dial-button bg-hangup text-on-hangup hover:bg-hangup-hover"
-          >
-            <PhoneOff size={32} fill="currentColor" />
-          </button>
-        ) : (
-          <button
-            onClick={onCall}
-            onMouseDown={keepFocus}
-            disabled={disabled}
-            aria-label="Call"
-            className="dial-button bg-call text-on-call hover:bg-call-hover disabled:opacity-40 disabled:active:scale-100"
-          >
-            <Phone size={32} fill="currentColor" />
-          </button>
-        )}
-
-        {onHide ? (
-          <button
-            onClick={onHide}
-            onMouseDown={keepFocus}
-            className="dial-button text-base text-muted transition-colors hover:text-ink shadow-none"
-          >
-            Hide
-          </button>
-        ) : hasNumber ? (
-          <button
-            aria-label="Delete"
-            {...deleteHold.handlers}
-            className={`dial-button border transition-colors ${
-              isLongPressing
-                ? 'bg-hangup/80 border-hangup/50'
-                : 'bg-surface border-edge-strong hover:bg-surface-hover'
-            }`}
-          >
-            <Delete size={24} className={isLongPressing ? 'text-ink animate-pulse' : 'text-muted'} />
-          </button>
-        ) : (
-          <div className="dial-button invisible"></div>
-        )}
-      </div>
+      {isDial && (
+        <button
+          aria-label="Delete"
+          title="Delete; hold to clear"
+          disabled={!hasNumber}
+          {...deleteHold.handlers}
+          className={`col-span-3 flex h-11 items-center justify-center gap-2 rounded-lg border text-sm transition-colors disabled:opacity-40 ${
+            isClearing
+              ? 'border-hangup/50 bg-hangup/80 text-on-hangup'
+              : 'border-edge-strong bg-surface text-muted hover:bg-surface-hover hover:text-ink'
+          }`}
+        >
+          <Delete size={18} className={isClearing ? 'animate-pulse' : ''} />
+          <span>{isClearing ? 'Clearing…' : 'Delete'}</span>
+        </button>
+      )}
     </div>
   );
 };

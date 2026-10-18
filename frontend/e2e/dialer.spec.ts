@@ -169,4 +169,11 @@ test.describe('in a call', () => {
     await setState(page, { canSelectAudioOutput: true });
     await expect(page.locator('button[aria-label="Speaker"]')).toBeEnabled();
   });
+
+  test('the toolbar carries hold, transfer and screen share on phones too', async ({ page }) => {
+    await expect(page.locator('button[aria-label="Hold call"]')).toBeVisible();
+    await expect(page.locator('button[aria-label="Transfer call"]')).toBeVisible();
+    await expect(page.locator('button[aria-label="Start screen share"]')).toBeDisabled();
+    await expect(page.locator('button[aria-label="End call"]')).toHaveCount(1);
+  });
 });

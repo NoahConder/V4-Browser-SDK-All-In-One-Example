@@ -43,7 +43,8 @@ test.describe('call statistics and audio meter', () => {
       expect(text, expected).toContain(expected);
     }
 
-    await page.click('button[aria-label="Copy Call ID"]');
+    // The call card's strip has a copy button of the same name; this is the sheet's.
+    await sheet.locator('button[aria-label="Copy Call ID"]').click();
     expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('call-abc-123');
 
     const restart = sheet.locator('button:has-text("Request ICE Restart")');

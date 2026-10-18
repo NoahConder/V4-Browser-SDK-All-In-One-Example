@@ -102,14 +102,21 @@ test('device-switch notices appear as dismissible info banners', async ({ page }
   await expect(notice).toHaveCount(0);
 });
 
-// Appearance (services/theme.ts): System follows prefers-color-scheme live;
-// an explicit choice wins, persists in dialer_settings and applies before the
-// first render on reload.
-test('Appearance follows the system scheme, persists an override and applies it on reload', async ({ page }) => {
+// Appearance (services/theme.ts): dark by default whatever the OS prefers;
+// System follows prefers-color-scheme live; an explicit choice wins, persists
+// in dialer_settings and applies before the first render on reload.
+test('Appearance defaults to dark, follows the system scheme on request, persists an override and applies it on reload', async ({ page }) => {
   const theme = () => page.evaluate(() => document.documentElement.dataset.theme);
-  await page.emulateMedia({ colorScheme: 'dark' });
+  await page.emulateMedia({ colorScheme: 'light' });
   await openDialer(page);
   expect(await theme()).toBe('dark');
+
+  await page.evaluate(() => localStorage.setItem('dialer_settings', JSON.stringify({ theme: 'system' })));
+  await page.reload();
+  await page.locator(ADDRESS_INPUT).waitFor();
+  expect(await theme()).toBe('light');
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await expect.poll(theme).toBe('dark');
   await page.emulateMedia({ colorScheme: 'light' });
   await expect.poll(theme).toBe('light');
 

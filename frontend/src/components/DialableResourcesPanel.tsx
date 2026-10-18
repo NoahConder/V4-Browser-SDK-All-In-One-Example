@@ -1,3 +1,5 @@
+import CodeRef from './CodeRef';
+import type { FeatureKey } from '../codeMap';
 import React from 'react';
 import { X } from 'lucide-react';
 import ResourceAddressList, { type ResourcePage } from './ResourceAddressList';
@@ -46,12 +48,23 @@ const getSwmlRowLabel = (_script: SwmlScript, address: DialableAddress): string 
 const getSipRowLabel = (credential: SipCredential, address: DialableAddress): string =>
   `${credential.sip_endpoint.username} · ${address.display_name || address.name}`;
 
+// The "where's the code" entry for each tab's list (the workbench's pane
+// header shows it; the phone panel's tab strip does).
+export const DESTINATION_CODE: Record<ResourceTab, FeatureKey> = {
+  directory: 'directory',
+  recents: 'recents',
+  swml: 'listings',
+  sip: 'listings',
+  subscribers: 'subscribers',
+};
+
 interface DestinationsTabsProps {
   tabs: ResourceTab[];
   activeTab: ResourceTab;
   onTabChange: (tab: ResourceTab) => void;
   onSelectAddress: SelectAddress;
-  // Renders a Close button after the tab strip (the header panel has one).
+  // Renders a Close button after the tab strip (the header panel has one),
+  // with the active tab's code link before it.
   onClose?: () => void;
   className?: string;
   // Classes for the tab panel: the Destinations pane makes it the scrolling
@@ -77,7 +90,7 @@ export function DestinationsTabs({
         <div
           role="tablist"
           aria-label="Dialable resources"
-          className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto border-b border-edge text-[13px] font-medium"
+          className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1 border-b border-edge text-[13px] font-medium"
         >
           {tabs.map((key) => (
             <button
@@ -89,9 +102,9 @@ export function DestinationsTabs({
               aria-controls="resources-tabpanel"
               title={TAB_META[key].title}
               onClick={() => onTabChange(key)}
-              className={`relative shrink-0 px-2.5 py-2 transition-colors ${
+              className={`relative shrink-0 px-2 py-2 transition-colors ${
                 activeTab === key
-                  ? 'text-accent-text after:absolute after:inset-x-2.5 after:-bottom-px after:h-0.5 after:rounded-full after:bg-accent'
+                  ? 'text-accent-text after:absolute after:inset-x-2 after:-bottom-px after:h-0.5 after:rounded-full after:bg-accent'
                   : 'text-muted hover:text-ink'
               }`}
             >
@@ -99,6 +112,7 @@ export function DestinationsTabs({
             </button>
           ))}
         </div>
+        {onClose && <CodeRef feature={DESTINATION_CODE[activeTab]} />}
         {onClose && (
           <button
             type="button"
