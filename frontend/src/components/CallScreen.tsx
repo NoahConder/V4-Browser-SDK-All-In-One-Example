@@ -4,7 +4,6 @@ import DialPad from './DialPad';
 import ErrorBanner from './ErrorBanner';
 import AppBar from './AppBar';
 import CallToolbar from './CallToolbar';
-import CodeRef from './CodeRef';
 import CallControlsSheet from './CallControlsSheet';
 import TransferModal from './TransferModal';
 import DevicePicker from './DevicePicker';
@@ -273,7 +272,6 @@ const CallScreen: React.FC<CallScreenProps> = ({
                   </div>
                 )}
                 {(callStatus === 'connected' || isMediaDisrupted) && <CallQualityBadge onClick={openStats} />}
-                <CodeRef feature="lifecycle" />
               </div>
             </div>
 
@@ -323,14 +321,7 @@ const CallScreen: React.FC<CallScreenProps> = ({
             {/* Audio-only on a phone: the toolbar sits at the bottom. */}
             {!showDialPad && !showVideoUI && !workbench && <div className="flex-1" />}
 
-            {callStatus === 'connected' && (
-              <div className="flex items-center justify-center gap-1 px-4">
-                <AudioLevelMeter isMuted={isMuted} />
-                <span className="mt-4 hidden desk:inline-flex">
-                  <CodeRef feature="meters" />
-                </span>
-              </div>
-            )}
+            {callStatus === 'connected' && <AudioLevelMeter isMuted={isMuted} />}
 
             <div className={`px-4 pt-4 sm:px-6 ${workbench ? 'pb-5' : 'pb-safe'}`}>
               <CallToolbar

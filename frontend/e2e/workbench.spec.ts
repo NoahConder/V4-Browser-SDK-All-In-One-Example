@@ -136,13 +136,4 @@ test.describe('Desktop workbench', () => {
     await setState(page, { isInCall: true, callStatus: 'connected', connectedAt: Date.now(), remoteNumber: '+15551234567' });
     await expect(echo).toBeEnabled();
   });
-
-  test('a code link opens a popover naming the SDK API and the file, and Escape closes it', async ({ page }) => {
-    await page.click('button[aria-label="Where\'s the code: Place a call"]');
-    const popover = page.getByRole('group', { name: 'Code for Place a call' });
-    await expect(popover).toContainText('client.dial');
-    await expect(popover.locator('a[href*="github.com"]').first()).toHaveAttribute('href', /Dialer\.tsx$/);
-    await page.keyboard.press('Escape');
-    await expect(popover).toHaveCount(0);
-  });
 });

@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import AppBar from './AppBar';
 import Dialer from './Dialer';
-import { DestinationsTabs, DESTINATION_CODE, type ResourceTab } from './DialableResourcesPanel';
-import InspectorPane, { INSPECTOR_CODE, type InspectorTab } from './InspectorPane';
+import { DestinationsTabs, type ResourceTab } from './DialableResourcesPanel';
+import InspectorPane, { type InspectorTab } from './InspectorPane';
 import { Pane } from './Pane';
 import { WorkbenchContext, type WorkbenchApi } from '../hooks/useWorkbench';
 import { useCallStore } from '../hooks/useCallStore';
@@ -102,7 +102,6 @@ function Workbench() {
             side="left"
             collapsed={collapsed.left}
             onToggle={() => togglePane('left')}
-            codeRef={DESTINATION_CODE[destinationsTab]}
           >
             <DestinationsTabs
               tabs={DESTINATION_TABS}
@@ -123,7 +122,6 @@ function Workbench() {
             side="right"
             collapsed={collapsed.right}
             onToggle={() => togglePane('right')}
-            codeRef={INSPECTOR_CODE[inspectorTab]}
           >
             <InspectorPane activeTab={inspectorTab} onTabChange={setInspectorTab} />
           </Pane>

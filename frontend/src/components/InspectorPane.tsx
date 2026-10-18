@@ -8,7 +8,6 @@ import { DoNotDisturbSwitch } from './SubscriberPicker';
 import { SheetSection, SheetStat, SheetSwitch } from './SheetPrimitives';
 import { useCallStore } from '../hooks/useCallStore';
 import { useSignalWire } from '../hooks/useSignalWire';
-import type { FeatureKey } from '../codeMap';
 
 export type InspectorTab = 'quality' | 'events' | 'devices' | 'diagnostics';
 
@@ -21,14 +20,6 @@ const TABS: Array<{ key: InspectorTab; label: string; title: string }> = [
   { key: 'devices', label: 'Devices', title: 'Microphone, camera, speaker and audio processing' },
   { key: 'diagnostics', label: 'Diagnostics', title: 'Connection, identity, SDK settings, connection test, export' },
 ];
-
-// The "where's the code" entry for each tab (shown in the pane's header).
-export const INSPECTOR_CODE: Record<InspectorTab, FeatureKey> = {
-  quality: 'quality',
-  events: 'events',
-  devices: 'devices',
-  diagnostics: 'connection',
-};
 
 // Device selection (the SDK's device observables) and the per-call audio
 // processing toggles, which live on call.self and so need a call to be up.
@@ -46,7 +37,7 @@ function DevicesBody() {
 
   return (
     <>
-      <SheetSection label="Devices" codeRef="devices" />
+      <SheetSection label="Devices" />
       <button
         type="button"
         onClick={() => setShowDevices((prev) => !prev)}
@@ -66,7 +57,7 @@ function DevicesBody() {
         hint="HTMLMediaElement.setSinkId — missing on Firefox and Safari"
       />
 
-      <SheetSection label="Audio processing" codeRef="audio-processing" />
+      <SheetSection label="Audio processing" />
       <p className="px-3 pb-1 text-xs text-faint">
         Echo cancellation, noise suppression and automatic gain control are set on the call&apos;s own
         microphone track (call.self), so they can be changed once a call is up.
@@ -104,7 +95,7 @@ function DiagnosticsBody() {
 
   return (
     <>
-      <SheetSection label="Session" codeRef="connection" />
+      <SheetSection label="Session" />
       <SheetStat
         label="SignalWire"
         value={
@@ -124,7 +115,7 @@ function DiagnosticsBody() {
 
       <SettingsBody />
 
-      <SheetSection label="Test my connection" codeRef="preflight" />
+      <SheetSection label="Test my connection" />
       <div className="px-3">
         <ConnectionTestBody />
         <ExportDiagnosticsButton className="mt-3" />

@@ -1,6 +1,6 @@
 # SignalWire Browser SDK Dialer
 
-A reference dialer built with React and the SignalWire Browser SDK (`@signalwire/js` v4) for making and receiving WebRTC calls — audio and video, to phone numbers, SIP URIs, and SignalWire Fabric addresses. It is a hands-on way to explore what the Browser SDK can do, a test bench for exercising every one of its features while watching call state and statistics live, and a reference for how each piece is wired up: every feature area carries a small `</>` button that names the SDK API behind it and links to the file in this repository and to the SDK reference. It is a testing and learning tool, not a production app.
+A reference dialer built with React and the SignalWire Browser SDK (`@signalwire/js` v4) for making and receiving WebRTC calls — audio and video, to phone numbers, SIP URIs, and SignalWire Fabric addresses. It is a hands-on way to explore what the Browser SDK can do, a test bench for exercising every one of its features while watching call state and statistics live, and a reference for how each piece is wired up (the table below maps every feature to the SDK API and the file). It is a testing and learning tool, not a production app.
 
 It wears the SignalWire docs' design language — Lexend and Instrument Sans type, the docs' dark and light palettes (turquoise and SignalWire blue accents), flat cards and underline tabs. Dark is the default; an Appearance setting switches to light or follows your system.
 
@@ -10,7 +10,7 @@ This project is a fork of [briankwest/swdialer](https://github.com/briankwest/sw
 
 ## What it demonstrates
 
-Every SignalWire interaction happens in the browser through the published npm package; the Flask backend only mints subscriber tokens and lists resources. If you're here to see how a particular SDK feature is used, start with the file in the right-hand column — or press the `</>` button next to the feature in the running app, which shows the same mapping (`frontend/src/codeMap.ts`) with links to GitHub and the SDK reference.
+Every SignalWire interaction happens in the browser through the published npm package; the Flask backend only mints subscriber tokens and lists resources. If you're here to see how a particular SDK feature is used, start with the file in the right-hand column.
 
 | Feature | Browser SDK API | Where |
 |---|---|---|
@@ -37,7 +37,6 @@ Every SignalWire interaction happens in the browser through the published npm pa
 ## Features
 
 - ✅ Styled after the SignalWire docs, dark by default with a light theme (Appearance setting); a three-pane console from 1024px wide (Destinations | call stage | Inspector with Quality, Events, Devices and Diagnostics tabs, side panes that fold away) that stacks on phones (portrait and landscape) and tablets
-- ✅ "Where's the code" buttons (`</>`) on every feature area, naming the SDK API and linking to the file in this repository and the SDK reference page
 - ✅ Address suggestions while you type, from Recents and the loaded Directory (Up/Down to choose, Enter to fill)
 - ✅ Event log of what the SDK and the dialer did — call status, errors and warnings, recovery and ICE, device changes, your own actions — with filters and copy, in the Diagnostics panel and the Inspector
 - ✅ Outbound audio or video calls to phone numbers (normalized to E.164), SIP URIs, and Fabric addresses
@@ -191,7 +190,6 @@ frontend/
 │   │   ├── Pane.tsx                    # A workbench side pane and its fold-to-rail toggle
 │   │   ├── InspectorPane.tsx           # Inspector tabs: Quality, Events, Devices, Diagnostics
 │   │   ├── AppBar.tsx                  # Top bar: wordmark, connection pill, identity chip, theme toggle, panel buttons
-│   │   ├── CodeRef.tsx                 # The </> button: SDK API, file and docs for a feature (from codeMap.ts)
 │   │   ├── Dialer.tsx                  # Idle dialer: address field, Video/Call row, keypad, suggestions, routing to call screens
 │   │   ├── AddressSuggestions.tsx      # Suggestions under the address field (Recents + loaded Directory)
 │   │   ├── DialPad.tsx                 # Flat keypad with key tones (hold 0 for +; DTMF mode in a call)
@@ -235,7 +233,6 @@ frontend/
 │   │   ├── search.ts                   # Query normalization and the Directory/Recents matchers
 │   │   └── log.ts                      # App logger gated by the debug setting
 │   ├── styles/globals.css              # Tailwind setup, the docs' token layer (light + dark), shared utilities
-│   ├── codeMap.ts                      # Feature → SDK API → file → docs, behind the </> buttons (mirrors the table above)
 │   ├── types/index.ts                  # Shared types
 │   ├── App.tsx                         # Permission / connecting / error gates
 │   └── main.tsx                        # Entry point

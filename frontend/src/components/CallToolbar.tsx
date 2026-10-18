@@ -13,7 +13,6 @@ import {
   Video,
   Volume2,
 } from 'lucide-react';
-import CodeRef from './CodeRef';
 
 type ScreenShareStatus = 'none' | 'starting' | 'started' | 'stopping';
 
@@ -142,9 +141,6 @@ const CallToolbar: React.FC<CallToolbarProps> = ({
       />
       <ControlButton icon={MoreHorizontal} label="More" ariaLabel="More call controls" onClick={onOpenMore} />
       <ControlButton icon={PhoneOff} label="End" ariaLabel="End call" danger onClick={onEndCall} />
-      <span className="hidden desk:inline-flex">
-        <CodeRef feature="call-controls" />
-      </span>
     </div>
   );
 };

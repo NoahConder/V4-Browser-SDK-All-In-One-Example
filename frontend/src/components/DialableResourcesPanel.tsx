@@ -1,5 +1,3 @@
-import CodeRef from './CodeRef';
-import type { FeatureKey } from '../codeMap';
 import React from 'react';
 import { X } from 'lucide-react';
 import ResourceAddressList, { type ResourcePage } from './ResourceAddressList';
@@ -48,23 +46,12 @@ const getSwmlRowLabel = (_script: SwmlScript, address: DialableAddress): string 
 const getSipRowLabel = (credential: SipCredential, address: DialableAddress): string =>
   `${credential.sip_endpoint.username} · ${address.display_name || address.name}`;
 
-// The "where's the code" entry for each tab's list (the workbench's pane
-// header shows it; the phone panel's tab strip does).
-export const DESTINATION_CODE: Record<ResourceTab, FeatureKey> = {
-  directory: 'directory',
-  recents: 'recents',
-  swml: 'listings',
-  sip: 'listings',
-  subscribers: 'subscribers',
-};
-
 interface DestinationsTabsProps {
   tabs: ResourceTab[];
   activeTab: ResourceTab;
   onTabChange: (tab: ResourceTab) => void;
   onSelectAddress: SelectAddress;
-  // Renders a Close button after the tab strip (the header panel has one),
-  // with the active tab's code link before it.
+  // Renders a Close button after the tab strip (the header panel has one).
   onClose?: () => void;
   className?: string;
   // Classes for the tab panel: the Destinations pane makes it the scrolling
@@ -112,7 +99,6 @@ export function DestinationsTabs({
             </button>
           ))}
         </div>
-        {onClose && <CodeRef feature={DESTINATION_CODE[activeTab]} />}
         {onClose && (
           <button
             type="button"

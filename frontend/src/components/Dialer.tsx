@@ -10,7 +10,6 @@ import DiagnosticsPanel from './DiagnosticsPanel';
 import SubscriberPicker from './SubscriberPicker';
 import ErrorBanner from './ErrorBanner';
 import AddressSuggestions from './AddressSuggestions';
-import CodeRef from './CodeRef';
 import { useAddressSuggestions, type AddressSuggestion } from '../hooks/useAddressSuggestions';
 import { useCallStore } from '../hooks/useCallStore';
 import { useDialFieldStore } from '../hooks/useDialFieldStore';
@@ -525,13 +524,10 @@ const Dialer: React.FC = () => {
               thing, and on small phones the banner plus the label push the
               keypad down. */}
           <div className="mt-3 flex w-full max-w-xl items-center justify-between gap-3">
-            <div className="flex min-w-0 items-center gap-1">
-              {/* No room for it beside Video and Call on 320px phones. */}
-              <span className="hidden truncate text-xs font-medium uppercase tracking-wider text-faint min-[360px]:inline">
-                {phoneNumber && !callError ? addressMeta.label : ''}
-              </span>
-              <CodeRef feature="dial" align="left" />
-            </div>
+            {/* No room for it beside Video and Call on 320px phones. */}
+            <span className="hidden min-w-0 truncate text-xs font-medium uppercase tracking-wider text-faint min-[360px]:inline">
+              {phoneNumber && !callError ? addressMeta.label : ''}
+            </span>
             <div className="flex shrink-0 items-center gap-2">
               {/* Video toggle -- obeyed by handleCall when placing the next call */}
               <button

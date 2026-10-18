@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
 import { BellOff, Moon, Sun } from 'lucide-react';
-import CodeRef from './CodeRef';
 import { useCallStore } from '../hooks/useCallStore';
 import { saveSettings } from '../services/settings';
 import { applyTheme, currentTheme } from '../services/theme';
@@ -93,9 +92,6 @@ const AppBar: React.FC<AppBarProps> = ({ children, onIdentityClick }) => {
               <span className="truncate">{activeSubscriberName}</span>
             </span>
           ))}
-        <span className="hidden desk:inline-flex">
-          <CodeRef feature="connection" align="left" />
-        </span>
       </div>
       <div className="flex shrink-0 items-center gap-1">
         {children}

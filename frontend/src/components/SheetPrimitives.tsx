@@ -2,8 +2,6 @@ import React, { useId } from 'react';
 import { Copy, X } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useDialog } from '../hooks/useDialog';
-import CodeRef from './CodeRef';
-import type { FeatureKey } from '../codeMap';
 
 // Building blocks for the bottom sheets over the call screen (More controls,
 // Call statistics) and the idle-screen settings.
@@ -78,12 +76,10 @@ export const SheetShell: React.FC<SheetShellProps> = ({
   );
 };
 
-// Divider with a small caps label above a group of rows, optionally with the
-// "where's the code" button for the feature the group belongs to.
-export const SheetSection: React.FC<{ label: string; codeRef?: FeatureKey }> = ({ label, codeRef }) => (
-  <div className="mt-1 flex items-center justify-between gap-2 border-t border-edge-strong px-3 py-2 text-xs font-medium uppercase tracking-wider text-faint">
-    <span>{label}</span>
-    {codeRef && <CodeRef feature={codeRef} className="-my-1" />}
+// Divider with a small caps label above a group of rows.
+export const SheetSection: React.FC<{ label: string }> = ({ label }) => (
+  <div className="mt-1 border-t border-edge-strong px-3 py-2 text-xs font-medium uppercase tracking-wider text-faint">
+    {label}
   </div>
 );
 

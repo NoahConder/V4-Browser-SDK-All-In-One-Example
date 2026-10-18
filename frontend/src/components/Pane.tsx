@@ -1,7 +1,5 @@
 import React from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
-import CodeRef from './CodeRef';
-import type { FeatureKey } from '../codeMap';
 
 type Side = 'left' | 'right';
 
@@ -37,19 +35,17 @@ interface PaneProps {
   side: Side;
   collapsed: boolean;
   onToggle: () => void;
-  // The "where's the code" entry for what the pane currently shows.
-  codeRef: FeatureKey;
   children: React.ReactNode;
 }
 
 // A workbench side pane: a plain region, never a dialog (useDialog would move
 // focus into it and trap Tab, stealing the address input's focus and
-// Enter-to-call). Its header row names it, carries the code link for the
-// active tab and the fold toggle; the tab strip below is the child's own.
+// Enter-to-call). Its header row names it and carries the fold toggle; the
+// tab strip below is the child's own.
 // Collapsed, it shrinks to a rail (Workbench.tsx sets the grid track) but
 // keeps its children mounted under `hidden`, so the Inspector's last
 // statistics, connection-test result and event-log scroll survive a fold.
-export const Pane: React.FC<PaneProps> = ({ label, side, collapsed, onToggle, codeRef, children }) => (
+export const Pane: React.FC<PaneProps> = ({ label, side, collapsed, onToggle, children }) => (
   <section
     role="region"
     aria-label={label}
@@ -62,7 +58,6 @@ export const Pane: React.FC<PaneProps> = ({ label, side, collapsed, onToggle, co
         }`}
       >
         <span className="text-[11px] font-medium uppercase tracking-wider text-faint">{label}</span>
-        <CodeRef feature={codeRef} align={side === 'left' ? 'left' : 'right'} />
         <span className="flex-1" />
         <PaneToggle label={label} side={side} collapsed={false} onToggle={onToggle} />
       </div>
