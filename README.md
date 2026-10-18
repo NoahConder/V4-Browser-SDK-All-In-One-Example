@@ -1,10 +1,6 @@
 # SignalWire Browser SDK Dialer
 
-A reference dialer built with React and the SignalWire Browser SDK (`@signalwire/js` v4) for making and receiving WebRTC calls — audio and video, to phone numbers, SIP URIs, and SignalWire Fabric addresses. It is a hands-on way to explore what the Browser SDK can do, a test bench for exercising every one of its features while watching call state and statistics live, and a reference for how each piece is wired up (the table below maps every feature to the SDK API and the file). It is a testing and learning tool, not a production app.
-
-It wears the SignalWire docs' design language — Lexend and Instrument Sans type, the docs' dark and light palettes (turquoise and SignalWire blue accents), flat cards and underline tabs. Dark is the default; an Appearance setting switches to light or follows your system.
-
-In a desktop browser window (1024px and wider) it is a three-pane console: **Destinations** on the left (Directory, Recents, SWML scripts, SIP credentials, Subscribers), the call stage in the middle (the address field, a keypad you can fold away, and during a call a card with the status, timer, call id, video, level meters and every control), and an **Inspector** on the right (**Quality**, **Events**, **Devices**, **Diagnostics**). Either side pane folds to a rail. On a phone the same pieces stack, with the lists, devices, diagnostics and subscribers opening from the top bar.
+A web dialer built with React and the SignalWire Browser SDK (`@signalwire/js` v4) for making and receiving WebRTC calls — audio and video, to phone numbers, SIP URIs, and SignalWire Fabric addresses. It's a hands-on way to explore the Browser SDK's features, with live call statistics and an event log for testers, and a reference for how each feature is wired up; it is a testing and learning tool, not a production app.
 
 This project is a fork of [briankwest/swdialer](https://github.com/briankwest/swdialer). See [CHANGELOG.md](CHANGELOG.md) for how it differs from upstream.
 
