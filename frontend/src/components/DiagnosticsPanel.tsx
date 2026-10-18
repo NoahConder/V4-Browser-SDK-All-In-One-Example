@@ -7,6 +7,7 @@ import { downloadDiagnostics } from '../services/diagnostics';
 import { describeCallError } from '../hooks/useSignalWire';
 import { useDialog } from '../hooks/useDialog';
 import { LOG_LEVELS, loadSettings, saveSettings, type AudioCodec, type DialerSettings } from '../services/settings';
+import { countDigits, getDialAddressType } from '../utils/address';
 
 interface DiagnosticsPanelProps {
   isOpen: boolean;
@@ -51,6 +52,12 @@ const DiagnosticsPanel: React.FC<DiagnosticsPanelProps> = ({ isOpen, onClose }) 
     [order[index], order[target]] = [order[target], order[index]];
     updateSettings({ audioCodecOrder: order });
   };
+
+  // The codec order can't influence a call to a phone number (see the note
+  // under the codec list), so say so when the test would place one. The digit
+  // minimum keeps a half-typed field quiet.
+  const testsPhoneNumber =
+    !skipMediaTest && countDigits(destination) >= 7 && getDialAddressType(destination.trim()) === 'phone';
 
   const handleRunTest = async () => {
     const trimmed = destination.trim();
@@ -123,6 +130,11 @@ const DiagnosticsPanel: React.FC<DiagnosticsPanelProps> = ({ isOpen, onClose }) 
             {isRunning ? <Loader2 size={16} className="animate-spin" /> : 'Run'}
           </button>
         </div>
+        {testsPhoneNumber && (
+          <p className="mt-1.5 text-xs text-gray-500">
+            Phone number: the test call uses G.711 (PCMU/PCMA), so the codec order below has no effect on it.
+          </p>
+        )}
 
         <div className="-mx-3 mt-1">
           <SheetSwitch
@@ -240,6 +252,10 @@ const DiagnosticsPanel: React.FC<DiagnosticsPanelProps> = ({ isOpen, onClose }) 
             </li>
           ))}
         </ol>
+        <p className="px-3 pb-2 text-xs text-gray-500">
+          Ranks the codecs this browser offers. Applies to WebRTC and SIP calls; calls to phone numbers use G.711
+          (PCMU/PCMA) — SignalWire picks the codec for the carrier, so the order has no effect there.
+        </p>
 
         <label className="flex items-center justify-between gap-3 px-3 py-2.5 text-sm text-white">
           <span>SDK log level</span>

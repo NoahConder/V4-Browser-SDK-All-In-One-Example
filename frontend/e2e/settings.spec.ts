@@ -59,6 +59,23 @@ test.describe('Diagnostics & Settings', () => {
     await expect(panel).toContainText('Camera: not working');
     await expect(panel).toContainText('Speaker: available');
   });
+
+  test('explains that the codec order does not apply to phone numbers', async ({ page }) => {
+    const panel = page.locator('[role="dialog"][aria-labelledby="diagnostics-title"]');
+    await expect(panel).toContainText('calls to phone numbers use G.711');
+    const hint = panel.getByText('the codec order below has no effect');
+    const field = page.locator('input[aria-label="Number or address to test"]');
+    await expect(hint).toHaveCount(0);
+    await field.fill('5551234567');
+    await expect(hint).toHaveCount(1);
+    await field.fill('sip:alice@example.com');
+    await expect(hint).toHaveCount(0);
+    // A signaling-only test places no call, so there is nothing to warn about.
+    await field.fill('(555) 123-4567');
+    await expect(hint).toHaveCount(1);
+    await page.click('button[role="switch"]:has-text("Skip media test")');
+    await expect(hint).toHaveCount(0);
+  });
 });
 
 test('Do Not Disturb toggles registration and shows in the status bar', async ({ page }) => {

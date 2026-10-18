@@ -1,6 +1,6 @@
 from flask import Blueprint, jsonify, request
 from utils.signalwire import get_client
-from utils.security import gate, bounded_page
+from utils.security import gate, bounded_page, query_param
 from concurrent.futures import ThreadPoolExecutor
 import logging
 import time
@@ -36,6 +36,14 @@ def _fetch_with_addresses(script):
     return {**script, "addresses": addresses}
 
 
+def _matches(script, needle):
+    """Case-insensitive substring match on the names a tester would type.
+    Fabric resource records carry `display_name`; `name` is checked too in case
+    a record uses that instead."""
+    fields = (script.get('display_name'), script.get('name'))
+    return any(needle in (value or '').casefold() for value in fields)
+
+
 @swml_bp.route('/scripts', methods=['GET'])
 def get_swml_scripts():
     """
@@ -47,6 +55,10 @@ def get_swml_scripts():
     call to SignalWire, so left open this was a free amplifier against the
     account's API quota. The limit is higher than the token endpoints' since
     "load more" pages through it.
+
+    `q` filters the cached metadata by name before paging, so `total`
+    and `has_more` describe the matches and `offset` is relative to the
+    filtered list; only the matching page's addresses are fetched.
     """
     blocked = gate(request, 'swml', limit=30)
     if blocked:
@@ -59,8 +71,11 @@ def get_swml_scripts():
             }), 500
 
         offset, limit = bounded_page(request)
+        needle = query_param(request).casefold()
 
         scripts = _get_scripts_meta()
+        if needle:
+            scripts = [script for script in scripts if _matches(script, needle)]
         page = scripts[offset:offset + limit]
 
         with ThreadPoolExecutor(max_workers=ADDRESS_FETCH_WORKERS) as executor:

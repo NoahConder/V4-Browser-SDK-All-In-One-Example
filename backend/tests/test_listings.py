@@ -1,7 +1,7 @@
 """Every /api route is gated (utils/security.gate), the listing endpoints
-page within bounds and only fetch addresses for the requested page, the
-subscriber listing is trimmed to its public shape, and the call-log blueprint
-is down to the one POST the frontend uses.
+page within bounds, filter by `q` before paging and only fetch addresses for
+the requested page, the subscriber listing is trimmed to its public shape, and
+the call-log blueprint is down to the one POST the frontend uses.
 """
 from collections import defaultdict, deque
 
@@ -17,6 +17,9 @@ from app import app
 from utils.signalwire import SignalWireClient
 
 KEY = {'X-API-Key': 'test-key'}
+
+# Seven scripts, three of them matching "ivr" (s0, s1, s5).
+SCRIPT_NAMES = ['Main IVR', 'Sales IVR', 'Support Queue', 'After Hours', 'Voicemail', 'ivr-test', 'Echo']
 
 # (method, path, body that passes the route's own validation)
 GATED_ROUTES = [
@@ -36,7 +39,7 @@ class FakeSignalWire:
         self.address_calls = []
 
     def list_swml_scripts(self):
-        return [{'id': f's{i}', 'script_type': 'swml'} for i in range(7)]
+        return [{'id': f's{i}', 'display_name': name, 'script_type': 'swml'} for i, name in enumerate(SCRIPT_NAMES)]
 
     def list_swml_script_addresses(self, script_id):
         self.address_calls.append(script_id)
@@ -44,9 +47,11 @@ class FakeSignalWire:
                  'channels': {'audio': f'/public/{script_id}?channel=audio'}}]
 
     def list_sip_credentials(self):
-        return [{'id': 'cred-1', 'sip_endpoint': {'username': 'alice-sip'}}]
+        return [{'id': 'cred-1', 'display_name': 'Alice Desk', 'sip_endpoint': {'username': 'alice-sip'}},
+                {'id': 'cred-2', 'display_name': 'Bob Desk', 'sip_endpoint': {'username': 'bob-sip'}}]
 
     def list_sip_credential_addresses(self, credential_id):
+        self.address_calls.append(credential_id)
         return []
 
     def list_subscribers(self):
@@ -130,7 +135,46 @@ def test_page_parameters_are_clamped(api):
 def test_sip_credentials_keep_the_dial_username(api):
     client, _ = api
     body = client.get('/api/sip/credentials', headers=KEY).get_json()
-    assert body['data'] == [{'id': 'cred-1', 'sip_endpoint': {'username': 'alice-sip'}, 'addresses': []}]
+    assert len(body['data']) == 2
+    assert body['data'][0] == {'id': 'cred-1', 'display_name': 'Alice Desk',
+                               'sip_endpoint': {'username': 'alice-sip'}, 'addresses': []}
+
+
+def test_search_filters_before_paging_and_fetches_addresses_only_for_the_matches(api):
+    client, fake = api
+    body = client.get('/api/swml/scripts?q=ivr&limit=2', headers=KEY).get_json()
+    assert [script['id'] for script in body['data']] == ['s0', 's1']
+    assert body['total'] == 3 and body['has_more'] is True
+    assert sorted(fake.address_calls) == ['s0', 's1']
+    # The next page is relative to the filtered list, not the whole space.
+    body = client.get('/api/swml/scripts?q=ivr&offset=2&limit=2', headers=KEY).get_json()
+    assert [script['id'] for script in body['data']] == ['s5']
+    assert body['has_more'] is False
+
+
+@pytest.mark.parametrize('q', ['IVR', ' ivr ', 'Ivr'])
+def test_search_is_case_insensitive_and_trimmed(api, q):
+    client, _ = api
+    assert client.get('/api/swml/scripts', query_string={'q': q}, headers=KEY).get_json()['total'] == 3
+
+
+def test_blank_oversized_and_unmatched_searches(api):
+    client, fake = api
+    assert client.get('/api/swml/scripts?q=%20%20', headers=KEY).get_json()['total'] == 7
+    fake.address_calls.clear()
+    body = client.get('/api/swml/scripts?q=zzz', headers=KEY).get_json()
+    assert body['data'] == [] and body['total'] == 0 and body['has_more'] is False
+    assert fake.address_calls == []
+    # An oversized value is truncated, not rejected.
+    assert client.get('/api/swml/scripts?q=' + 'a' * 500, headers=KEY).status_code == 200
+
+
+def test_sip_search_matches_display_name_and_username(api):
+    client, fake = api
+    body = client.get('/api/sip/credentials?q=bob', headers=KEY).get_json()
+    assert [credential['id'] for credential in body['data']] == ['cred-2']
+    assert fake.address_calls == ['cred-2']
+    assert client.get('/api/sip/credentials?q=desk', headers=KEY).get_json()['total'] == 2
 
 
 def test_subscribers_are_trimmed_to_the_public_shape(api):

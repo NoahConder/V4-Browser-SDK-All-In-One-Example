@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
-import type { NetworkMetrics, RecoveryEvent } from '@signalwire/js';
+import type { NetworkIssue, NetworkMetrics, RecoveryEvent } from '@signalwire/js';
 import { SheetRow, SheetSection, SheetShell, SheetStat } from './SheetPrimitives';
 import { useCallStore } from '../hooks/useCallStore';
 import { signalWireService, type ConnectionStatsSnapshot } from '../services/signalwire';
@@ -37,8 +37,33 @@ const CANDIDATE_TYPE_LABEL: Record<string, string> = {
   relay: 'relay (TURN)',
 };
 
+const ISSUE_LABEL: Record<NetworkIssue['type'], string> = {
+  no_inbound_audio: 'No inbound audio',
+  no_inbound_video: 'No inbound video',
+  high_rtt: 'RTT spike',
+  high_jitter: 'Jitter spike',
+  high_packet_loss: 'Packet loss',
+  ice_disconnected: 'ICE disconnected',
+};
+
+// The SDK reports value/threshold in ms for RTT, jitter and the no-media
+// timers, and as a percentage for loss.
+const formatIssueValue = (issue: NetworkIssue, value: number): string =>
+  issue.type === 'high_packet_loss' ? `${value.toFixed(1)}%` : `${Math.round(value)} ms`;
+
+// "Jitter spike · warning · 9 ms (threshold 8 ms)"
+const describeIssue = (issue: NetworkIssue): string => {
+  const parts = [ISSUE_LABEL[issue.type] ?? issue.type, issue.severity];
+  if (issue.value != null) {
+    const threshold = issue.threshold != null ? ` (threshold ${formatIssueValue(issue, issue.threshold)})` : '';
+    parts.push(`${formatIssueValue(issue, issue.value)}${threshold}`);
+  }
+  return parts.join(' · ');
+};
+
 // Live call statistics for testers: the SDK's network metrics (RTT, jitter,
-// loss, bandwidth estimate), the negotiated codecs and ICE path from
+// loss, bandwidth estimate) and active network issues, the negotiated codecs
+// and ICE path from
 // getStats(), the SDK's recovery state and recent recovery events, and the
 // call id. Opened from the quality badge or the More sheet.
 //
@@ -47,7 +72,7 @@ const CANDIDATE_TYPE_LABEL: Record<string, string> = {
 // re-renders on every tick (see CLAUDE.md's subscription-placement note).
 const CallStatsSheet: React.FC<CallStatsSheetProps> = ({ isOpen, onClose, onRequestIceRestart }) => {
   const [metrics, setMetrics] = useState<NetworkMetrics[]>([]);
-  const [isHealthy, setIsHealthy] = useState(true);
+  const [issues, setIssues] = useState<NetworkIssue[]>([]);
   const [events, setEvents] = useState<RecoveryEvent[]>([]);
   const [connection, setConnection] = useState<ConnectionStatsSnapshot | null>(null);
   const [copied, setCopied] = useState(false);
@@ -59,7 +84,7 @@ const CallStatsSheet: React.FC<CallStatsSheetProps> = ({ isOpen, onClose, onRequ
     if (!isOpen) return;
     const subs = [
       signalWireService.getNetworkMetrics$().subscribe(setMetrics),
-      signalWireService.getIsNetworkHealthy$().subscribe(setIsHealthy),
+      signalWireService.getNetworkIssues$().subscribe(setIssues),
       // Replays the call's recent events, then streams new ones.
       signalWireService.getRecoveryEvents$().subscribe((event) => setEvents((prev) => [...prev.slice(-9), event])),
     ];
@@ -114,7 +139,7 @@ const CallStatsSheet: React.FC<CallStatsSheetProps> = ({ isOpen, onClose, onRequ
         value={
           qualityLevel ? `${qualityLevel}${qualityScore != null ? ` · ${qualityScore.toFixed(1)} / 5` : ''}` : DASH
         }
-        hint="SDK quality level and MOS-style score"
+        hint="SDK MOS from RTT, jitter and loss over the whole call"
       />
       <SheetStat label="Round-trip time" value={latest ? `${Math.round(latest.roundTripTime)} ms` : DASH} />
       <SheetStat label="Audio jitter" value={latest ? `${Math.round(latest.audio.jitter)} ms` : DASH} />
@@ -134,7 +159,20 @@ const CallStatsSheet: React.FC<CallStatsSheetProps> = ({ isOpen, onClose, onRequ
         }
         hint="Browser estimate of available outgoing bitrate"
       />
-      <SheetStat label="Health" value={isHealthy ? 'Healthy' : 'Degraded'} hint="SDK isNetworkHealthy$" />
+      <SheetStat
+        label="Health"
+        value={issues.length === 0 ? 'Healthy' : `Degraded · ${issues.length} issue${issues.length === 1 ? '' : 's'}`}
+        hint="SDK issue detector: spikes vs. the first 10 s, per-second loss, stalled inbound media — so it can disagree with Quality"
+      />
+      {issues.length > 0 && (
+        <ul className="px-3 pb-1 text-xs text-gray-400">
+          {issues.map((issue) => (
+            <li key={issue.type} className="truncate select-text">
+              {describeIssue(issue)}
+            </li>
+          ))}
+        </ul>
+      )}
 
       <SheetSection label="Transport" />
       <SheetStat

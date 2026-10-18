@@ -4,7 +4,9 @@ const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 // Modal behavior for the sheets, modals and header panels: moves focus inside
-// on open (the first field, else the first control), keeps Tab cycling within,
+// on open (the first field -- skipping ones marked `data-no-autofocus`, such as
+// the resources panel's search box, so phones don't get the keyboard the moment
+// the panel opens -- else the first control), keeps Tab cycling within,
 // closes on Escape, and returns focus to whatever opened it on close. Attach
 // the returned ref to the dialog's root element and give it role="dialog",
 // aria-modal="true" and a label.
@@ -25,7 +27,9 @@ export function useDialog(isOpen: boolean, onClose: () => void) {
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const focusables = () => Array.from(dialogEl.querySelectorAll<HTMLElement>(FOCUSABLE));
 
-    (dialogEl.querySelector<HTMLElement>('input, select, textarea') ?? focusables()[0])?.focus();
+    (
+      dialogEl.querySelector<HTMLElement>('input:not([data-no-autofocus]), select, textarea') ?? focusables()[0]
+    )?.focus();
 
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {

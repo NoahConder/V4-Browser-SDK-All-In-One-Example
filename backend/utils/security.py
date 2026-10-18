@@ -98,3 +98,15 @@ def bounded_page(request, default_limit: int = 10) -> tuple:
     limit = request.args.get('limit', default_limit, type=int) or default_limit
     limit = max(1, min(limit, MAX_PAGE_LIMIT))
     return offset, limit
+
+
+MAX_QUERY_LENGTH = 100
+
+
+def query_param(request, name: str = 'q') -> str:
+    """Free-text filter from the query string, trimmed and capped in length so
+    a hostile value can't make the per-item substring scan expensive. '' when
+    absent. The listing endpoints apply it to their cached metadata *before*
+    paging, so `offset` is relative to the filtered list.
+    """
+    return (request.args.get(name, '') or '').strip()[:MAX_QUERY_LENGTH]

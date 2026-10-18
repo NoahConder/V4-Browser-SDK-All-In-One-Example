@@ -11,6 +11,23 @@ const HARNESS = `
     setIce(state) { this.iceConnectionState = state; this.dispatchEvent(new Event('iceconnectionstatechange')); }
   }
   s.client = { preferences: { recoveryDebounceTime: 0, maxRecoveryAttempts: 0, iceRestartTimeout: 0.5 } };
+  // A fake SDK Call with real rxjs Observables (borrowed from one the service
+  // returns): status$ is drivable, everything else never emits.
+  const Observable = s.getNetworkMetrics$().constructor;
+  const never = new Observable(() => {});
+  window.__fakeCall = (status) => {
+    const fns = new Set();
+    const call = {
+      id: 'sdk-call-x', status, direction: 'outbound', to: '/public/test', toName: 'Test App',
+      mediaDirections: { audio: 'sendrecv' }, rtcPeerConnection: undefined, localStream: null, self: null,
+      hangup: async () => {},
+      status$: new Observable((sub) => { sub.next(call.status); fns.add(sub); return () => fns.delete(sub); }),
+      remoteStream$: never, localStream$: never, errors$: never, self$: never,
+      qualityLevel$: never, qualityScore$: never, networkIssues$: never, recoveryState$: never, recoveryEvent$: never,
+      setStatus(next) { call.status = next; fns.forEach((sub) => sub.next(next)); },
+    };
+    return call;
+  };
   window.__h = {
     begin() {
       const pc = new FakePc();
@@ -29,6 +46,8 @@ declare global {
     __h: { begin(): unknown; state(): { inCall: boolean; disrupted: boolean; hasCall: boolean; timer: boolean; listeners: number } };
     __pc: { setIce(state: string): void };
     __old: { setIce(state: string): void };
+    __fakeCall: (status: string) => { setStatus(status: string): void };
+    __call: { setStatus(status: string): void };
   }
 }
 
@@ -80,5 +99,59 @@ test.describe('media loss vs. call end', () => {
     );
     expect(await state(page)).toMatchObject({ inCall: true, hasCall: true });
     await evalInApp(page, `s.handleCallEnded();`);
+  });
+});
+
+// Hang-ups this app didn't start: the SDK's own hangup()/destroy() emits
+// 'disconnecting' then 'destroyed', never 'disconnected'. The connection
+// test's media call is the everyday case -- it's dialed and hung up by the
+// SDK's PreflightRunner -- and it must not be adopted as a reattached call.
+test.describe('SDK-side hang-ups and the connection test', () => {
+  test.beforeEach(async ({ page }) => {
+    await openDialer(page);
+    await evalInApp(page, HARNESS);
+  });
+
+  test("status 'destroyed' ends the call; 'disconnecting' does not", async ({ page }) => {
+    await evalInApp(
+      page,
+      `
+      window.__call = window.__fakeCall('connected');
+      s.currentCall = window.__call; s.wasIncomingCall = false;
+      store.getState().setCallState({ isInCall: true, callStatus: 'connected', remoteNumber: 'Test App', connectedAt: Date.now() });
+      s.setupCallSubscriptions(window.__call);
+    `,
+    );
+    await page.evaluate(() => window.__call.setStatus('disconnecting'));
+    await page.waitForTimeout(100);
+    expect(await state(page)).toMatchObject({ inCall: true, hasCall: true });
+    await page.evaluate(() => window.__call.setStatus('destroyed'));
+    await expect.poll(() => state(page)).toMatchObject({ inCall: false, hasCall: false });
+  });
+
+  test('the media test call is left alone while preflight runs, and adopted otherwise', async ({ page }) => {
+    const adopted = await evalInApp<[boolean, boolean, boolean]>(
+      page,
+      `
+      // runPreflight() holds the flag for exactly the duration of client.preflight().
+      let flagDuring = null;
+      s.client.preflight = async () => { flagDuring = s.preflightInProgress; return { ok: true }; };
+      await s.runPreflight('/public/test', {});
+      const flagAfter = s.preflightInProgress;
+
+      window.__call = window.__fakeCall('connected');
+      s.preflightInProgress = true;
+      s.adoptUntrackedCall([window.__call]);
+      const adoptedDuring = s.currentCall !== null;
+      s.preflightInProgress = false;
+      s.adoptUntrackedCall([window.__call]);
+      return [flagDuring && !flagAfter, adoptedDuring, s.currentCall === window.__call];
+    `,
+    );
+    expect(adopted).toEqual([true, false, true]);
+    await expect.poll(() => state(page)).toMatchObject({ inCall: true, hasCall: true });
+    // ...and once adopted, the SDK's own hang-up still ends it.
+    await page.evaluate(() => window.__call.setStatus('destroyed'));
+    await expect.poll(() => state(page)).toMatchObject({ inCall: false, hasCall: false });
   });
 });

@@ -30,13 +30,13 @@ const TABS: Array<{ key: ResourceTab; label: string; title: string }> = [
 
 // Module-scope (referentially stable) so ResourceAddressList's fetch effect
 // doesn't refire every render.
-const fetchSwmlPage = async (offset: number, limit: number): Promise<ResourcePage<SwmlScript>> => {
-  const page = await swmlAPI.listScripts(offset, limit);
+const fetchSwmlPage = async (offset: number, limit: number, query: string): Promise<ResourcePage<SwmlScript>> => {
+  const page = await swmlAPI.listScripts(offset, limit, query);
   return { items: page.scripts, hasMore: page.hasMore };
 };
 
-const fetchSipPage = async (offset: number, limit: number): Promise<ResourcePage<SipCredential>> => {
-  const page = await sipAPI.listCredentials(offset, limit);
+const fetchSipPage = async (offset: number, limit: number, query: string): Promise<ResourcePage<SipCredential>> => {
+  const page = await sipAPI.listCredentials(offset, limit, query);
   return { items: page.credentials, hasMore: page.hasMore };
 };
 
@@ -103,7 +103,8 @@ const DialableResourcesPanel: React.FC<DialableResourcesPanelProps> = ({
       </div>
 
       {/* Each list is keyed by tab so switching remounts it (fresh fetch for the
-          REST tabs; the Directory is cached by the SDK and re-renders instantly). */}
+          REST tabs; the Directory is cached by the SDK and re-renders instantly).
+          Each tab's search box lives in its list, so it starts empty again too. */}
       <div id="resources-tabpanel" role="tabpanel" aria-labelledby={`resources-tab-${activeTab}`}>
         {activeTab === 'directory' ? (
           <DirectoryAddressList key="directory" onSelectAddress={onSelectAddress} />
@@ -117,6 +118,7 @@ const DialableResourcesPanel: React.FC<DialableResourcesPanelProps> = ({
             onSelectAddress={onSelectAddress}
             emptyMessage="No SWML scripts found in this space."
             loadingMessage="Loading scripts..."
+            searchPlaceholder="Search scripts"
           />
         ) : (
           <ResourceAddressList
@@ -126,6 +128,7 @@ const DialableResourcesPanel: React.FC<DialableResourcesPanelProps> = ({
             onSelectAddress={onSelectAddress}
             emptyMessage="No SIP credentials found in this space."
             loadingMessage="Loading credentials..."
+            searchPlaceholder="Search SIP credentials"
           />
         )}
       </div>

@@ -1,9 +1,11 @@
 import { useState } from 'react';
 import { PhoneIncoming, PhoneMissed, PhoneOutgoing, Trash2, Video } from 'lucide-react';
 import { DialButtons } from './ResourceAddressList';
+import SearchField from './SearchField';
 import { useRecentsStore, type RecentCall } from '../hooks/useRecentsStore';
 import { useCallStore } from '../hooks/useCallStore';
 import { getDialAddressType } from '../utils/address';
+import { matchStatus, normalizeQuery } from '../utils/search';
 
 interface RecentsListProps {
   onSelectAddress: (path: string, video: boolean, label?: string) => void;
@@ -39,6 +41,15 @@ const durationOf = (entry: RecentCall): string | null => {
 const asAudioDestination = (destination: string): string =>
   destination.replace(/([?&])channel=[^&]*/i, '$1channel=audio');
 
+// Label and destination substrings; a needle made only of digits and phone
+// punctuation also matches the destination's digits, so "555 123" finds
+// (555) 123-4567.
+const matchesRecent = (entry: RecentCall, needle: string): boolean => {
+  if (entry.label.toLowerCase().includes(needle) || entry.destination.toLowerCase().includes(needle)) return true;
+  const digits = needle.replace(/\D/g, '');
+  return digits.length > 0 && /^[\d\s()+.-]*$/.test(needle) && entry.destination.replace(/\D/g, '').includes(digits);
+};
+
 // Calls made and received in this browser (useRecentsStore), newest first,
 // each redialable as audio or video.
 function RecentsList({ onSelectAddress }: RecentsListProps) {
@@ -46,14 +57,27 @@ function RecentsList({ onSelectAddress }: RecentsListProps) {
   const clear = useRecentsStore((s) => s.clear);
   const activeSubscriberName = useCallStore((s) => s.activeSubscriberName);
   const [confirmClear, setConfirmClear] = useState(false);
+  const [query, setQuery] = useState('');
 
   if (entries.length === 0) {
     return <div className="py-4 text-sm text-gray-400">No recent calls.</div>;
   }
 
+  const needle = normalizeQuery(query);
+  const visible = needle ? entries.filter((entry) => matchesRecent(entry, needle)) : entries;
+
   return (
     <div className="space-y-1">
-      {entries.map((entry) => {
+      <SearchField
+        value={query}
+        onChange={setQuery}
+        placeholder="Search recents"
+        status={needle ? matchStatus(visible.length) : ''}
+      />
+      {visible.length === 0 && (
+        <div className="py-4 text-sm text-gray-400">No matches for &quot;{query.trim()}&quot;.</div>
+      )}
+      {visible.map((entry) => {
         const missed = entry.outcome === 'missed';
         const Icon = entry.direction === 'outbound' ? PhoneOutgoing : missed ? PhoneMissed : PhoneIncoming;
         // Video only makes sense for Fabric/SIP destinations, not PSTN.

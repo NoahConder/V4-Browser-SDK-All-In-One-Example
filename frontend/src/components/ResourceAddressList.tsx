@@ -1,6 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Loader2, Phone, Video } from 'lucide-react';
+import axios from 'axios';
+import SearchField from './SearchField';
 import type { DialableAddress } from '../types';
+import { matchStatus } from '../utils/search';
 
 export interface DialableResource {
   id: string;
@@ -13,6 +16,7 @@ export interface ResourcePage<T extends DialableResource> {
 }
 
 const PAGE_SIZE = 10;
+const SEARCH_DEBOUNCE_MS = 250;
 
 // One dialable row: a label, the audio dial URL, and the video dial URL when
 // the address has a distinct one.
@@ -48,6 +52,13 @@ function rowsFor<T extends DialableResource>(
   }
   return rows;
 }
+
+// The listing scopes are rate limited (30/min); a 429 reads better than
+// axios's "Request failed with status code 429".
+const describeFetchError = (err: unknown, fallback: string): string => {
+  if (axios.isAxiosError(err) && err.response?.status === 429) return 'Too many requests — wait a moment and try again.';
+  return err instanceof Error ? err.message : fallback;
+};
 
 const DIAL_BUTTON_CLASS =
   'flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-white/10 bg-white/6 px-3 py-2 text-xs font-medium text-gray-200 backdrop-blur-md transition-colors hover:bg-white/15 hover:text-white active:scale-[0.97] disabled:cursor-not-allowed disabled:border-white/5 disabled:bg-white/2 disabled:text-gray-600 disabled:hover:bg-white/2';
@@ -102,6 +113,9 @@ interface AddressRowListProps {
   onSelectAddress: (path: string, video: boolean, label?: string) => void;
   emptyMessage: string;
   loadingMessage: string;
+  // Shown with the spinner while another page loads (the Directory says
+  // "Searching…" while a search is still scanning pages).
+  loadingMoreMessage?: string;
   loadMoreLabel?: string;
 }
 
@@ -117,6 +131,7 @@ export function AddressRowList({
   onSelectAddress,
   emptyMessage,
   loadingMessage,
+  loadingMoreMessage = 'Loading...',
   loadMoreLabel = `Load ${PAGE_SIZE} more`,
 }: AddressRowListProps) {
   if (isLoading) {
@@ -164,7 +179,7 @@ export function AddressRowList({
         </div>
       ))}
 
-      {hasMore && (
+      {hasMore ? (
         <button
           type="button"
           onClick={onLoadMore}
@@ -172,8 +187,16 @@ export function AddressRowList({
           className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg py-2.5 text-xs font-medium text-gray-400 transition-colors hover:bg-white/10 hover:text-white disabled:opacity-50"
         >
           {isLoadingMore ? <Loader2 size={14} className="animate-spin" /> : null}
-          {isLoadingMore ? 'Loading...' : loadMoreLabel}
+          {isLoadingMore ? loadingMoreMessage : loadMoreLabel}
         </button>
+      ) : (
+        // A narrowed Directory keeps loading pages without offering the
+        // button, so still show that something is happening.
+        isLoadingMore && (
+          <div className="mt-2 flex items-center justify-center gap-2 py-2.5 text-xs text-gray-400">
+            <Loader2 size={14} className="animate-spin" /> {loadingMoreMessage}
+          </div>
+        )
       )}
     </div>
   );
@@ -181,85 +204,116 @@ export function AddressRowList({
 
 interface ResourceAddressListProps<T extends DialableResource> {
   onSelectAddress: (path: string, video: boolean, label?: string) => void;
-  fetchPage: (offset: number, limit: number) => Promise<ResourcePage<T>>;
+  // `query` is the trimmed search text; the backend filters before paging.
+  fetchPage: (offset: number, limit: number, query: string) => Promise<ResourcePage<T>>;
   getRowLabel: (item: T, address: DialableAddress) => string;
   emptyMessage: string;
   loadingMessage: string;
+  searchPlaceholder: string;
 }
 
 // REST-backed list (SWML Scripts, SIP Credentials): fetches offset/limit
-// pages from the backend and renders them with AddressRowList.
+// pages from the backend and renders them with AddressRowList. Search is
+// server-side (the backend's `q` filters its cached metadata before paging),
+// so `items.length` stays the right offset for "load more" while searching.
 function ResourceAddressList<T extends DialableResource>({
   onSelectAddress,
   fetchPage,
   getRowLabel,
   emptyMessage,
   loadingMessage,
+  searchPlaceholder,
 }: ResourceAddressListProps<T>) {
   const [items, setItems] = useState<T[]>([]);
   const [hasMore, setHasMore] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
+  const [debouncedQuery, setDebouncedQuery] = useState('');
+  // Bumped whenever the list is reset (query change, unmount), so a response
+  // to an earlier page-0 or load-more request can't land on a newer list.
+  const generationRef = useRef(0);
 
-  // Fetches the first page fresh on mount -- this is a testing tool, so we favor
-  // freshness over caching. The parent panel remounts this component (via a
-  // `key`) whenever the active tab or open state changes, which is what drives
-  // "fetch fresh every time the panel/tab opens".
   useEffect(() => {
-    let cancelled = false;
+    const timer = setTimeout(() => setDebouncedQuery(query.trim()), SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  // Fetches the first page fresh on mount and whenever the debounced query
+  // changes -- this is a testing tool, so we favor freshness over caching. The
+  // parent panel remounts this component (via a `key`) whenever the active tab
+  // or open state changes, which is what drives "fetch fresh every time the
+  // panel/tab opens".
+  useEffect(() => {
+    const generation = generationRef.current;
+    const isCurrent = () => generation === generationRef.current;
     setItems([]);
     setHasMore(false);
     setIsLoading(true);
+    setIsLoadingMore(false);
     setError(null);
 
-    fetchPage(0, PAGE_SIZE)
+    fetchPage(0, PAGE_SIZE, debouncedQuery)
       .then((page) => {
-        if (cancelled) return;
+        if (!isCurrent()) return;
         setItems(page.items);
         setHasMore(page.hasMore);
       })
       .catch((err) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load');
+        if (isCurrent()) setError(describeFetchError(err, 'Failed to load'));
       })
       .finally(() => {
-        if (!cancelled) setIsLoading(false);
+        if (isCurrent()) setIsLoading(false);
       });
 
     return () => {
-      cancelled = true;
+      generationRef.current += 1;
     };
-  }, [fetchPage]);
+  }, [fetchPage, debouncedQuery]);
 
   const handleLoadMore = () => {
+    const generation = generationRef.current;
+    const isCurrent = () => generation === generationRef.current;
     setIsLoadingMore(true);
     setError(null);
 
-    fetchPage(items.length, PAGE_SIZE)
+    fetchPage(items.length, PAGE_SIZE, debouncedQuery)
       .then((page) => {
+        if (!isCurrent()) return;
         setItems((prev) => [...prev, ...page.items]);
         setHasMore(page.hasMore);
       })
       .catch((err) => {
-        setError(err instanceof Error ? err.message : 'Failed to load more');
+        if (isCurrent()) setError(describeFetchError(err, 'Failed to load more'));
       })
       .finally(() => {
-        setIsLoadingMore(false);
+        if (isCurrent()) setIsLoadingMore(false);
       });
   };
 
+  const rows = rowsFor(items, getRowLabel);
+
   return (
-    <AddressRowList
-      rows={rowsFor(items, getRowLabel)}
-      isLoading={isLoading}
-      isLoadingMore={isLoadingMore}
-      error={error}
-      hasMore={hasMore}
-      onLoadMore={handleLoadMore}
-      onSelectAddress={onSelectAddress}
-      emptyMessage={emptyMessage}
-      loadingMessage={loadingMessage}
-    />
+    <>
+      <SearchField
+        value={query}
+        onChange={setQuery}
+        placeholder={searchPlaceholder}
+        status={debouncedQuery && !isLoading && !error ? matchStatus(rows.length) : ''}
+      />
+      <AddressRowList
+        rows={rows}
+        isLoading={isLoading}
+        isLoadingMore={isLoadingMore}
+        error={error}
+        hasMore={hasMore}
+        onLoadMore={handleLoadMore}
+        onSelectAddress={onSelectAddress}
+        emptyMessage={debouncedQuery ? `No matches for "${debouncedQuery}".` : emptyMessage}
+        loadingMessage={debouncedQuery ? 'Searching…' : loadingMessage}
+      />
+    </>
   );
 }
 

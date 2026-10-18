@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import type { Address, Directory } from '@signalwire/js';
 import { combineLatest, of, switchMap } from 'rxjs';
 import { AddressRowList, type AddressRow } from './ResourceAddressList';
+import SearchField from './SearchField';
 import { signalWireService } from '../services/signalwire';
+import { matchStatus, normalizeQuery } from '../utils/search';
 
 // 'app' | 'call' | 'room' | 'subscriber' -- the SDK uses this union but
 // doesn't export it by name.
@@ -22,6 +24,15 @@ const FILTERS: Array<{ key: TypeFilter; label: string }> = [
   { key: 'room', label: 'Rooms' },
   { key: 'app', label: 'Apps' },
 ];
+
+// Case-insensitive substring match over the raw fields (not the rendered
+// label, so " (you)" isn't searchable). The dial path is included without its
+// `?channel=` suffix -- otherwise "audio" would match everything -- which lets
+// "private" narrow to subscribers.
+const matchesQuery = (address: Address, needle: string): boolean => {
+  const path = (address.channels.audio ?? address.channels.video ?? address.channels.messaging ?? '').split('?')[0];
+  return [address.displayName, address.name, path].some((field) => !!field && field.toLowerCase().includes(needle));
+};
 
 interface DirectoryAddressListProps {
   onSelectAddress: (path: string, video: boolean, label?: string) => void;
@@ -43,7 +54,12 @@ function DirectoryAddressList({ onSelectAddress }: DirectoryAddressListProps) {
   const [isLoading, setIsLoading] = useState(true);
   const [isAvailable, setIsAvailable] = useState(true);
   const [filter, setFilter] = useState<TypeFilter>('all');
+  const [query, setQuery] = useState('');
   const directoryRef = useRef<Directory | null>(null);
+  const needle = normalizeQuery(query);
+  const isSearching = needle !== '';
+  // Anything that hides rows needs the whole directory loaded (see below).
+  const isNarrowing = filter !== 'all' || isSearching;
 
   useEffect(() => {
     const sub = signalWireService
@@ -70,21 +86,25 @@ function DirectoryAddressList({ onSelectAddress }: DirectoryAddressListProps) {
     return () => sub.unsubscribe();
   }, []);
 
-  // A type filter is only useful over the whole directory: the SDK pages it
-  // 100 at a time sorted by name with no server-side type filter, and apps
-  // dominate (the test space had 387 entries with 2 subscribers and 3 rooms,
-  // which sat two or three pages deep). So while a filter is active, keep
-  // loading until the SDK says there's no more; "All" keeps manual paging.
+  // A type filter or a search is only useful over the whole directory: the SDK
+  // pages it 100 at a time sorted by name with no server-side filter or
+  // search, and apps dominate (the test space had 387 entries with 2
+  // subscribers and 3 rooms, which sat two or three pages deep). So while
+  // either narrows the list, keep loading until the SDK says there's no more;
+  // an unfiltered "All" keeps manual paging.
   useEffect(() => {
-    if (filter === 'all' || !hasMore || isLoading) return;
+    if (!isNarrowing || !hasMore || isLoading) return;
     directoryRef.current?.loadMore();
-  }, [filter, hasMore, isLoading]);
+  }, [isNarrowing, hasMore, isLoading]);
 
   const ownAddressIds = signalWireService.getOwnAddressIds();
   const ownSubscriberId = signalWireService.getActiveSubscriberId();
 
   const rows: AddressRow[] = addresses
-    .filter((address) => filter === 'all' || address.type === filter)
+    .filter(
+      (address) =>
+        (filter === 'all' || address.type === filter) && (!isSearching || matchesQuery(address, needle)),
+    )
     .flatMap((address) => {
       const audioPath = address.channels.audio ?? address.channels.video ?? address.channels.messaging;
       if (!audioPath) return [];
@@ -105,9 +125,22 @@ function DirectoryAddressList({ onSelectAddress }: DirectoryAddressListProps) {
     });
 
   const filterLabel = FILTERS.find((f) => f.key === filter)?.label.toLowerCase() ?? 'entries';
+  const emptyMessage = !isAvailable
+    ? 'Directory unavailable while disconnected.'
+    : isSearching
+      ? `No matches for "${query.trim()}"${filter !== 'all' ? ` in ${filterLabel}` : ''}.`
+      : filter !== 'all'
+        ? `No ${filterLabel} in this directory.`
+        : 'Nothing in this directory.';
 
   return (
     <>
+      <SearchField
+        value={query}
+        onChange={setQuery}
+        placeholder="Search directory"
+        status={isSearching && !isLoading ? matchStatus(rows.length) : ''}
+      />
       <div className="mb-2 flex gap-1 overflow-x-auto" role="group" aria-label="Filter by type">
         {FILTERS.map((f) => (
           <button
@@ -125,22 +158,17 @@ function DirectoryAddressList({ onSelectAddress }: DirectoryAddressListProps) {
       </div>
       <AddressRowList
         rows={isAvailable ? rows : []}
-        // Spinner while nothing is loaded yet, or while a filter is still
-        // auto-loading pages and hasn't found a match.
-        isLoading={isLoading && (addresses.length === 0 || (filter !== 'all' && rows.length === 0))}
-        isLoadingMore={isLoading && addresses.length > 0 && (filter === 'all' || rows.length > 0)}
+        // Spinner while nothing is loaded yet, or while a filter or search is
+        // still auto-loading pages and hasn't found a match.
+        isLoading={isLoading && (addresses.length === 0 || (isNarrowing && rows.length === 0))}
+        isLoadingMore={isLoading && addresses.length > 0 && (!isNarrowing || rows.length > 0)}
         error={null}
-        hasMore={isAvailable && hasMore && filter === 'all'}
+        hasMore={isAvailable && hasMore && !isNarrowing}
         onLoadMore={() => directoryRef.current?.loadMore()}
         onSelectAddress={onSelectAddress}
-        emptyMessage={
-          isAvailable
-            ? filter === 'all'
-              ? 'Nothing in this directory.'
-              : `No ${filterLabel} in this directory.`
-            : 'Directory unavailable while disconnected.'
-        }
-        loadingMessage="Loading directory..."
+        emptyMessage={emptyMessage}
+        loadingMessage={isSearching ? 'Searching…' : 'Loading directory...'}
+        loadingMoreMessage={isSearching ? 'Searching…' : 'Loading more...'}
         loadMoreLabel="Load more"
       />
     </>

@@ -10,7 +10,8 @@ const STUBS = `
   window.__level = subject(0.04);
   const sample = (i, lost) => ({ timestamp: Date.now() - (5 - i) * 1000, audio: { packetsReceived: 1000 + i * 50, packetsLost: lost, jitter: 7.4 }, video: { packetsReceived: 0, packetsLost: 0 }, roundTripTime: 42.3, availableOutgoingBitrate: 512000 });
   s.getNetworkMetrics$ = () => of([sample(0, 10), sample(1, 10), sample(2, 10), sample(3, 10), sample(4, 12)]);
-  s.getIsNetworkHealthy$ = () => of(true);
+  window.__issues = subject([]);
+  s.getNetworkIssues$ = () => window.__issues.asObservable();
   s.getLocalAudioLevel$ = () => window.__level.asObservable();
   s.getLocalSpeaking$ = () => of(false);
   s.getRemoteAudioLevel$ = () => of(0.25);
@@ -27,6 +28,7 @@ const STUBS = `
 declare global {
   interface Window {
     __level: { next(v: number): void };
+    __issues: { next(v: unknown[]): void };
   }
 }
 
@@ -91,5 +93,43 @@ test.describe('call statistics and audio meter', () => {
     await expect(page.locator('button[aria-label="Call statistics"]')).toHaveCount(1);
     await setState(page, { isMediaDisrupted: false });
     await expect(page.locator('button[aria-label="Call statistics"]')).toHaveCount(0);
+  });
+
+  test('Health lists the SDK issues behind a Degraded reading', async ({ page }) => {
+    await page.click('button[aria-label="Call statistics"]');
+    const sheet = page.locator('[role="dialog"]:has-text("Call Statistics")');
+    await expect(sheet).toContainText('Healthy');
+    await page.evaluate(() =>
+      window.__issues.next([{ type: 'high_jitter', severity: 'warning', value: 9.1, threshold: 8, timestamp: Date.now() }]),
+    );
+    await expect(sheet).toContainText('Degraded · 1 issue');
+    await expect(sheet).toContainText('Jitter spike · warning · 9 ms (threshold 8 ms)');
+    await page.evaluate(() =>
+      window.__issues.next([
+        { type: 'high_packet_loss', severity: 'critical', value: 12.34, threshold: 10, timestamp: Date.now() },
+        { type: 'no_inbound_audio', severity: 'critical', value: 2500, threshold: 2000, timestamp: Date.now() },
+      ]),
+    );
+    await expect(sheet).toContainText('Degraded · 2 issues');
+    await expect(sheet).toContainText('Packet loss · critical · 12.3% (threshold 10.0%)');
+    await expect(sheet).toContainText('No inbound audio · critical · 2500 ms (threshold 2000 ms)');
+    await page.evaluate(() => window.__issues.next([]));
+    await expect(sheet).toContainText('Healthy');
+  });
+
+  test("the SDK's no-inbound-video issue is ignored unless the far end sends video", async ({ page }) => {
+    // rc.5's stats monitor reports it on every call without an inbound video
+    // track (see relevantIssues() in the service).
+    const relevant = (remoteHasVideo: boolean) =>
+      evalInApp<string[]>(
+        page,
+        `s.remoteHasVideo = ${remoteHasVideo};
+         return s.relevantIssues([
+           { type: 'no_inbound_video', severity: 'warning', timestamp: 0 },
+           { type: 'high_rtt', severity: 'critical', timestamp: 0 },
+         ]).map((issue) => issue.type);`,
+      );
+    expect(await relevant(false)).toEqual(['high_rtt']);
+    expect(await relevant(true)).toEqual(['no_inbound_video', 'high_rtt']);
   });
 });

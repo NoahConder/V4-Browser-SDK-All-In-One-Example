@@ -68,7 +68,7 @@ export interface SwmlScriptsPage {
 }
 
 export const swmlAPI = {
-  async listScripts(offset = 0, limit = 10): Promise<SwmlScriptsPage> {
+  async listScripts(offset = 0, limit = 10, q = ''): Promise<SwmlScriptsPage> {
     const response = await api.get<{
       success: boolean;
       data: SwmlScript[];
@@ -77,7 +77,8 @@ export const swmlAPI = {
       limit: number;
       has_more: boolean;
     }>('/swml/scripts', {
-      params: { offset, limit },
+      // `q` only when set, so an unfiltered page keeps the same URL as before.
+      params: { offset, limit, ...(q ? { q } : {}) },
     });
     if (!response.data.success) {
       throw new Error('Failed to get SWML scripts');
@@ -101,7 +102,7 @@ export interface SipCredentialsPage {
 }
 
 export const sipAPI = {
-  async listCredentials(offset = 0, limit = 10): Promise<SipCredentialsPage> {
+  async listCredentials(offset = 0, limit = 10, q = ''): Promise<SipCredentialsPage> {
     const response = await api.get<{
       success: boolean;
       data: SipCredential[];
@@ -110,7 +111,7 @@ export const sipAPI = {
       limit: number;
       has_more: boolean;
     }>('/sip/credentials', {
-      params: { offset, limit },
+      params: { offset, limit, ...(q ? { q } : {}) },
     });
     if (!response.data.success) {
       throw new Error('Failed to get SIP credentials');

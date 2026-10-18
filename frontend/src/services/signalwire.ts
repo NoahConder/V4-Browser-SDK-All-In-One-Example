@@ -25,7 +25,7 @@ import type {
   RecoveryEvent,
   RecoveryState,
 } from '@signalwire/js';
-import { ReplaySubject, combineLatest, distinctUntilChanged, of, switchMap } from 'rxjs';
+import { ReplaySubject, combineLatest, distinctUntilChanged, map, of, switchMap } from 'rxjs';
 import type { Observable, Subscription } from 'rxjs';
 import type { TokenData } from '../types';
 import axios from 'axios';
@@ -230,6 +230,13 @@ class SignalWireService {
   // reattach-adoption subscription would see our own outbound call as an
   // untracked one and adopt it a moment before makeCall() assigns currentCall.
   private isDialing: boolean = false;
+  // Set for the duration of client.preflight(). Its media test places a real
+  // call through client.dial() -- not makeCall(), so isDialing isn't set --
+  // and that call lands in session.calls$ too. Without this the adoption in
+  // adoptUntrackedCall() took it over: the UI jumped to the call screen, which
+  // unmounted the Diagnostics panel and lost the result, and stayed there
+  // after the runner hung up (observed 2026-10-18).
+  private preflightInProgress: boolean = false;
   // Set when endCall() runs while client.dial() is still pending. dial() can't
   // be cancelled and can stay pending for a long time (the docs call local
   // media acquisition "unbounded" -- e.g. a permission prompt), so the UI may
@@ -290,6 +297,9 @@ class SignalWireService {
   // True once the remote stream's audio is being played out through remoteVideoEl,
   // so the fallback <audio> sink knows not to also play it (avoids doubled audio).
   private remoteAudioRoutedToVideo: boolean = false;
+  // Whether the remote stream carries a video track (set by handleRemoteMedia).
+  // Gates relevantIssues()' filter on the SDK's "no inbound video" issue.
+  private remoteHasVideo = false;
 
   // Callbacks
   private onIncomingCall: SignalWireCallbacks['onIncomingCall'] | null = null;
@@ -543,35 +553,7 @@ class SignalWireService {
       // offer, and a reattach doesn't carry one, so a restored call always
       // reports 'outbound' even if it started as an inbound call. That only
       // affects cosmetics here: onCallEnded reports wasIncoming: false for it.
-      this.reattachSub = this.client.session.calls$.subscribe((calls) => {
-        // This app handles one call at a time: never adopt while a call is
-        // already tracked, and never mid-dial (see isDialing's declaration).
-        if (this.currentCall || this.pendingCall || this.isDialing) return;
-
-        const restored = calls.find((call) => {
-          if (ENDED_CALL_STATUSES.includes(call.status)) return false;
-          // A genuinely ringing inbound call belongs to the incomingCalls$
-          // handler above, which has its own answer/reject UI.
-          if (call.direction === 'inbound' && (call.status === 'ringing' || call.status === 'new')) return false;
-          return true;
-        });
-        if (!restored) return;
-
-        log.debug('Adopting reattached call:', restored.id, 'status:', restored.status);
-        this.isMicMuted = false;
-        this.currentCall = restored;
-        this.wasIncomingCall = false;
-        this.setupCallSubscriptions(restored);
-        this.setupRemoteAudioFallback(restored);
-
-        // Same '_undef_' guard as the incoming-call path -- that's what the
-        // platform sends for an unset display name.
-        const rawName = restored.toName;
-        const remoteNumber = (rawName && rawName !== '_undef_') ? rawName : restored.to || 'Unknown';
-        const hasVideo = restored.mediaDirections?.video != null
-          && restored.mediaDirections.video !== 'inactive';
-        this.onCallReattached?.(remoteNumber, hasVideo);
-      });
+      this.reattachSub = this.client.session.calls$.subscribe((calls) => this.adoptUntrackedCall(calls));
 
       this.isInitialized = true;
       this.isInitializing = false;
@@ -628,6 +610,40 @@ class SignalWireService {
     }
   }
 
+  // The calls$ handler from initialize() -- a method so the e2e suite can
+  // drive it with fake calls. This app handles one call at a time: never
+  // adopt while a call is already tracked, never mid-dial (see isDialing's
+  // declaration), and never while a connection test is running (see
+  // preflightInProgress's).
+  private adoptUntrackedCall(calls: Call[]) {
+    if (this.currentCall || this.pendingCall || this.isDialing || this.preflightInProgress) return;
+
+    const restored = calls.find((call) => {
+      if (ENDED_CALL_STATUSES.includes(call.status)) return false;
+      // A genuinely ringing inbound call belongs to the incomingCalls$
+      // handler in initialize(), which has its own answer/reject UI.
+      if (call.direction === 'inbound' && (call.status === 'ringing' || call.status === 'new')) return false;
+      return true;
+    });
+    if (!restored) return;
+
+    log.debug('Adopting reattached call:', restored.id, 'status:', restored.status);
+    this.isMicMuted = false;
+    this.remoteHasVideo = false;
+    this.currentCall = restored;
+    this.wasIncomingCall = false;
+    this.setupCallSubscriptions(restored);
+    this.setupRemoteAudioFallback(restored);
+
+    // Same '_undef_' guard as the incoming-call path -- that's what the
+    // platform sends for an unset display name.
+    const rawName = restored.toName;
+    const remoteNumber = (rawName && rawName !== '_undef_') ? rawName : restored.to || 'Unknown';
+    const hasVideo = restored.mediaDirections?.video != null
+      && restored.mediaDirections.video !== 'inactive';
+    this.onCallReattached?.(remoteNumber, hasVideo);
+  }
+
   private setupCallSubscriptions(call: Call) {
     this.cleanupCallSubscriptions();
 
@@ -647,7 +663,10 @@ class SignalWireService {
         if (this.onCallConnected) {
           this.onCallConnected();
         }
-      } else if (status === 'disconnected' || status === 'failed') {
+      } else if (status === 'disconnected' || status === 'failed' || status === 'destroyed') {
+        // 'destroyed' is what the SDK's own hangup()/destroy() emits (after
+        // 'disconnecting', never 'disconnected'), so it's the only terminal
+        // status for a hang-up this app didn't start itself.
         toneService.playDisconnectTone();
         // Only clean up if this is still the active call (endCall may have already cleared it)
         if (this.currentCall === call) {
@@ -728,7 +747,7 @@ class SignalWireService {
       call.qualityScore$,
       call.networkIssues$,
     ]).subscribe(([level, score, networkIssues]) => {
-      this.onQualityChange?.({ level, score, networkIssues });
+      this.onQualityChange?.({ level, score, networkIssues: this.relevantIssues(networkIssues) });
     });
 
     // call.self is replaced wholesale on each call.joined event, so follow
@@ -793,8 +812,28 @@ class SignalWireService {
     return this.currentCall?.networkMetrics$ ?? of([]);
   }
 
+  // The SDK's RTCStatsMonitor (rc.5) tracks inbound video by *changes* in the
+  // video packet count, starting from 0. On a call with no inbound video track
+  // the count never changes, so 3 s in it reports a permanent `no_inbound_video`
+  // warning: isNetworkHealthy$ is false and networkIssues$ non-empty for the
+  // whole call -- "Health: Degraded" and a warning triangle on every voice
+  // call. Ignore that issue unless the far end is actually sending video.
+  // (Worth fixing upstream: skip the video check when the peer connection has
+  // no video receiver.)
+  private relevantIssues(issues: NetworkIssue[]): NetworkIssue[] {
+    return this.remoteHasVideo ? issues : issues.filter((issue) => issue.type !== 'no_inbound_video');
+  }
+
+  // The SDK's active network issues, minus the false positive above. The
+  // call-stats sheet lists them under "Health".
+  getNetworkIssues$(): Observable<NetworkIssue[]> {
+    return this.currentCall?.networkIssues$.pipe(map((issues) => this.relevantIssues(issues))) ?? of([]);
+  }
+
+  // "No active issue", on the same filtered list (the SDK's own
+  // isNetworkHealthy$ would say false on every voice call -- see above).
   getIsNetworkHealthy$(): Observable<boolean> {
-    return this.currentCall?.isNetworkHealthy$ ?? of(true);
+    return this.getNetworkIssues$().pipe(map((issues) => issues.length === 0));
   }
 
   getLocalAudioLevel$(): Observable<number> {
@@ -960,6 +999,7 @@ class SignalWireService {
   // played out of both elements at once), otherwise falls back to audio-only.
   private handleRemoteMedia(stream: MediaStream) {
     const hasVideo = stream.getVideoTracks().length > 0;
+    this.remoteHasVideo = hasVideo;
 
     if (hasVideo && this.remoteVideoEl) {
       this.remoteVideoEl.srcObject = stream;
@@ -1208,6 +1248,7 @@ class SignalWireService {
     // every call end). Reset here, before dial() -- not when the Call object
     // arrives -- so a Mute tapped on the "Calling..." screen is kept.
     this.isMicMuted = false;
+    this.remoteHasVideo = false;
 
     try {
       this.isDialing = true;
@@ -1306,6 +1347,7 @@ class SignalWireService {
       return;
     }
     this.isMicMuted = false;
+    this.remoteHasVideo = false;
 
     try {
       log.debug('Answering incoming call...');
@@ -1731,7 +1773,12 @@ class SignalWireService {
     if (!this.client) {
       throw new Error('SignalWire client not initialized');
     }
-    return this.client.preflight(destination, options);
+    this.preflightInProgress = true;
+    try {
+      return await this.client.preflight(destination, options);
+    } finally {
+      this.preflightInProgress = false;
+    }
   }
 
   exportDiagnostics(): SessionDiagnostics | null {
@@ -1772,6 +1819,7 @@ class SignalWireService {
     if (this.localVideoEl) this.localVideoEl.srcObject = null;
     if (this.remoteVideoEl) this.remoteVideoEl.srcObject = null;
     this.remoteAudioRoutedToVideo = false;
+    this.remoteHasVideo = false;
 
     if (this.onCallEnded) {
       log.debug('Notifying UI of call end, wasIncoming:', wasIncoming);

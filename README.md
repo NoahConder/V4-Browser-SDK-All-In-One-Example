@@ -37,10 +37,10 @@ Every SignalWire interaction happens in the browser through the published npm pa
 - ✅ In-call controls: mute, speaker, camera, keypad, hold/resume, and screen share (with optional tab audio) on video room/conference calls
 - ✅ DTMF from the on-screen keypad (with key tones) or your keyboard, once the call is connected
 - ✅ Audio/video device picker and echo cancellation / noise suppression / auto gain toggles
-- ✅ Live call-quality badge that opens a call-statistics sheet (RTT, jitter, loss, codecs, ICE path, recovery events, call id), plus mic and remote audio-level meters
+- ✅ Live call-quality badge that opens a call-statistics sheet (RTT, jitter, loss, active network issues, codecs, ICE path, recovery events, call id), plus mic and remote audio-level meters
 - ✅ "Reconnecting…" during media loss, deferring to the SDK's own recovery before giving up on a call
 - ✅ Pre-call network diagnostics (with options), diagnostics export, and SDK settings: codec order, log level, WebSocket tracing, relay-only media
-- ✅ Directory of everything the subscriber can dial (other subscribers, rooms, SIP endpoints, SWML scripts), Recents with redial, and browsers for the space's SWML scripts and SIP credentials
+- ✅ Directory of everything the subscriber can dial (other subscribers, rooms, SIP endpoints, SWML scripts), Recents with redial, and browsers for the space's SWML scripts and SIP credentials, each with a search field
 - ✅ Subscribers panel: call any subscriber's browser (audio or video), switch the dialer to act as one, and Do Not Disturb
 - ✅ Call reattach: an active call survives a page reload
 - ✅ Installable (PWA manifest and icons), keyboard shortcuts, and dialogs that trap and return focus
@@ -137,11 +137,12 @@ On first start the backend mints a subscriber token with the reference `swdialer
    - **Directory**: everything this subscriber can dial, from the SDK. Filter by **Subscribers** to find other browsers (each subscriber's address is `/private/<name>`), **Rooms** for video rooms, or **Apps** for SWML scripts.
    - **Recents**: calls made and received in this browser, with redial.
    - **SWML** and **SIP**: the space's SWML scripts and SIP credentials, each with Audio and Video buttons.
+   - Each tab has a search box at the top. Directory and Recents filter as you type (the Directory keeps loading pages until it has checked the whole address book); SWML and SIP search the space server-side.
 4. Toggle the camera button in the address field for a video call, then press the green call button (or Enter). With an empty field, the call button redials the last outbound destination.
 5. Incoming calls show a full-screen accept/decline screen (Enter accepts, Escape declines).
 6. In a call: the keypad sends DTMF once connected (also from your keyboard), `m` toggles mute, and tapping the signal icon in the header opens live call statistics. **More** → Hold, Transfer, Screen Share (on room calls), devices and audio processing.
 7. The Subscribers panel (person icon) lists the space's subscribers with their `/private/<name>` addresses: **Audio**/**Video** fill the dial field to call that subscriber's browser, **Switch** reloads the dialer signed in as them, and the Do Not Disturb switch at the top stops this browser from receiving calls while staying connected. Calling a subscriber whose browser is closed or in Do Not Disturb is refused by the server; the dialer says so.
-8. Diagnostics (pulse icon) runs a pre-call connection test and holds the SDK settings: audio codec order, SDK log level, WebSocket tracing, relay-only media and app debug logs. Log settings apply at once; codec and relay settings apply to the next call.
+8. Diagnostics (pulse icon) runs a pre-call connection test and holds the SDK settings. The media test places a short real call to the destination and hangs up by itself; the destination has to answer within 5 seconds, so an auto-answering SWML script or app is the best target (with "Skip media test" on, no call is placed). The settings are audio codec order, SDK log level, WebSocket tracing, relay-only media and app debug logs. Log settings apply at once; codec and relay settings apply to the next call. The codec order ranks what this browser offers and applies to WebRTC and SIP calls; calls to phone numbers use G.711 (PCMU/PCMA) regardless, so it has no effect on them.
 
 ## Development
 
@@ -166,8 +167,8 @@ The app's own console logging is off by default; turn on "App debug logs" in Dia
 | `POST /api/auth/token` | Mint a subscriber token for the browser SDK. Requires `X-API-Key`; rate limited |
 | `POST /api/auth/refresh` | Mint a fresh token (called by the SDK before expiry). Requires `X-API-Key`; rate limited |
 | `GET /api/subscribers` | List the space's subscribers (id, display name, email, dialable addresses). Requires `X-API-Key`; rate limited. `limit` ≤ 50 |
-| `GET /api/swml/scripts` | Paginated SWML scripts with their dialable addresses. Requires `X-API-Key`; rate limited. `limit` ≤ 50 |
-| `GET /api/sip/credentials` | Paginated SIP credentials with their dialable addresses. Requires `X-API-Key`; rate limited. `limit` ≤ 50 |
+| `GET /api/swml/scripts` | Paginated SWML scripts with their dialable addresses; `q` filters by name before paging. Requires `X-API-Key`; rate limited. `limit` ≤ 50 |
+| `GET /api/sip/credentials` | Paginated SIP credentials with their dialable addresses; `q` filters by name or SIP username before paging. Requires `X-API-Key`; rate limited. `limit` ≤ 50 |
 | `POST /api/calls/dial` | Validates and logs an outbound dial server-side (the call itself is placed by the browser). Requires `X-API-Key`; rate limited |
 
 Every `/api` route requires the key. The frontend sends it on every request, and each listed item costs an authenticated SignalWire REST call, so the listings are not left open. Calls themselves are signaled and carried directly between the browser and SignalWire; the browser's Recents tab is the call log.
