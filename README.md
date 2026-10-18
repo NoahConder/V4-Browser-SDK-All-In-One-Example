@@ -1,47 +1,48 @@
-# SignalWire iPhone Dialer
+# SignalWire Browser SDK Dialer
 
-A web-based iPhone-style dialer built with React and the SignalWire Browser SDK (`@signalwire/js` v4) for making and receiving WebRTC calls — audio and video, to phone numbers, SIP URIs, and SignalWire Fabric addresses. It's a hands-on way to explore the Browser SDK's features and a reference for how each one is wired up; it is a testing and learning tool, not a production app.
+A reference dialer built with React and the SignalWire Browser SDK (`@signalwire/js` v4) for making and receiving WebRTC calls — audio and video, to phone numbers, SIP URIs, and SignalWire Fabric addresses. It is a hands-on way to explore what the Browser SDK can do, a test bench for exercising every one of its features while watching call state and statistics live, and a reference for how each piece is wired up: every feature area carries a small `</>` button that names the SDK API behind it and links to the file in this repository and to the SDK reference. It is a testing and learning tool, not a production app.
 
-It wears the SignalWire docs' design language — Lexend and Instrument Sans type, the docs' light and dark palettes (SignalWire blue and turquoise accents), flat cards and underline tabs — and follows your system's light or dark preference, with an Appearance setting to override it.
+It wears the SignalWire docs' design language — Lexend and Instrument Sans type, the docs' dark and light palettes (turquoise and SignalWire blue accents), flat cards and underline tabs. Dark is the default; an Appearance setting switches to light or follows your system.
 
-On a phone it is the dialer. In a desktop browser window (1024px and wider) the same phone sits in the middle of a workbench: a **Destinations** pane on the left (Directory, Recents, SWML scripts, SIP credentials, Subscribers) and an **Inspector** on the right (live call statistics, an event log of what the SDK did, and the session's settings and diagnostics), so you can watch the SDK while you drive it.
+In a desktop browser window (1024px and wider) it is a three-pane console: **Destinations** on the left (Directory, Recents, SWML scripts, SIP credentials, Subscribers), the call stage in the middle (the address field, a keypad you can fold away, and during a call a card with the status, timer, call id, video, level meters and every control), and an **Inspector** on the right (**Quality**, **Events**, **Devices**, **Diagnostics**). Either side pane folds to a rail. On a phone the same pieces stack, with the lists, devices, diagnostics and subscribers opening from the top bar.
 
 This project is a fork of [briankwest/swdialer](https://github.com/briankwest/swdialer). See [CHANGELOG.md](CHANGELOG.md) for how it differs from upstream.
 
 ## What it demonstrates
 
-Every SignalWire interaction happens in the browser through the published npm package; the Flask backend only mints subscriber tokens and lists resources. If you're here to see how a particular SDK feature is used, start with the file in the right-hand column.
+Every SignalWire interaction happens in the browser through the published npm package; the Flask backend only mints subscriber tokens and lists resources. If you're here to see how a particular SDK feature is used, start with the file in the right-hand column — or press the `</>` button next to the feature in the running app, which shows the same mapping (`frontend/src/codeMap.ts`) with links to GitHub and the SDK reference.
 
 | Feature | Browser SDK API | Where |
 |---|---|---|
-| Connect and authenticate | `new SignalWire({ credentialProvider, reconnectAttachedCalls, ... })`, `client.ready$`, `client.warnings$` | [signalwire.ts](frontend/src/services/signalwire.ts) |
+| Connect and authenticate | `new SignalWire({ credentialProvider, reconnectAttachedCalls, ... })`, `client.ready$`, `client.warnings$` | [signalwire.ts](frontend/src/services/signalwire.ts), [AppBar.tsx](frontend/src/components/AppBar.tsx) |
 | Place a call (audio or video; phone, SIP or Fabric address) | `client.dial()` with the address's per-channel URL | [signalwire.ts](frontend/src/services/signalwire.ts), [Dialer.tsx](frontend/src/components/Dialer.tsx) |
 | Receive a call | `client.incomingCalls$`, `call.answer()`, `call.reject()` | [signalwire.ts](frontend/src/services/signalwire.ts), [IncomingCall.tsx](frontend/src/components/IncomingCall.tsx) |
 | Call lifecycle and errors | `call.status$`, `call.hangup()`, `call.errors$`, `recoveryState$`/`recoveryEvent$` | [signalwire.ts](frontend/src/services/signalwire.ts), [useSignalWire.ts](frontend/src/hooks/useSignalWire.ts) |
 | DTMF | `call.sendDigits()` | [DialPad.tsx](frontend/src/components/DialPad.tsx), [CallScreen.tsx](frontend/src/components/CallScreen.tsx) |
 | Camera on/off mid-call | `call.self.addVideoInputDevice()`, `muteVideo()`/`unmuteVideo()` | [signalwire.ts](frontend/src/services/signalwire.ts) |
-| Hold and blind transfer | `call.toggleHold()`, `call.transfer()` (server refusals arrive on `call.errors$`) | [CallControlsSheet.tsx](frontend/src/components/CallControlsSheet.tsx), [TransferModal.tsx](frontend/src/components/TransferModal.tsx) |
-| Screen share | `call.startScreenShare()`, gated on `call.self.capabilities.screenshare$` | [CallControlsSheet.tsx](frontend/src/components/CallControlsSheet.tsx) |
+| Hold and blind transfer | `call.toggleHold()`, `call.transfer()` (server refusals arrive on `call.errors$`) | [CallToolbar.tsx](frontend/src/components/CallToolbar.tsx), [TransferModal.tsx](frontend/src/components/TransferModal.tsx) |
+| Screen share | `call.startScreenShare()`, gated on `call.self.capabilities.screenshare$` | [CallToolbar.tsx](frontend/src/components/CallToolbar.tsx) |
 | Device selection | `audioInputDevices$`, `videoInputDevices$`, `audioOutputDevices$`, `selectAudioOutputDevice()`, `applySelectedAudioOutputDevice()` | [DevicePicker.tsx](frontend/src/components/DevicePicker.tsx) |
-| Audio processing toggles | `call.setEchoCancellation()`, `setNoiseSuppression()`, `setAutoGainControl()` | [CallControlsSheet.tsx](frontend/src/components/CallControlsSheet.tsx) |
+| Audio processing toggles | `call.setEchoCancellation()`, `setNoiseSuppression()`, `setAutoGainControl()` | [InspectorPane.tsx](frontend/src/components/InspectorPane.tsx), [CallControlsSheet.tsx](frontend/src/components/CallControlsSheet.tsx) |
 | Call quality and statistics | `qualityLevel$`, `qualityScore$`, `networkIssues$`, `networkMetrics$`, `getStats()` | [CallQualityBadge.tsx](frontend/src/components/CallQualityBadge.tsx), [CallStatsSheet.tsx](frontend/src/components/CallStatsSheet.tsx) |
 | Audio level meters | `localAudioLevel$`, `remoteAudioLevel$` | [AudioLevelMeter.tsx](frontend/src/components/AudioLevelMeter.tsx) |
 | Directory of dialable addresses | `client.directory$` (`hasMore$`, `loadMore()`) | [DirectoryAddressList.tsx](frontend/src/components/DirectoryAddressList.tsx) |
 | Pre-call connection test and diagnostics export | `client.preflight()`, `client.exportDiagnostics()` | [DiagnosticsPanel.tsx](frontend/src/components/DiagnosticsPanel.tsx), [diagnostics.ts](frontend/src/services/diagnostics.ts) |
 | Event log of SDK activity | `call.status$`, `call.errors$`, `client.warnings$`, `recoveryEvent$`, `deviceRecovered$`, `isRegistered$`, ICE state | [signalwire.ts](frontend/src/services/signalwire.ts) (`getEventLog$`), [EventLog.tsx](frontend/src/components/EventLog.tsx) |
-| Do Not Disturb | `client.unregister()`/`register()`, `isRegistered$` | [SubscriberPicker.tsx](frontend/src/components/SubscriberPicker.tsx) |
+| Do Not Disturb | `client.unregister()`/`register()`, `isRegistered$` | [SubscriberPicker.tsx](frontend/src/components/SubscriberPicker.tsx), [InspectorPane.tsx](frontend/src/components/InspectorPane.tsx) |
 | Device hot-plug notices | `client.deviceRecovered$` | [signalwire.ts](frontend/src/services/signalwire.ts) |
 | SDK settings applied live | `setLogLevel`, `setDebugOptions`, `preferences.preferredAudioCodecs`, `preferences.relayOnly` | [settings.ts](frontend/src/services/settings.ts), [DiagnosticsPanel.tsx](frontend/src/components/DiagnosticsPanel.tsx) |
 | Call reattach after a page reload | `reconnectAttachedCalls: true`, reattached calls arriving on `calls$` | [signalwire.ts](frontend/src/services/signalwire.ts), [App.tsx](frontend/src/App.tsx) |
 
 ## Features
 
-- ✅ Styled after the SignalWire docs, in light and dark (following the system, with an Appearance setting); adapts to phones (portrait and landscape) and tablets, and from 1024px wide becomes a desktop workbench with a Destinations pane and an Inspector (Call statistics, Events, Session) beside the phone
+- ✅ Styled after the SignalWire docs, dark by default with a light theme (Appearance setting); a three-pane console from 1024px wide (Destinations | call stage | Inspector with Quality, Events, Devices and Diagnostics tabs, side panes that fold away) that stacks on phones (portrait and landscape) and tablets
+- ✅ "Where's the code" buttons (`</>`) on every feature area, naming the SDK API and linking to the file in this repository and the SDK reference page
 - ✅ Address suggestions while you type, from Recents and the loaded Directory (Up/Down to choose, Enter to fill)
 - ✅ Event log of what the SDK and the dialer did — call status, errors and warnings, recovery and ICE, device changes, your own actions — with filters and copy, in the Diagnostics panel and the Inspector
 - ✅ Outbound audio or video calls to phone numbers (normalized to E.164), SIP URIs, and Fabric addresses
-- ✅ Inbound calls with a full-screen accept/decline screen and ringtone (a second incoming call during an active call is auto-rejected)
-- ✅ In-call controls: mute, speaker, camera, keypad, hold/resume, and screen share (with optional tab audio) on video room/conference calls
+- ✅ Inbound calls with an accept/decline card and ringtone (a second incoming call during an active call is auto-rejected)
+- ✅ In-call toolbar with every control in view: mute, keypad, camera, hold/resume, transfer, screen share (with optional tab audio) on video room/conference calls, speaker
 - ✅ DTMF from the on-screen keypad (with key tones) or your keyboard, once the call is connected
 - ✅ Audio/video device picker and echo cancellation / noise suppression / auto gain toggles
 - ✅ Live call-quality badge that opens a call-statistics panel (RTT, jitter, loss, active network issues, codecs, ICE path, recovery events, call id) that leaves the call controls usable, plus mic and remote audio-level meters; on the workbench the statistics stay in view for the whole call and keep the last call's numbers after hangup
@@ -139,17 +140,17 @@ On first start the backend mints a subscriber token with the reference `swdialer
 ## Usage
 
 1. Open `http://localhost:5173` and allow microphone access.
-2. Wait for the dialer to connect (the dot in the status bar turns green).
-3. Enter a destination in the address field: a phone number (10-digit US numbers get `+1`), a SIP URI (`sip:user@domain`), or a Fabric address (`/public/room`). As you type, matching Recents and Directory entries appear under the field (Up/Down to choose, Enter to fill, Escape to dismiss). Or pick one from the lists — **Resources** in the header on a phone, the **Destinations** pane on the left in a desktop window:
+2. Wait for the dialer to connect (the pill in the top bar turns green and says Connected).
+3. Enter a destination in the address field: a phone number (10-digit US numbers get `+1`), a SIP URI (`sip:user@domain`), or a Fabric address (`/public/room`). As you type, matching Recents and Directory entries appear under the field (Up/Down to choose, Enter to fill, Escape to dismiss). Or pick one from the lists — **Resources** in the top bar on a phone, the **Destinations** pane on the left in a desktop window:
    - **Directory**: everything this subscriber can dial, from the SDK. Filter by **Subscribers** to find other browsers (each subscriber's address is `/private/<name>`), **Rooms** for video rooms, or **Apps** for SWML scripts.
    - **Recents**: calls made and received in this browser, with redial.
    - **SWML** and **SIP**: the space's SWML scripts and SIP credentials, each with Audio and Video buttons.
    - Each tab has a search box at the top. Directory and Recents filter as you type (the Directory keeps loading pages until it has checked the whole address book); SWML and SIP search the space server-side.
-4. Toggle the camera button in the address field for a video call, then press the green call button (or Enter). With an empty field, the call button redials the last outbound destination.
-5. Incoming calls show a full-screen accept/decline screen (Enter accepts, Escape declines).
-6. In a call: the keypad sends DTMF once connected (also from your keyboard) while the status and timer stay in view, `m` toggles mute, and tapping the signal icon in the header opens live call statistics in a panel that leaves Mute and End usable. **More** → Hold, Transfer, Screen Share (on room calls), devices and audio processing. In a desktop window the statistics are the Inspector's **Call** tab (selected automatically when a call starts, and kept after hangup), and Hold, Transfer and Share sit in the control grid.
-7. The Subscribers list (**Subscriber** in the header on a phone; the **Subscribers** tab of the Destinations pane on desktop, also reached by clicking your name in the header) shows the space's subscribers with their `/private/<name>` addresses: **Audio**/**Video** fill the dial field to call that subscriber's browser and **Switch** reloads the dialer signed in as them. The Do Not Disturb switch (top of the panel; the Inspector's **Session** tab on desktop) stops this browser from receiving calls while staying connected. Calling a subscriber whose browser is closed or in Do Not Disturb is refused by the server; the dialer says so.
-8. **Diagnostics** in the header (the Inspector's **Session** tab on desktop) holds the SDK settings, a pre-call connection test, the diagnostics export and the **Events** log. The settings are the appearance (System / Light / Dark), audio codec order, SDK log level, WebSocket tracing, relay-only media and app debug logs. Appearance and log settings apply at once; codec and relay settings apply to the next call. The codec order ranks what this browser offers and applies to WebRTC and SIP calls; calls to phone numbers use G.711 (PCMU/PCMA) regardless, so it has no effect on them. The media test places a short real call to the destination and hangs up by itself; the destination has to answer within 5 seconds, so an auto-answering SWML script or app is the best target (with "Skip media test" on, no call is placed). The event log lists what the SDK and the dialer did, in order — dialing, call status, errors and warnings, recovery and ICE changes, device switches, settings changes — with filters and a copy button; on desktop it is the Inspector's **Events** tab.
+4. Press **Video** under the field for a video call, then **Call** (or Enter). With an empty field, Call redials the last outbound destination. The keypad is always there on a phone; in a desktop window **Show keypad** unfolds it.
+5. Incoming calls show an accept/decline card (Enter accepts, Escape declines).
+6. In a call, the card shows the status, the number, the timer, the call id (with copy) and the quality badge, then the toolbar: Mute, Keypad, Camera, Hold, Transfer, Share (on room calls), Speaker, More and End. The keypad sends DTMF once connected (also from your keyboard) while the status and timer stay in view, and `m` toggles mute. Tapping the quality badge opens live call statistics in a panel that leaves Mute and End usable; **More** holds the device picker, the audio-processing toggles and the diagnostics export. In a desktop window the statistics are the Inspector's **Quality** tab (selected automatically when a call starts, and kept after hangup).
+7. The Subscribers list (**Subscriber** in the top bar on a phone; the **Subscribers** tab of the Destinations pane on desktop, also reached by clicking your name in the bar) shows the space's subscribers with their `/private/<name>` addresses: **Audio**/**Video** fill the dial field to call that subscriber's browser and **Switch** reloads the dialer signed in as them. The Do Not Disturb switch (top of the panel; the Inspector's **Diagnostics** tab on desktop) stops this browser from receiving calls while staying connected; the bar shows DND while it is on. Calling a subscriber whose browser is closed or in Do Not Disturb is refused by the server; the dialer says so.
+8. **Diagnostics** in the top bar (the Inspector's **Diagnostics** tab on desktop) holds the SDK settings, a pre-call connection test, the diagnostics export and the **Events** log; **Devices** in the bar (the Inspector's **Devices** tab) picks the microphone, camera and speaker, and on desktop also carries the audio-processing toggles. The settings are the appearance (Dark / Light / System; the bar's sun/moon button flips it too), audio codec order, SDK log level, WebSocket tracing, relay-only media and app debug logs. Appearance and log settings apply at once; codec and relay settings apply to the next call. The codec order ranks what this browser offers and applies to WebRTC and SIP calls; calls to phone numbers use G.711 (PCMU/PCMA) regardless, so it has no effect on them. The media test places a short real call to the destination and hangs up by itself; the destination has to answer within 5 seconds, so an auto-answering SWML script or app is the best target (with "Skip media test" on, no call is placed). The event log lists what the SDK and the dialer did, in order — dialing, call status, errors and warnings, recovery and ICE changes, device switches, settings changes — with filters and a copy button; on desktop it is the Inspector's **Events** tab.
 
 ## Development
 
@@ -186,20 +187,23 @@ Every `/api` route requires the key. The frontend sends it on every request, and
 frontend/
 ├── src/
 │   ├── components/
-│   │   ├── Workbench.tsx               # Desktop layout (≥1024px): Destinations | phone | Inspector
-│   │   ├── InspectorPane.tsx           # Inspector tabs: Call statistics, Events, Session
-│   │   ├── Dialer.tsx                  # Idle dialer: header toolbar, address input, suggestions, routing to call screens
+│   │   ├── Workbench.tsx               # Desktop layout (≥1024px): the bar, then Destinations | call stage | Inspector
+│   │   ├── Pane.tsx                    # A workbench side pane and its fold-to-rail toggle
+│   │   ├── InspectorPane.tsx           # Inspector tabs: Quality, Events, Devices, Diagnostics
+│   │   ├── AppBar.tsx                  # Top bar: wordmark, connection pill, identity chip, theme toggle, panel buttons
+│   │   ├── CodeRef.tsx                 # The </> button: SDK API, file and docs for a feature (from codeMap.ts)
+│   │   ├── Dialer.tsx                  # Idle dialer: address field, Video/Call row, keypad, suggestions, routing to call screens
 │   │   ├── AddressSuggestions.tsx      # Suggestions under the address field (Recents + loaded Directory)
-│   │   ├── DialPad.tsx                 # Keypad with key tones (hold 0 for +)
-│   │   ├── StatusBar.tsx               # Shared top bar: live connection dot, clock, header icons
-│   │   ├── CallScreen.tsx              # Active call: info, controls, video, in-call keypad
-│   │   ├── CallControlsSheet.tsx       # "More" sheet: hold, transfer, screen share, devices, audio processing
+│   │   ├── DialPad.tsx                 # Flat keypad with key tones (hold 0 for +; DTMF mode in a call)
+│   │   ├── CallScreen.tsx              # Active call card: status strip, video, meters, in-call keypad
+│   │   ├── CallToolbar.tsx             # Every in-call control: mute, keypad, camera, hold, transfer, share, speaker, more, end
+│   │   ├── CallControlsSheet.tsx       # "More" sheet: devices, audio processing, export (hold/transfer/share too)
 │   │   ├── CallStatsSheet.tsx          # RTT, jitter, loss, codecs, ICE path, recovery events (body shared with the Inspector)
 │   │   ├── EventLog.tsx                # What the SDK and the dialer did, in order
 │   │   ├── CallQualityBadge.tsx        # Signal-strength / network-issue indicator
 │   │   ├── AudioLevelMeter.tsx         # Mic and remote audio-level meters
 │   │   ├── TransferModal.tsx           # Blind transfer
-│   │   ├── IncomingCall.tsx            # Full-screen incoming call
+│   │   ├── IncomingCall.tsx            # Incoming call card
 │   │   ├── DevicePicker.tsx            # Mic / camera / speaker selection
 │   │   ├── DiagnosticsPanel.tsx        # SDK settings, connection test, export, events (bodies shared with the Inspector)
 │   │   ├── DialableResourcesPanel.tsx  # Directory / Recents / SWML / SIP tabs
@@ -217,7 +221,7 @@ frontend/
 │   │   ├── useDialFieldStore.ts        # The address field's value, video choice and picked label
 │   │   ├── useAddressSuggestions.ts    # Suggestions from Recents and the loaded Directory
 │   │   ├── useMediaQuery.ts            # Live matchMedia; the workbench breakpoint
-│   │   ├── useWorkbench.ts             # Context the workbench offers the phone column
+│   │   ├── useWorkbench.ts             # Context the workbench offers the call stage
 │   │   └── useDialog.ts                # Focus trap, Escape and focus return for overlays
 │   ├── services/
 │   │   ├── signalwire.ts               # SignalWire client wrapper (calls, media, devices)
@@ -231,6 +235,7 @@ frontend/
 │   │   ├── search.ts                   # Query normalization and the Directory/Recents matchers
 │   │   └── log.ts                      # App logger gated by the debug setting
 │   ├── styles/globals.css              # Tailwind setup, the docs' token layer (light + dark), shared utilities
+│   ├── codeMap.ts                      # Feature → SDK API → file → docs, behind the </> buttons (mirrors the table above)
 │   ├── types/index.ts                  # Shared types
 │   ├── App.tsx                         # Permission / connecting / error gates
 │   └── main.tsx                        # Entry point
