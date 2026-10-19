@@ -22,7 +22,7 @@ Every SignalWire interaction happens in the browser through the published npm pa
 | Device selection | `audioInputDevices$`, `videoInputDevices$`, `audioOutputDevices$`, `selectAudioOutputDevice()`, `applySelectedAudioOutputDevice()` | [DevicePicker.tsx](frontend/src/components/DevicePicker.tsx) |
 | Audio processing toggles | `call.setEchoCancellation()`, `setNoiseSuppression()`, `setAutoGainControl()` | [InspectorPane.tsx](frontend/src/components/InspectorPane.tsx), [CallControlsSheet.tsx](frontend/src/components/CallControlsSheet.tsx) |
 | Call quality and statistics | `qualityLevel$`, `qualityScore$`, `networkIssues$`, `networkMetrics$`, `getStats()` | [CallQualityBadge.tsx](frontend/src/components/CallQualityBadge.tsx), [CallStatsSheet.tsx](frontend/src/components/CallStatsSheet.tsx) |
-| Audio level meters | `localAudioLevel$` for the mic; the remote bar is an app-side `AnalyserNode` on the remote stream (on rc.5 `remoteAudioLevel$` reads 0 for the whole call) | [AudioLevelMeter.tsx](frontend/src/components/AudioLevelMeter.tsx), [remoteAudioMeter.ts](frontend/src/services/remoteAudioMeter.ts) |
+| Audio level meters | `localAudioLevel$` for the mic; the remote bar is an app-side `AnalyserNode` on the remote stream | [AudioLevelMeter.tsx](frontend/src/components/AudioLevelMeter.tsx), [remoteAudioMeter.ts](frontend/src/services/remoteAudioMeter.ts) |
 | Directory of dialable addresses | `client.directory$` (`hasMore$`, `loadMore()`) | [DirectoryAddressList.tsx](frontend/src/components/DirectoryAddressList.tsx) |
 | Pre-call connection test and diagnostics export | `client.preflight()`, `client.exportDiagnostics()` | [DiagnosticsPanel.tsx](frontend/src/components/DiagnosticsPanel.tsx), [diagnostics.ts](frontend/src/services/diagnostics.ts) |
 | Event log of SDK activity | `call.status$`, `call.errors$`, `client.warnings$`, `recoveryEvent$`, `deviceRecovered$`, `isRegistered$`, ICE state | [signalwire.ts](frontend/src/services/signalwire.ts) (`getEventLog$`), [EventLog.tsx](frontend/src/components/EventLog.tsx) |
@@ -227,7 +227,7 @@ frontend/
 │   │   ├── settings.ts                 # Tester settings (appearance, codec order, log level, relay-only)
 │   │   ├── theme.ts                    # Light/dark: resolves the Appearance setting to data-theme
 │   │   ├── diagnostics.ts              # Diagnostics export download
-│   │   ├── remoteAudioMeter.ts         # Speaker-bar level meter on the remote stream (not the SDK's)
+│   │   ├── remoteAudioMeter.ts         # Speaker-bar level meter on the remote stream
 │   │   └── tones.ts                    # Ringtone, key tones, disconnect tone
 │   ├── utils/
 │   │   ├── address.ts                  # SIP / Fabric address detection, digit counting
