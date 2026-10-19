@@ -10,10 +10,12 @@ interface AudioLevelMeterProps {
 // range across the bar.
 const perceptual = (level: number) => Math.min(1, Math.sqrt(Math.max(0, level)));
 
-// Mic and remote audio levels, written straight to the DOM from the SDK's
-// ~30 fps observables (never through React state -- see CLAUDE.md's
-// subscription-placement note). Confirms at a glance that the mic is live,
-// that mute really silences it, and that audio is arriving from the far end.
+// Mic and remote audio levels, written straight to the DOM from ~30 fps
+// observables (never through React state -- see CLAUDE.md's
+// subscription-placement note): the SDK's localAudioLevel$ for the mic, the
+// service's own meter on the remote stream for the speaker. Confirms at a
+// glance that the mic is live, that mute really silences it, and that audio
+// is arriving from the far end.
 const AudioLevelMeter: React.FC<AudioLevelMeterProps> = ({ isMuted }) => {
   const micRowRef = useRef<HTMLDivElement>(null);
   const micBarRef = useRef<HTMLDivElement>(null);

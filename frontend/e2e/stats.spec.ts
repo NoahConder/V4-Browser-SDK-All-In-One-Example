@@ -5,6 +5,7 @@ declare global {
   interface Window {
     __level: { next(v: number): void };
     __issues: { next(v: unknown[]): void };
+    __remoteStream: MediaStream;
   }
 }
 
@@ -16,11 +17,13 @@ test.describe('call statistics and audio meter', () => {
     await expect(page.locator('button[aria-label="Call statistics"]')).toBeVisible();
   });
 
-  test('the meter follows the mic level without re-rendering', async ({ page }) => {
+  test('the meters follow the mic and remote levels without re-rendering', async ({ page }) => {
     const bar = page.locator('.bg-success.origin-left');
     await expect(bar).toHaveCSS('transform', /matrix\(0\.2,/);
     await page.evaluate(() => window.__level.next(0.64));
     await expect(bar).toHaveCSS('transform', /matrix\(0\.8,/);
+    // The remote bar reads the stubbed 0.25 through the same square root.
+    await expect(page.locator('.bg-accent.origin-left')).toHaveCSS('transform', /matrix\(0\.5,/);
   });
 
   test('the stats sheet shows metrics, transport, recovery and the call id', async ({ page }) => {
@@ -108,5 +111,45 @@ test.describe('call statistics and audio meter', () => {
       );
     expect(await relevant(false)).toEqual(['high_rtt']);
     expect(await relevant(true)).toEqual(['no_inbound_video', 'high_rtt']);
+  });
+});
+
+// The real remote meter (services/remoteAudioMeter.ts), fed through the
+// service's handleRemoteMedia() with a synthetic stream: a 0.5-amplitude sine
+// (RMS ~0.35) from the tone service's AudioContext, which Playwright's
+// --autoplay-policy=no-user-gesture-required lets run without a gesture.
+test.describe('remote audio meter', () => {
+  test('meters the stream routed to the remote sink and detaches on call end', async ({ page }) => {
+    await openDialer(page);
+    await setState(page, { isInCall: true, callStatus: 'connected', connectedAt: Date.now() - 5000, remoteNumber: '+15551234567' });
+    const bar = page.locator('.bg-accent.origin-left');
+    await expect(bar).toHaveCSS('transform', /matrix\(0,/);
+
+    await evalInApp(page, `
+      const { toneService } = await import('/src/services/tones.ts');
+      const ctx = toneService.getAudioContext();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      gain.gain.value = 0.5;
+      const dest = ctx.createMediaStreamDestination();
+      osc.connect(gain);
+      gain.connect(dest);
+      osc.start();
+      window.__remoteStream = dest.stream;
+      s.handleRemoteMedia(dest.stream);
+    `);
+    await expect(bar).toHaveCSS('transform', /matrix\(0\.[3-9]/);
+
+    // The peer-connection fallback delivers the same track in a new
+    // MediaStream wrapper; the tap must not be rebuilt for it.
+    const rebuilt = await evalInApp<boolean>(page, `
+      const before = s.remoteAudioMeter.source;
+      s.handleRemoteMedia(new MediaStream(window.__remoteStream.getAudioTracks()));
+      return s.remoteAudioMeter.source !== before;
+    `);
+    expect(rebuilt).toBe(false);
+
+    await evalInApp(page, `s.remoteAudioMeter.setStream(null);`);
+    await expect(bar).toHaveCSS('transform', /matrix\(0,/);
   });
 });

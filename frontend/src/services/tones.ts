@@ -13,7 +13,11 @@ class ToneService {
   private incomingCallInterval: ReturnType<typeof setInterval> | null = null;
   private currentRingtoneOscillators: OscillatorNode[] = [];
 
-  private getAudioContext(): AudioContext {
+  // The page's one AudioContext: the tones, DTMF feedback and the remote level
+  // meter (services/remoteAudioMeter.ts) share it. Created on first use and
+  // asked to resume; outside a user gesture that only completes once the page
+  // has had one (see primeOnFirstGesture).
+  getAudioContext(): AudioContext {
     if (!this.audioContext) {
       this.audioContext = new (window.AudioContext ||
         (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext)();

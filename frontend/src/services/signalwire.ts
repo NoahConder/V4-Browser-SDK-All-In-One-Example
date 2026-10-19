@@ -33,6 +33,7 @@ import type { TokenData } from '../types';
 import axios from 'axios';
 import { authAPI } from './api';
 import { toneService } from './tones';
+import { RemoteAudioMeter } from './remoteAudioMeter';
 import { loadSettings, type DialerSettings } from './settings';
 import { isDialAddress } from '../utils/address';
 import { log, setDebugLogging } from '../utils/log';
@@ -331,6 +332,10 @@ class SignalWireService {
   // Whether the remote stream carries a video track (set by handleRemoteMedia).
   // Gates relevantIssues()' filter on the SDK's "no inbound video" issue.
   private remoteHasVideo = false;
+  // The speaker bar's level source, fed by handleRemoteMedia() with whatever
+  // stream reaches the remote sink. See getRemoteAudioLevel$() for why it
+  // isn't the SDK's remoteAudioLevel$.
+  private readonly remoteAudioMeter = new RemoteAudioMeter();
 
   // Callbacks
   private onIncomingCall: SignalWireCallbacks['onIncomingCall'] | null = null;
@@ -944,8 +949,14 @@ class SignalWireService {
     return this.currentCall?.localSpeaking$ ?? of(false);
   }
 
+  // Not the SDK's call.remoteAudioLevel$: on rc.5 it emits 0 for the whole
+  // call (its analyser is never fed the remote stream), so the speaker bar
+  // never moved. The app meters the stream handleRemoteMedia() routes to the
+  // sink instead (services/remoteAudioMeter.ts) -- the same RMS as the mic
+  // bar, and it also covers media that arrived through the peer-connection
+  // fallback, which the SDK's meter never saw.
   getRemoteAudioLevel$(): Observable<number> {
-    return this.currentCall?.remoteAudioLevel$ ?? of(0);
+    return this.remoteAudioMeter.level$;
   }
 
   getCurrentCallId(): string | null {
@@ -1098,6 +1109,9 @@ class SignalWireService {
   // stream carries a video track (and stops the <audio> sink so audio isn't
   // played out of both elements at once), otherwise falls back to audio-only.
   private handleRemoteMedia(stream: MediaStream) {
+    // Meter whatever reaches the sink, on both branches below (the audio track
+    // rides along in a video stream too).
+    this.remoteAudioMeter.setStream(stream);
     const hasVideo = stream.getVideoTracks().length > 0;
     this.remoteHasVideo = hasVideo;
 
@@ -1966,8 +1980,9 @@ class SignalWireService {
     // Not via setAudioProcessing() -- the store's own reset covers the UI.
     this.audioProcessing = { ...DEFAULT_AUDIO_PROCESSING };
 
-    // Clean up audio/video sinks
+    // Clean up audio/video sinks and the remote level meter
     this.clearAudioSink();
+    this.remoteAudioMeter.setStream(null);
     if (this.localVideoEl) this.localVideoEl.srcObject = null;
     if (this.remoteVideoEl) this.remoteVideoEl.srcObject = null;
     this.remoteAudioRoutedToVideo = false;
