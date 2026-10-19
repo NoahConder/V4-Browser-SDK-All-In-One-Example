@@ -211,7 +211,8 @@ test.describe('Recents', () => {
     await expect(bob.locator('button:has-text("Video")')).toBeDisabled();
     const alice = page.locator('#resources-tabpanel div:has(> div > div > span > span:text-is("Alice"))');
     await alice.locator('button:has-text("Video")').click();
-    await expect(page.locator(ADDRESS_INPUT)).toHaveValue('/private/alice');
+    // A bare entry gets the channel it is redialed with.
+    await expect(page.locator(ADDRESS_INPUT)).toHaveValue('/private/alice?channel=video');
     await expect(page.locator('button[aria-label="Video call on"]')).toHaveCount(1);
 
     await page.locator('button[aria-label="Clear"]').click();

@@ -191,6 +191,8 @@ const Dialer: React.FC = () => {
         callStatus: 'connecting',
         isMuted: false,
         isSpeakerOn: false,
+        // wantsVideo is already what the field allows: a Fabric address's
+        // channel, never for a phone number (useDialFieldStore).
         isVideoCall: wantsVideo,
         isCameraOn: wantsVideo,
       });
@@ -344,6 +346,12 @@ const Dialer: React.FC = () => {
   const addressType = getDialAddressType(phoneNumber);
   const addressMeta = DIAL_ADDRESS_META[addressType];
   const AddressIcon = addressMeta.icon;
+  // Phone numbers can't do video: the store keeps wantsVideo false and the
+  // toggle is disabled. (An empty field isn't a phone number yet.)
+  const isPhone = addressType === 'phone' && phoneNumber !== '';
+  // A Fabric address's badge says which channel the field carries.
+  const addressLabel =
+    addressType === 'fabric' ? `${addressMeta.label} · ${wantsVideo ? 'video' : 'audio'}` : addressMeta.label;
 
   // Show dialer
   return (
@@ -444,7 +452,7 @@ const Dialer: React.FC = () => {
             }`}
           >
             <span
-              title={addressMeta.label}
+              title={addressLabel}
               className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-colors ${addressMeta.badgeClass}`}
             >
               <AddressIcon size={18} />
@@ -526,16 +534,19 @@ const Dialer: React.FC = () => {
           <div className="mt-3 flex w-full max-w-xl items-center justify-between gap-3">
             {/* No room for it beside Video and Call on 320px phones. */}
             <span className="hidden min-w-0 truncate text-xs font-medium uppercase tracking-wider text-faint min-[360px]:inline">
-              {phoneNumber && !callError ? addressMeta.label : ''}
+              {phoneNumber && !callError ? addressLabel : ''}
             </span>
             <div className="flex shrink-0 items-center gap-2">
-              {/* Video toggle -- obeyed by handleCall when placing the next call */}
+              {/* For a Fabric address the Video toggle is the channel selector:
+                  it rewrites the field's `?channel=`, so what's shown is what's
+                  dialed (useDialFieldStore). For a SIP URI it's the camera
+                  choice; phone numbers can't do video, so it's disabled. */}
               <button
                 type="button"
                 onClick={toggleWantsVideo}
-                disabled={isInCall || isCallingInProgress}
+                disabled={isInCall || isCallingInProgress || isPhone}
                 aria-label={wantsVideo ? 'Video call on' : 'Video call off'}
-                title={wantsVideo ? 'Video call on' : 'Video call off'}
+                title={isPhone ? "Video isn't available for phone numbers" : wantsVideo ? 'Video call on' : 'Video call off'}
                 aria-pressed={wantsVideo}
                 className={`flex h-11 items-center gap-2 rounded-lg border px-3 text-sm font-medium transition-colors disabled:opacity-50 ${
                   wantsVideo

@@ -4,7 +4,7 @@ import { DialButtons } from './ResourceAddressList';
 import SearchField from './SearchField';
 import { useRecentsStore, type RecentCall } from '../hooks/useRecentsStore';
 import { useCallStore } from '../hooks/useCallStore';
-import { getDialAddressType } from '../utils/address';
+import { getDialAddressType, withChannel } from '../utils/address';
 import { matchStatus, matchesRecent, normalizeQuery } from '../utils/search';
 
 interface RecentsListProps {
@@ -35,11 +35,6 @@ const durationOf = (entry: RecentCall): string | null => {
   const seconds = Math.max(0, Math.round((entry.endedAt - entry.connectedAt) / 1000));
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
 };
-
-// A picked address URL remembers its channel (`?channel=video`); redialing
-// as audio must not quietly keep the video channel.
-const asAudioDestination = (destination: string): string =>
-  destination.replace(/([?&])channel=[^&]*/i, '$1channel=audio');
 
 // Calls made and received in this browser (useRecentsStore), newest first,
 // each redialable as audio or video.
@@ -99,9 +94,12 @@ function RecentsList({ onSelectAddress }: RecentsListProps) {
               </div>
             </div>
 
+            {/* An entry remembers the channel it was dialed with; each button
+                rewrites it so redialing as audio never keeps `?channel=video`
+                (and vice versa). */}
             <DialButtons
-              audioPath={asAudioDestination(entry.destination)}
-              videoPath={canVideo ? entry.destination : null}
+              audioPath={withChannel(entry.destination, 'audio')}
+              videoPath={canVideo ? withChannel(entry.destination, 'video') : null}
               label={entry.label}
               onSelectAddress={onSelectAddress}
             />

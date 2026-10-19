@@ -54,5 +54,9 @@ test.describe('Subscriber panel', () => {
     await row(page, 'swdialer').locator('button:has-text("Video")').click();
     await expect(page.locator(ADDRESS_INPUT)).toHaveValue('/private/swdialer?channel=video');
     await expect(page.locator('button[aria-label="Video call on"]')).toHaveCount(1);
+    // The toggle is the address's channel: off rewrites the field to audio.
+    await page.click('button[aria-label="Video call on"]');
+    await expect(page.locator(ADDRESS_INPUT)).toHaveValue('/private/swdialer?channel=audio');
+    await expect(page.locator('button[aria-label="Video call off"]')).toHaveCount(1);
   });
 });

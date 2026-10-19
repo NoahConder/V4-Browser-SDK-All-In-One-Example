@@ -1315,22 +1315,6 @@ class SignalWireService {
     return '+' + digits;
   }
 
-  // Passing `{ video: true }` to dial()'s media options alone isn't enough to
-  // reliably get the video channel -- per the dialable-resources addresses
-  // (each pre-suffixed per channel by the server, see CLAUDE.md), the
-  // destination itself needs `?channel=video`. Applied here so manually
-  // dialed numbers/addresses get the same treatment as picked resources.
-  // Replaces rather than skips an existing `channel=` param, so toggling
-  // video on after picking an audio-channel resource address still works.
-  private withVideoChannel(destination: string, video: boolean): string {
-    if (!video) return destination;
-    if (/[?&]channel=/i.test(destination)) {
-      return destination.replace(/([?&])channel=[^&]*/i, '$1channel=video');
-    }
-    const separator = destination.includes('?') ? '&' : '?';
-    return `${destination}${separator}channel=video`;
-  }
-
   // Resolves null if the user hung up before dial() completed (the call is
   // hung up instead of adopted).
   async makeCall(phoneNumber: string, video: boolean = false): Promise<Call | null> {
@@ -1350,13 +1334,20 @@ class SignalWireService {
     try {
       this.isDialing = true;
       this.dialCancelled = false;
-      const formattedNumber = this.withVideoChannel(this.normalizeDestination(phoneNumber), video);
-      log.debug('Dialing:', formattedNumber);
-      this.logEvent('user', video ? 'Dialing (video)' : 'Dialing', formattedNumber);
+      // The field is the dial string: a Fabric address already carries the
+      // `?channel=` the Video toggle chose (useDialFieldStore keeps the two in
+      // step), and phone numbers and SIP URIs never carry one. receiveVideo is
+      // explicit because the SDK otherwise takes it only from `?channel=video`
+      // (buildOptionsFromDestination; its preference default is false), which
+      // would leave a SIP video call offering sendonly.
+      const to = this.normalizeDestination(phoneNumber);
+      log.debug('Dialing:', to);
+      this.logEvent('user', video ? 'Dialing (video)' : 'Dialing', to);
 
-      const call = await this.client.dial(formattedNumber, {
+      const call = await this.client.dial(to, {
         audio: true,
         video,
+        receiveVideo: video,
       });
 
       // The user hung up while dial() was pending (see dialCancelled). The UI

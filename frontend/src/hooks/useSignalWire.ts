@@ -13,7 +13,7 @@ import { signalWireService, ClientNotReadyError, type SignalWireCallbacks } from
 import { useCallStore } from './useCallStore';
 import { useRecentsStore } from './useRecentsStore';
 import { callsAPI, describeFetchError } from '../services/api';
-import { formatPhoneNumber } from '../utils/address';
+import { dialPath, formatPhoneNumber } from '../utils/address';
 import { log } from '../utils/log';
 
 // Test seam, dev server only: `?e2e=1` skips the SignalWire connection so the
@@ -314,7 +314,9 @@ export const useSignalWire = () => {
       useRecentsStore.getState().start({
         direction: 'outbound',
         destination: phoneNumber,
-        label: label ?? formatPhoneNumber(phoneNumber),
+        // A typed Fabric address is labeled without its `?channel=` (the
+        // entry's video flag says that); the destination keeps it.
+        label: label ?? formatPhoneNumber(dialPath(phoneNumber)),
         video,
         ...activeSubscriber(),
       });

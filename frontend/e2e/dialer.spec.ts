@@ -67,10 +67,11 @@ test.describe('dial pad on a small phone', () => {
     // The Enter listener is bound once per screen state; it must read the
     // current toggle, not the one captured when it was bound.
     const input = page.locator(ADDRESS_INPUT);
-    await input.fill('5551234567');
+    await input.fill('/public/room');
     await page.click('button[aria-label="Video call off"]');
+    await expect(input).toHaveValue('/public/room?channel=video');
     await input.press('Enter');
-    await expect.poll(() => drainLog(page)).toEqual([['makeCall', '5551234567', true]]);
+    await expect.poll(() => drainLog(page)).toEqual([['makeCall', '/public/room?channel=video', true]]);
     expect(await evalInApp(page, `return store.getState().isVideoCall;`)).toBe(true);
   });
 
@@ -85,9 +86,111 @@ test.describe('dial pad on a small phone', () => {
     await evalInApp(page, `recents.getState().start({ direction: 'outbound', destination: '/public/room-a', label: 'Room A', video: true });`);
     await evalInApp(page, `recents.getState().finish('answered');`);
     await page.click('button[aria-label="Call"]');
-    await expect(page.locator(ADDRESS_INPUT)).toHaveValue('/public/room-a');
+    await expect(page.locator(ADDRESS_INPUT)).toHaveValue('/public/room-a?channel=video');
     await expect(page.locator('button[aria-label="Video call on"]')).toHaveCount(1);
     expect(await drainLog(page)).toEqual([]);
+  });
+});
+
+// The Video toggle is the channel of a Fabric address (useDialFieldStore): the
+// field is the dial string, so the two can't disagree. Default viewport -- the
+// type label under the field is hidden below 360px.
+test.describe('video toggle', () => {
+  test.beforeEach(async ({ page }) => {
+    await openDialer(page);
+    await stubCallMethods(page);
+  });
+
+  test('rewrites a Fabric address\'s channel, and follows a typed one', async ({ page }) => {
+    const input = page.locator(ADDRESS_INPUT);
+    await input.fill('/private/alice?channel=video');
+    await expect(page.locator('button[aria-label="Video call on"]')).toHaveCount(1);
+    await expect(page.getByText('Fabric address · video')).toBeVisible();
+    await page.click('button[aria-label="Video call on"]');
+    await expect(input).toHaveValue('/private/alice?channel=audio');
+    await expect(page.locator('button[aria-label="Video call off"]')).toHaveCount(1);
+    await expect(page.getByText('Fabric address · audio')).toBeVisible();
+
+    // A typed channel sets the toggle (case-insensitively); editing re-derives it.
+    await input.fill('/private/alice?channel=VIDEO');
+    await expect(page.locator('button[aria-label="Video call on"]')).toHaveCount(1);
+    await input.press('Backspace');
+    await expect(page.locator('button[aria-label="Video call off"]')).toHaveCount(1);
+
+    // A bare address is the server's default channel (audio); on appends.
+    await input.fill('/public/room');
+    await expect(page.locator('button[aria-label="Video call off"]')).toHaveCount(1);
+    await page.click('button[aria-label="Video call off"]');
+    await expect(input).toHaveValue('/public/room?channel=video');
+  });
+
+  test('is disabled for phone numbers and never leaks into their dial', async ({ page }) => {
+    const input = page.locator(ADDRESS_INPUT);
+    await input.fill('/public/room');
+    await page.click('button[aria-label="Video call off"]');
+    await expect(page.locator('button[aria-label="Video call on"]')).toHaveCount(1);
+    await input.fill('5551234567');
+    const toggle = page.locator('button[aria-label="Video call off"]');
+    await expect(toggle).toBeDisabled();
+    await expect(toggle).toHaveAttribute('title', "Video isn't available for phone numbers");
+    await input.press('Enter');
+    await expect.poll(() => drainLog(page)).toEqual([['makeCall', '5551234567', false]]);
+    expect(await evalInApp(page, `return store.getState().isVideoCall;`)).toBe(false);
+  });
+
+  test('is a free camera choice for a SIP URI, with no channel added', async ({ page }) => {
+    const input = page.locator(ADDRESS_INPUT);
+    await input.fill('sip:bob@example.com');
+    const toggle = page.locator('button[aria-label="Video call off"]');
+    await expect(toggle).toBeEnabled();
+    await toggle.click();
+    await expect(input).toHaveValue('sip:bob@example.com');
+    await input.press('Enter');
+    await expect.poll(() => drainLog(page)).toEqual([['makeCall', 'sip:bob@example.com', true]]);
+  });
+
+  test('keeps the picked label through a toggle, and Recents stores the dialed string', async ({ page }) => {
+    await page.evaluate(
+      `import('/src/hooks/useDialFieldStore.ts').then((m) => m.useDialFieldStore.getState().selectAddress('/private/alice?channel=audio', false, 'Alice'))`,
+    );
+    const input = page.locator(ADDRESS_INPUT);
+    await expect(input).toHaveValue('/private/alice?channel=audio');
+    await page.click('button[aria-label="Video call off"]');
+    await expect(input).toHaveValue('/private/alice?channel=video');
+    await input.press('Enter');
+    await expect.poll(() => drainLog(page)).toEqual([['makeCall', '/private/alice?channel=video', true]]);
+    await expect
+      .poll(() => evalInApp(page, `return recents.getState().entries[0];`))
+      .toMatchObject({ label: 'Alice', destination: '/private/alice?channel=video', video: true });
+  });
+
+  test('withChannel and channelOf follow the truth table', async ({ page }) => {
+    const got = await page.evaluate(`import('/src/utils/address.ts').then((m) => [
+      m.withChannel('/public/room', 'video'),
+      m.withChannel('/public/room', 'audio'),
+      m.withChannel('/public/room?channel=audio', 'video'),
+      m.withChannel('/public/room?channel=video', 'audio'),
+      m.withChannel('/public/room?foo=1', 'video'),
+      m.withChannel(' /public/room ', 'video'),
+      m.withChannel('sip:bob@example.com', 'video'),
+      m.withChannel('5551234567', 'video'),
+      m.channelOf('/public/room?channel=VIDEO'),
+      m.channelOf('/public/room?foo=1&channel=audio'),
+      m.channelOf('/public/room'),
+    ])`);
+    expect(got).toEqual([
+      '/public/room?channel=video',
+      '/public/room',
+      '/public/room?channel=video',
+      '/public/room?channel=audio',
+      '/public/room?foo=1&channel=video',
+      '/public/room?channel=video',
+      'sip:bob@example.com',
+      '5551234567',
+      'video',
+      'audio',
+      null,
+    ]);
   });
 });
 
