@@ -42,7 +42,7 @@ export const stubCallMethods = (page: Page) =>
   evalInApp(
     page,
     `
-    s.makeCall = async (n, video) => { log('makeCall', n, video); return { id: 'sdk-call-1' }; };
+    s.makeCall = async (n, video, from) => { log('makeCall', n, video, ...(from === undefined ? [] : [from])); return { id: 'sdk-call-1' }; };
     s.sendDTMF = async (d) => { log('dtmf', d); };
     s.endCall = async () => { log('endCall'); };
     s.answerCall = async () => { log('answer'); };
@@ -104,3 +104,18 @@ export const STATS_STUBS = `
   });
   s.recoveryEvents$.next({ action: 'reinvite_started', reason: 'test', attempt: 1, maxAttempts: 3, timestamp: Date.now() });
 `;
+
+// The caller ID picker's backend listing (GET /api/caller-ids): one owned
+// number and one verified caller ID.
+export const CALLER_IDS = {
+  success: true,
+  data: [
+    { id: 'n1', number: '+15550000001', name: 'Main line', kind: 'number' },
+    { id: 'v1', number: '+15558675309', name: "Noah's mobile", kind: 'verified' },
+  ],
+  total: 2,
+  failed: [] as string[],
+};
+
+export const stubCallerIds = (page: Page, body: unknown = CALLER_IDS) =>
+  page.route('**/api/caller-ids*', (route) => route.fulfill({ json: body }));

@@ -19,6 +19,7 @@ const initialState: CallState = {
   remoteNumber: '',
   pendingDialClear: false,
   callDirection: null,
+  outboundCallerId: null,
   callStatus: 'idle',
   connectedAt: null,
   needsAudioUnlock: false,

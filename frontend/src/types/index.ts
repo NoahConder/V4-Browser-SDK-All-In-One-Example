@@ -20,6 +20,10 @@ export interface CallState {
   // dialer clears its field; the dialer resets it once handled.
   pendingDialClear: boolean;
   callDirection: 'inbound' | 'outbound' | null;
+  // The caller ID sent with an outbound call to a phone number (dial()'s
+  // `from`), for the call card; null when the server chose or the
+  // destination wasn't a phone number. See useCallerIdStore.
+  outboundCallerId: string | null;
   // 'connecting' from the moment Call is tapped (and for the SDK's
   // trying/connecting statuses), 'ringing' once the SDK reports the far end
   // ringing, 'connected' when answered.
@@ -83,6 +87,16 @@ export interface CallData {
   started_at: string;
   ended_at?: string;
   duration: number;
+}
+
+// One choice in the Caller ID picker (GET /api/caller-ids): a phone number
+// the project owns or an external number it has verified -- the two things
+// SignalWire accepts as the caller ID of a call to a phone number.
+export interface CallerId {
+  id: string;
+  number: string;
+  name: string | null;
+  kind: 'number' | 'verified';
 }
 
 export interface DialPadKey {

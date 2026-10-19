@@ -14,6 +14,7 @@ import { useSignalWire } from '../hooks/useSignalWire';
 import { useCallStore } from '../hooks/useCallStore';
 import { useWorkbench } from '../hooks/useWorkbench';
 import { signalWireService } from '../services/signalwire';
+import { formatPhoneNumber } from '../utils/address';
 import { log } from '../utils/log';
 
 // Transfer is hidden: on 4.0.0-rc.5 the server refuses every transfer
@@ -83,6 +84,7 @@ const CallScreen: React.FC<CallScreenProps> = ({
   const connectedAt = useCallStore((s) => s.connectedAt);
   const needsAudioUnlock = useCallStore((s) => s.needsAudioUnlock);
   const isMediaDisrupted = useCallStore((s) => s.isMediaDisrupted);
+  const outboundCallerId = useCallStore((s) => s.outboundCallerId);
   const setCallState = useCallStore((s) => s.setCallState);
   // Inside the desktop workbench the stats live in the Inspector pane (so the
   // badge and the More sheet select its Call tab instead of opening the
@@ -253,6 +255,10 @@ const CallScreen: React.FC<CallScreenProps> = ({
                 <div className="mt-1 font-display text-2xl font-medium tracking-tight wrap-anywhere select-text sm:text-3xl">
                   {phoneNumber}
                 </div>
+                {/* The caller ID this call was placed with (phone numbers only). */}
+                {outboundCallerId && (
+                  <div className="mt-0.5 text-xs text-faint">From {formatPhoneNumber(outboundCallerId)}</div>
+                )}
                 {callId && (
                   <div className="mt-1 flex items-center gap-1 text-xs text-faint">
                     <span className="truncate font-mono select-text" title="Call ID">

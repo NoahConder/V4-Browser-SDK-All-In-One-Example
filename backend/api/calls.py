@@ -53,7 +53,7 @@ def initiate_call():
             "duration": 0
         }
 
-        logger.info(f"Outbound call initiated: {call_data['id']} to {formatted_number}")
+        logger.info(f"Outbound call initiated: {call_data['id']} to {formatted_number} from {from_number}")
 
         return jsonify({
             "success": True,

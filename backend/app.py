@@ -29,6 +29,7 @@ from api.calls import calls_bp
 from api.swml import swml_bp
 from api.sip_credentials import sip_credentials_bp
 from api.subscribers import subscribers_bp
+from api.caller_ids import caller_ids_bp
 
 # Register blueprints
 app.register_blueprint(auth_bp, url_prefix='/api/auth')
@@ -36,6 +37,7 @@ app.register_blueprint(calls_bp, url_prefix='/api/calls')
 app.register_blueprint(swml_bp, url_prefix='/api/swml')
 app.register_blueprint(sip_credentials_bp, url_prefix='/api/sip')
 app.register_blueprint(subscribers_bp, url_prefix='/api/subscribers')
+app.register_blueprint(caller_ids_bp, url_prefix='/api/caller-ids')
 
 # Request headers whose values must never reach the log.
 _SENSITIVE_HEADERS = {'x-api-key', 'authorization', 'cookie'}

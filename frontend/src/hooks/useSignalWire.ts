@@ -305,10 +305,12 @@ export const useSignalWire = () => {
   }, []);
 
   // `label` is the picked resource's display name, when the destination came
-  // from the resources panel; typed numbers are formatted for display.
-  const makeCall = async (phoneNumber: string, video: boolean = false, label?: string) => {
+  // from the resources panel; typed numbers are formatted for display. `from`
+  // is the chosen caller ID, passed only for a phone number (Dialer.tsx; the
+  // service checks again).
+  const makeCall = async (phoneNumber: string, video: boolean = false, label?: string, from?: string) => {
     try {
-      log.debug('useSignalWire.makeCall() called with:', phoneNumber, 'video:', video);
+      log.debug('useSignalWire.makeCall() called with:', phoneNumber, 'video:', video, 'from:', from);
       setError(null);
       setCallState({ callError: null });
       useRecentsStore.getState().start({
@@ -325,13 +327,13 @@ export const useSignalWire = () => {
       // delay the dial nor fail it: awaiting it first left a window where
       // hanging up was a no-op (nothing was dialing yet) and the call was
       // placed anyway once the request returned.
-      callsAPI.initiateCall(phoneNumber)
+      callsAPI.initiateCall(phoneNumber, from)
         .then((callData) => log.debug('Backend logged call:', callData))
         .catch((err) => log.warn('Backend call log failed (ignored):', err));
 
       // Make the actual call
       log.debug('Making actual call via SignalWire service...');
-      const call = await signalWireService.makeCall(phoneNumber, video);
+      const call = await signalWireService.makeCall(phoneNumber, video, from);
       log.debug('SignalWire service returned call object:', call);
       // The user hung up while the dial was in flight; the UI already reset.
       if (!call) return;

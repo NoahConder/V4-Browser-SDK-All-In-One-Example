@@ -8,6 +8,7 @@ from collections import defaultdict, deque
 import pytest
 
 import api.auth as auth
+import api.caller_ids as caller_ids
 import api.calls as calls
 import api.sip_credentials as sip
 import api.subscribers as subscribers
@@ -26,6 +27,7 @@ GATED_ROUTES = [
     ('GET', '/api/swml/scripts', None),
     ('GET', '/api/sip/credentials', None),
     ('GET', '/api/subscribers', None),
+    ('GET', '/api/caller-ids', None),
     ('POST', '/api/calls/dial', {'to': '5551234567'}),
     ('POST', '/api/auth/token', {}),
     ('POST', '/api/auth/refresh', {}),
@@ -63,6 +65,12 @@ class FakeSignalWire:
         return [{'id': 'addr-1', 'name': 'alice', 'display_name': 'Alice', 'resource_id': subscriber_id,
                  'channels': {'audio': '/private/alice?channel=audio', 'video': '/private/alice?channel=video'}}]
 
+    def list_phone_numbers(self):
+        return [{'id': 'n1', 'number': '+15550000001', 'name': 'Main line', 'capabilities': ['voice']}]
+
+    def list_verified_caller_ids(self):
+        return [{'id': 'v1', 'number': '+15558675309', 'name': 'Mobile', 'verified': True}]
+
     def create_subscriber_token(self, reference, expires_in=3600):
         return {'token': 't', 'expires_at': '2026-01-01T00:00:00+00:00', 'subscriber_id': 'x'}
 
@@ -73,7 +81,7 @@ class FakeSignalWire:
 @pytest.fixture
 def api(monkeypatch):
     fake = FakeSignalWire()
-    for module in (swml, sip, subscribers, auth):
+    for module in (swml, sip, subscribers, caller_ids, auth):
         monkeypatch.setattr(module, 'get_client', lambda: fake)
     # /api/calls/dial normalizes with the real client's rules.
     monkeypatch.setenv('SPACE_NAME', 'example.signalwire.com')
@@ -85,6 +93,7 @@ def api(monkeypatch):
     monkeypatch.setattr(swml, '_scripts_meta_cache', {'data': None, 'expires_at': 0})
     monkeypatch.setattr(sip, '_credentials_meta_cache', {'data': None, 'expires_at': 0})
     monkeypatch.setattr(subscribers, '_subscribers_cache', {'data': None, 'expires_at': 0})
+    monkeypatch.setattr(caller_ids, '_caller_ids_cache', {'data': None, 'expires_at': 0})
     monkeypatch.setattr(security, '_buckets', defaultdict(deque))
     monkeypatch.setenv('DIALER_API_KEY', 'test-key')
     app.config['TESTING'] = True
@@ -202,6 +211,9 @@ def test_dial_log_validates_and_normalizes_the_destination(api):
     assert response.status_code == 200
     data = response.get_json()['data']
     assert data['to'] == '+15551234567' and data['direction'] == 'outbound' and data['from'] == 'WebDialer'
+    # The chosen caller ID rides along for the log line.
+    data = client.post('/api/calls/dial', json={'to': '5551234567', 'from': '+15550000001'}, headers=KEY).get_json()['data']
+    assert data['from'] == '+15550000001'
 
     assert client.post('/api/calls/dial', json={'to': '/public/room'}, headers=KEY).get_json()['data']['to'] == '/public/room'
     assert client.post('/api/calls/dial', json={}, headers=KEY).status_code == 400

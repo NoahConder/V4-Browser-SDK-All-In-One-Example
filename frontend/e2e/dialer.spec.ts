@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { expect, test } from '@playwright/test';
-import { ADDRESS_INPUT, callStatusText, drainLog, evalInApp, openDialer, setState, stubCallMethods } from './helpers';
+import { ADDRESS_INPUT, CALLER_IDS, callStatusText, drainLog, evalInApp, openDialer, setState, stubCallMethods, stubCallerIds } from './helpers';
 
 // Shared with backend/tests/test_numbers.py so the two normalizers stay in sync.
 const normalization = JSON.parse(
@@ -22,6 +22,14 @@ test.describe('dial pad on a small phone', () => {
     await expect(input).toHaveValue('(555) 123-4567');
     const fit = await input.evaluate((el) => ({ sw: el.scrollWidth, cw: el.clientWidth }));
     expect(fit.sw).toBeLessThanOrEqual(fit.cw);
+  });
+
+  test('the From, Video and Call buttons fit beside each other', async ({ page }) => {
+    for (const label of ['Caller ID: default', 'Video call off', 'Call']) {
+      const box = (await page.locator(`button[aria-label="${label}"]`).boundingBox())!;
+      expect(box.x).toBeGreaterThanOrEqual(0);
+      expect(box.x + box.width).toBeLessThanOrEqual(320);
+    }
   });
 
   test('tap Delete removes one character; hold 0 types +', async ({ page }) => {
@@ -201,6 +209,78 @@ test('normalizes destinations the same way as the backend', async ({ page }) => 
     `return ${JSON.stringify(normalization.map((c) => c.input))}.map((v) => s.normalizeDestination(v));`,
   );
   expect(got).toEqual(normalization.map((c) => c.expected));
+});
+
+test.describe('caller ID picker', () => {
+  test.beforeEach(async ({ page }) => {
+    await stubCallerIds(page);
+    await openDialer(page);
+    await stubCallMethods(page);
+  });
+
+  test('picks a number, sends it for phone numbers only, and remembers it', async ({ page }) => {
+    const from = page.locator('button[aria-label^="Caller ID"]');
+    await expect(from).toHaveAttribute('aria-label', 'Caller ID: default');
+    await from.click();
+    const sheet = page.locator('[role="dialog"]');
+    await expect(sheet).toContainText('Default (server chooses)');
+    await expect(sheet.getByText('Phone numbers', { exact: true })).toHaveCount(1);
+    await expect(sheet.getByText('Verified caller IDs', { exact: true })).toHaveCount(1);
+    await expect(sheet).toContainText("Noah's mobile");
+    await sheet.locator('button:has-text("+1 (555) 000-0001")').click();
+    await expect(sheet).toHaveCount(0);
+    await expect(from).toHaveAttribute('aria-label', 'Caller ID: +1 (555) 000-0001');
+    await expect(from).toContainText('Main line');
+    // Picking hands focus back to the address field, so Enter still dials.
+    const input = page.locator(ADDRESS_INPUT);
+    await expect(input).toBeFocused();
+
+    await input.fill('5551234567');
+    await input.press('Enter');
+    await expect.poll(() => drainLog(page)).toEqual([['makeCall', '5551234567', false, '+15550000001']]);
+    expect(await evalInApp(page, `return store.getState().outboundCallerId;`)).toBe('+15550000001');
+    await expect(page.getByText('From +1 (555) 000-0001')).toBeVisible();
+    await evalInApp(page, `store.getState().resetCallState();`);
+
+    // Not for a SIP URI or a Fabric address: the button is locked out and
+    // nothing is sent.
+    await input.fill('sip:bob@example.com');
+    await expect(from).toBeDisabled();
+    await expect(from).toHaveAttribute('title', 'Caller ID applies to phone numbers only');
+    await input.press('Enter');
+    await expect.poll(() => drainLog(page)).toEqual([['makeCall', 'sip:bob@example.com', false]]);
+    await evalInApp(page, `store.getState().resetCallState();`);
+    await input.fill('/public/room');
+    await expect(from).toBeDisabled();
+
+    // The choice survives a reload; Default clears it.
+    await openDialer(page);
+    await stubCallMethods(page);
+    await expect(from).toHaveAttribute('aria-label', 'Caller ID: +1 (555) 000-0001');
+    await from.click();
+    await sheet.locator('button:has-text("Default (server chooses)")').click();
+    await expect(from).toHaveAttribute('aria-label', 'Caller ID: default');
+  });
+
+  test('shows the backend error with Retry, and names a source that failed', async ({ page }) => {
+    // Fails until the test says otherwise (a "fail once" counter would be
+    // consumed by StrictMode's double effect in the dev server).
+    let failing = true;
+    await page.route('**/api/caller-ids*', (route) => {
+      if (failing) {
+        return route.fulfill({ status: 500, json: { success: false, error: 'Failed to list caller IDs' } });
+      }
+      return route.fulfill({ json: { ...CALLER_IDS, data: [CALLER_IDS.data[1]], total: 1, failed: ['numbers'] } });
+    });
+    await page.click('button[aria-label^="Caller ID"]');
+    const sheet = page.locator('[role="dialog"]');
+    await expect(sheet).toContainText("The backend couldn't complete the request");
+    failing = false;
+    await sheet.locator('button:has-text("Retry")').click();
+    await expect(sheet.getByText('Verified caller IDs', { exact: true })).toHaveCount(1);
+    await expect(sheet.getByText('Phone numbers', { exact: true })).toHaveCount(0);
+    await expect(sheet).toContainText("Couldn't load phone numbers");
+  });
 });
 
 test.describe('in a call', () => {

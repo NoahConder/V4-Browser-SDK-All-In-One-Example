@@ -12,6 +12,7 @@ Every SignalWire interaction happens in the browser through the published npm pa
 |---|---|---|
 | Connect and authenticate | `new SignalWire({ credentialProvider, reconnectAttachedCalls, ... })`, `client.ready$`, `client.warnings$` | [signalwire.ts](frontend/src/services/signalwire.ts), [AppBar.tsx](frontend/src/components/AppBar.tsx) |
 | Place a call (audio or video; phone, SIP or Fabric address) | `client.dial(address, { audio, video, receiveVideo })`; a Fabric address carries its channel as `?channel=audio` or `?channel=video` | [signalwire.ts](frontend/src/services/signalwire.ts), [Dialer.tsx](frontend/src/components/Dialer.tsx) |
+| Caller ID on calls to phone numbers | `client.dial(address, { from })`, carried as the invite's `caller_id_number`; the choices are the space's phone numbers and verified caller IDs | [signalwire.ts](frontend/src/services/signalwire.ts), [CallerIdSheet.tsx](frontend/src/components/CallerIdSheet.tsx) |
 | Receive a call | `client.incomingCalls$`, `call.answer()`, `call.reject()` | [signalwire.ts](frontend/src/services/signalwire.ts), [IncomingCall.tsx](frontend/src/components/IncomingCall.tsx) |
 | Call lifecycle and errors | `call.status$`, `call.hangup()`, `call.errors$`, `recoveryState$`/`recoveryEvent$` | [signalwire.ts](frontend/src/services/signalwire.ts), [useSignalWire.ts](frontend/src/hooks/useSignalWire.ts) |
 | DTMF | `call.sendDigits()` | [DialPad.tsx](frontend/src/components/DialPad.tsx), [CallScreen.tsx](frontend/src/components/CallScreen.tsx) |
@@ -36,6 +37,7 @@ Every SignalWire interaction happens in the browser through the published npm pa
 - ✅ Address suggestions while you type, from Recents and the loaded Directory (Up/Down to choose, Enter to fill)
 - ✅ Event log of what the SDK and the dialer did — call status, errors and warnings, recovery and ICE, device changes, your own actions — with filters and copy, in the Diagnostics panel and the Inspector
 - ✅ Outbound audio calls to phone numbers (normalized to E.164), and audio or video calls to SIP URIs and Fabric addresses (the Video toggle picks the address's channel)
+- ✅ Caller ID picker for calls to phone numbers: present one of the space's phone numbers or a verified caller ID (**From** beside Video; remembered across reloads)
 - ✅ Inbound calls with an accept/decline card and ringtone (a second incoming call during an active call is auto-rejected)
 - ✅ In-call toolbar with every control in view: mute, keypad, camera, hold/resume, screen share (with optional tab audio) on video room/conference calls, speaker
 - ✅ DTMF from the on-screen keypad (with key tones) or your keyboard, once the call is connected
@@ -67,7 +69,7 @@ Everything you need is on the **API** page of your SignalWire Dashboard; the [AP
 
 - `SPACE_NAME` is the hostname of your **Space URL**, for example `example.signalwire.com`.
 - `PROJECT_ID` is the **Project ID** shown on that page.
-- `AUTH_TOKEN` is an **API token**: click **+ New**, give it a descriptive name, and under **Permissions** enable **Voice** (every Fabric REST endpoint the backend calls accepts Voice, Messaging, Fax or Video; one is enough). The backend sends it with the Project ID as HTTP basic auth to `https://<SPACE_NAME>/api/fabric/...` to mint subscriber tokens and list the space's subscribers, SWML scripts and SIP credentials. If the backend log shows 401 responses from SignalWire, the token is missing that scope.
+- `AUTH_TOKEN` is an **API token**: click **+ New**, give it a descriptive name, and under **Permissions** enable **Voice** and **Numbers**. Voice covers the Fabric endpoints (every one the backend calls accepts Voice, Messaging, Fax or Video) and the verified caller ID listing; Numbers lets the backend list your phone numbers for the caller ID picker. The backend sends the token with the Project ID as HTTP basic auth to `https://<SPACE_NAME>/api/fabric/...` to mint subscriber tokens and list the space's subscribers, SWML scripts and SIP credentials, and to `https://<SPACE_NAME>/api/relay/rest/...` for the phone numbers and verified caller IDs. If the backend log shows 401 responses from SignalWire, the token is missing a scope.
 
 The API token stays on the server. The browser only ever receives the short-lived subscriber tokens the backend mints with it.
 
@@ -141,7 +143,7 @@ On first start the backend mints a subscriber token with the reference `swdialer
    - **Recents**: calls made and received in this browser, with redial.
    - **SWML** and **SIP**: the space's SWML scripts and SIP credentials, each with Audio and Video buttons.
    - Each tab has a search box at the top. Directory and Recents filter as you type (the Directory keeps loading pages until it has checked the whole address book); SWML and SIP search the space server-side.
-4. Press **Video** under the field for a video call, then **Call** (or Enter). For a Fabric address, Video writes `?channel=video` (or `?channel=audio`) into the field, so what you see is what is dialed, and typing or pasting an address that already names a channel sets the toggle to match; for a SIP URI it turns your camera on; phone numbers can't do video, so it is disabled there. With an empty field, Call redials the last outbound destination. The keypad is always there on a phone; in a desktop window **Show keypad** unfolds it.
+4. Press **Video** under the field for a video call, then **Call** (or Enter). For a Fabric address, Video writes `?channel=video` (or `?channel=audio`) into the field, so what you see is what is dialed, and typing or pasting an address that already names a channel sets the toggle to match; for a SIP URI it turns your camera on; phone numbers can't do video, so it is disabled there. **From** beside Video picks the caller ID for calls to phone numbers: one of the space's phone numbers or a verified caller ID (the two things SignalWire accepts), or Default to let the server choose; it is disabled for SIP URIs and Fabric addresses, remembered across reloads, and the call card shows the number that was sent. With an empty field, Call redials the last outbound destination. The keypad is always there on a phone; in a desktop window **Show keypad** unfolds it.
 5. Incoming calls show an accept/decline card (Enter accepts, Escape declines).
 6. In a call, the card shows the status, the number, the timer, the call id (with copy) and the quality badge, then the toolbar: Mute, Keypad, Camera, Hold, Share (on room calls), Speaker, More and End. The keypad sends DTMF once connected (also from your keyboard) while the status and timer stay in view, and `m` toggles mute. Tapping the quality badge opens live call statistics in a panel that leaves Mute and End usable; **More** holds the device picker, the audio-processing toggles and the diagnostics export. In a desktop window the statistics are the Inspector's **Quality** tab (selected automatically when a call starts, and kept after hangup).
 7. The Subscribers list (**Subscriber** in the top bar on a phone; the **Subscribers** tab of the Destinations pane on desktop, also reached by clicking your name in the bar) shows the space's subscribers with their `/private/<name>` addresses: **Audio**/**Video** fill the dial field to call that subscriber's browser and **Switch** reloads the dialer signed in as them. The Do Not Disturb switch (top of the panel; the Inspector's **Diagnostics** tab on desktop) stops this browser from receiving calls while staying connected; the bar shows DND while it is on. Calling a subscriber whose browser is closed or in Do Not Disturb is refused by the server; the dialer says so.
@@ -172,6 +174,7 @@ The app's own console logging is off by default; turn on "App debug logs" in Dia
 | `GET /api/subscribers` | List the space's subscribers (id, display name, email, dialable addresses). Requires `X-API-Key`; rate limited. `limit` ≤ 50 |
 | `GET /api/swml/scripts` | Paginated SWML scripts with their dialable addresses; `q` filters by name before paging. Requires `X-API-Key`; rate limited. `limit` ≤ 50 |
 | `GET /api/sip/credentials` | Paginated SIP credentials with their dialable addresses; `q` filters by name or SIP username before paging. Requires `X-API-Key`; rate limited. `limit` ≤ 50 |
+| `GET /api/caller-ids` | The caller IDs the browser may present on calls to phone numbers: the space's phone numbers plus its verified caller IDs (id, number, name, kind), unpaged; `failed` names a source that couldn't be listed. Requires `X-API-Key`; rate limited |
 | `POST /api/calls/dial` | Validates and logs an outbound dial server-side (the call itself is placed by the browser). Requires `X-API-Key`; rate limited |
 
 Every `/api` route requires the key. The frontend sends it on every request, and each listed item costs an authenticated SignalWire REST call, so the listings are not left open. Calls themselves are signaled and carried directly between the browser and SignalWire; the browser's Recents tab is the call log.
@@ -186,7 +189,8 @@ frontend/
 │   │   ├── Pane.tsx                    # A workbench side pane and its fold-to-rail toggle
 │   │   ├── InspectorPane.tsx           # Inspector tabs: Quality, Events, Devices, Diagnostics
 │   │   ├── AppBar.tsx                  # Top bar: wordmark, connection pill, identity chip, theme toggle, panel buttons
-│   │   ├── Dialer.tsx                  # Idle dialer: address field, Video/Call row, keypad, suggestions, routing to call screens
+│   │   ├── Dialer.tsx                  # Idle dialer: address field, From/Video/Call row, keypad, suggestions, routing to call screens
+│   │   ├── CallerIdSheet.tsx           # Caller ID picker: the space's phone numbers and verified caller IDs
 │   │   ├── AddressSuggestions.tsx      # Suggestions under the address field (Recents + loaded Directory)
 │   │   ├── DialPad.tsx                 # Flat keypad with key tones (hold 0 for +; DTMF mode in a call)
 │   │   ├── CallScreen.tsx              # Active call card: status strip, video, meters, in-call keypad
@@ -212,6 +216,7 @@ frontend/
 │   │   ├── useCallStore.ts             # Zustand store for UI call state
 │   │   ├── useRecentsStore.ts          # Recents call log (localStorage)
 │   │   ├── useDialFieldStore.ts        # The address field's value, video choice and picked label
+│   │   ├── useCallerIdStore.ts         # The chosen caller ID for calls to phone numbers (localStorage)
 │   │   ├── useAddressSuggestions.ts    # Suggestions from Recents and the loaded Directory
 │   │   ├── useMediaQuery.ts            # Live matchMedia; the workbench breakpoint
 │   │   ├── useWorkbench.ts             # Context the workbench offers the call stage
@@ -245,6 +250,7 @@ backend/
 │   ├── subscribers.py                  # Subscriber list with addresses (gated)
 │   ├── swml.py                         # SWML scripts + addresses (gated)
 │   ├── sip_credentials.py              # SIP credentials + addresses (gated)
+│   ├── caller_ids.py                   # Phone numbers + verified caller IDs for the caller ID picker (gated)
 │   └── calls.py                        # Validates and logs outbound dials (gated)
 ├── utils/
 │   ├── signalwire.py                   # SignalWire REST client (tokens, resource listing, number formatting)
@@ -290,6 +296,10 @@ The backend couldn't list the space's subscribers to validate your chosen one. T
 ### "The destination isn't online"
 
 You called a subscriber whose browser is closed or in Do Not Disturb, and the server refused the call (`no_devices_or_registrations`). Open the dialer in that subscriber's browser, or turn its Do Not Disturb switch off.
+
+### The caller ID list is empty or says it couldn't load phone numbers
+
+The picker lists the space's phone numbers and its verified caller IDs. If the backend log shows a 401 from `/api/relay/rest/phone_numbers`, the API token lacks the **Numbers** scope (step 1 of Setup); the verified caller IDs still list. A number in neither list can't be presented as caller ID.
 
 ### Audio issues
 

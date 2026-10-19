@@ -24,6 +24,10 @@ class SignalWireClient:
         # SPACE_NAME in .env already contains the FQDN (e.g., spacename.signalwire.com or puc.swire.io)
         # Use it directly without modification
         self.api_base = f"https://{self.space_name}/api/fabric"
+        # The space's phone numbers and verified caller IDs live under the
+        # Relay REST base, not Fabric. Listing phone numbers needs the API
+        # token's Numbers scope (verified caller IDs: Voice).
+        self.relay_api_base = f"https://{self.space_name}/api/relay/rest"
         self.auth = (self.project_id, self.auth_token)
 
     def create_subscriber_token(self, reference: str = "swdialer", expires_in: int = 3600) -> Dict:
@@ -177,6 +181,23 @@ class SignalWireClient:
         https://signalwire.com/docs/apis/rest/subscribers/list-subscriber-addresses
         """
         return self._get_all_pages(f"{self.api_base}/resources/subscribers/{subscriber_id}/addresses")
+
+    def list_phone_numbers(self) -> list:
+        """
+        List the phone numbers this project owns (Relay REST; the token needs
+        the Numbers scope). One of the two sources of the caller ID picker.
+        https://signalwire.com/docs/apis/rest/phone-numbers/list-phone-numbers
+        """
+        return self._get_all_pages(f"{self.relay_api_base}/phone_numbers?page_size=1000")
+
+    def list_verified_caller_ids(self) -> list:
+        """
+        List the external numbers this project has submitted for caller ID
+        verification, verified or not (api/caller_ids.py keeps the verified
+        ones). The other source of the caller ID picker.
+        https://signalwire.com/docs/apis/rest/verified-caller-id/list-verified-caller-ids
+        """
+        return self._get_all_pages(f"{self.relay_api_base}/verified_caller_ids")
 
     @staticmethod
     def is_dial_address(destination: str) -> bool:

@@ -86,12 +86,14 @@ export const SheetSection: React.FC<{ label: string }> = ({ label }) => (
 interface SheetRowProps {
   icon: LucideIcon;
   label: string;
+  // Smaller secondary line under the label.
+  hint?: string;
   active?: boolean;
   disabled?: boolean;
   onClick: () => void;
 }
 
-export const SheetRow: React.FC<SheetRowProps> = ({ icon: Icon, label, active, disabled, onClick }) => (
+export const SheetRow: React.FC<SheetRowProps> = ({ icon: Icon, label, hint, active, disabled, onClick }) => (
   <button
     type="button"
     onClick={onClick}
@@ -107,6 +109,7 @@ export const SheetRow: React.FC<SheetRowProps> = ({ icon: Icon, label, active, d
     </span>
     <span className="flex-1 min-w-0">
       <span className="block text-sm text-ink">{label}</span>
+      {hint && <span className="block text-xs text-faint">{hint}</span>}
     </span>
   </button>
 );

@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { TokenData, CallData, SwmlScript, SipCredential, Subscriber } from '../types';
+import type { TokenData, CallData, CallerId, SwmlScript, SipCredential, Subscriber } from '../types';
 
 const API_BASE = '/api';
 
@@ -69,14 +69,37 @@ export const authAPI = {
 // The backend's call log is cosmetic (see CLAUDE.md); the browser keeps its
 // own Recents. Only the fire-and-forget dial post is used.
 export const callsAPI = {
-  async initiateCall(toNumber: string): Promise<CallData> {
+  // `from` is the caller ID chosen for a call to a phone number, when any,
+  // so the backend's log line shows it too.
+  async initiateCall(toNumber: string, from?: string): Promise<CallData> {
     const response = await api.post<{ success: boolean; data: CallData }>('/calls/dial', {
       to: toNumber,
+      ...(from ? { from } : {}),
     });
     if (!response.data.success) {
       throw new Error('Failed to initiate call');
     }
     return response.data.data;
+  },
+};
+
+export interface CallerIdsList {
+  items: CallerId[];
+  // Sources the backend couldn't list ('numbers' | 'verified'); the items
+  // from the other are still returned.
+  failed: string[];
+}
+
+// The caller IDs the server accepts on a call to a phone number: the space's
+// phone numbers and its verified caller IDs. Unpaged (the picker shows all of
+// them) and cached for a minute on the backend.
+export const callerIdsAPI = {
+  async list(): Promise<CallerIdsList> {
+    const response = await api.get<{ success: boolean; data: CallerId[]; failed?: string[] }>('/caller-ids');
+    if (!response.data.success) {
+      throw new Error('Failed to get caller IDs');
+    }
+    return { items: response.data.data, failed: response.data.failed ?? [] };
   },
 };
 

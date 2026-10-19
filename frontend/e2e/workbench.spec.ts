@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { ADDRESS_INPUT, FAKE_DIRECTORY, STATS_STUBS, evalInApp, openDialer, setState, stubCallMethods } from './helpers';
+import { ADDRESS_INPUT, FAKE_DIRECTORY, STATS_STUBS, evalInApp, openDialer, setState, stubCallMethods, stubCallerIds } from './helpers';
 
 // The desktop workbench (components/Workbench.tsx), which App.tsx renders from
 // 1024px up: the bar, then Destinations | the call stage | Inspector. Runs in
@@ -128,6 +128,18 @@ test.describe('Desktop workbench', () => {
       'aria-selected',
       'true',
     );
+  });
+
+  test('the Caller ID sheet opens over the call stage and hands focus back to the address field', async ({ page }) => {
+    await stubCallerIds(page);
+    await page.click('button[aria-label="Caller ID: default"]');
+    const sheet = page.locator('[role="dialog"]');
+    await expect(sheet).toBeVisible();
+    // The sheet covers the call stage only; the panes stay in reach.
+    await expect(page.getByRole('region', { name: 'Destinations' })).toBeVisible();
+    await sheet.locator('button:has-text("+1 (555) 000-0001")').click();
+    await expect(page.locator('button[aria-label="Caller ID: +1 (555) 000-0001"]')).toBeVisible();
+    await expect(page.locator(ADDRESS_INPUT)).toBeFocused();
   });
 
   test('the Devices tab enables audio processing once a call is up', async ({ page }) => {

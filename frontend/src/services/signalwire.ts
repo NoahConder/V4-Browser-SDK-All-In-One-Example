@@ -11,8 +11,10 @@ import {
 } from '@signalwire/js';
 import type {
   Call,
+  CallOptions,
   CallStatus,
   DeviceRecoveryEvent,
+  DialOptions,
   Directory,
   ScreenShareStatus,
   PermissionResult,
@@ -34,6 +36,12 @@ import { toneService } from './tones';
 import { loadSettings, type DialerSettings } from './settings';
 import { isDialAddress } from '../utils/address';
 import { log, setDebugLogging } from '../utils/log';
+
+// dial()'s public DialOptions doesn't declare a caller ID, but CallOptions
+// does, and dial() spreads its options straight into the call session, whose
+// `from` is what the verto.invite carries as caller_id_number (rc.5's
+// dialogParams). The intersection lets makeCall pass it without a cast.
+type OutboundDialOptions = DialOptions & Pick<CallOptions, 'from' | 'fromName'>;
 
 // Thrown by makeCall()/answerCall() when client.ready$ is currently false --
 // e.g. right after a token refresh or network blip, not just at first mount
@@ -1317,7 +1325,7 @@ class SignalWireService {
 
   // Resolves null if the user hung up before dial() completed (the call is
   // hung up instead of adopted).
-  async makeCall(phoneNumber: string, video: boolean = false): Promise<Call | null> {
+  async makeCall(phoneNumber: string, video: boolean = false, from?: string): Promise<Call | null> {
     if (!this.client) {
       throw new Error('SignalWire client not initialized');
     }
@@ -1341,14 +1349,21 @@ class SignalWireService {
       // (buildOptionsFromDestination; its preference default is false), which
       // would leave a SIP video call offering sendonly.
       const to = this.normalizeDestination(phoneNumber);
-      log.debug('Dialing:', to);
-      this.logEvent('user', video ? 'Dialing (video)' : 'Dialing', to);
+      // The caller ID (one of the space's numbers or a verified caller ID,
+      // useCallerIdStore) is a phone-number thing: dropped for SIP URIs and
+      // Fabric addresses whatever the caller passed, and left out entirely
+      // when none was chosen so the invite is exactly what it was before.
+      const callerId = from && !isDialAddress(to) ? from : undefined;
+      log.debug('Dialing:', to, callerId ? `from ${callerId}` : '');
+      this.logEvent('user', video ? 'Dialing (video)' : 'Dialing', callerId ? `${to} · from ${callerId}` : to);
 
-      const call = await this.client.dial(to, {
+      const options: OutboundDialOptions = {
         audio: true,
         video,
         receiveVideo: video,
-      });
+        ...(callerId ? { from: callerId } : {}),
+      };
+      const call = await this.client.dial(to, options);
 
       // The user hung up while dial() was pending (see dialCancelled). The UI
       // has already reset, so don't adopt the call -- end it.

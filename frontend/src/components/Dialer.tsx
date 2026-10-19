@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Activity, AtSign, ChevronDown, ChevronUp, History, List, Phone, Slash, SlidersHorizontal, User, Video, VideoOff, X } from 'lucide-react';
+import { Activity, AtSign, ChevronDown, ChevronUp, History, List, Phone, PhoneOutgoing, Slash, SlidersHorizontal, User, Video, VideoOff, X } from 'lucide-react';
 import DialPad from './DialPad';
 import AppBar from './AppBar';
 import CallScreen from './CallScreen';
@@ -10,8 +10,10 @@ import DiagnosticsPanel from './DiagnosticsPanel';
 import SubscriberPicker from './SubscriberPicker';
 import ErrorBanner from './ErrorBanner';
 import AddressSuggestions from './AddressSuggestions';
+import CallerIdSheet from './CallerIdSheet';
 import { useAddressSuggestions, type AddressSuggestion } from '../hooks/useAddressSuggestions';
 import { useCallStore } from '../hooks/useCallStore';
+import { useCallerIdStore } from '../hooks/useCallerIdStore';
 import { useDialFieldStore } from '../hooks/useDialFieldStore';
 import { useRecentsStore } from '../hooks/useRecentsStore';
 import { useSignalWire } from '../hooks/useSignalWire';
@@ -89,6 +91,11 @@ const Dialer: React.FC = () => {
   const workbench = useWorkbench();
   const [isCallingInProgress, setIsCallingInProgress] = useState(false);
   const [isAddressInputFocused, setIsAddressInputFocused] = useState(false);
+  // The caller ID for calls to phone numbers (useCallerIdStore; null = the
+  // server chooses), its name for the button, and whether its sheet is open.
+  const callerId = useCallerIdStore((s) => s.callerId);
+  const callerName = useCallerIdStore((s) => s.callerName);
+  const [isCallerIdOpen, setIsCallerIdOpen] = useState(false);
   const [showKeypad, setShowKeypad] = useState(loadKeypadPref);
   const toggleKeypad = () => {
     setShowKeypad((prev) => {
@@ -180,6 +187,9 @@ const Dialer: React.FC = () => {
     if (phoneNumber && (isDialAddress(phoneNumber) || countDigits(phoneNumber) >= 7)) {
       log.debug('Dialing:', phoneNumber);
       setIsCallingInProgress(true);
+      // The caller ID applies to phone numbers only; the service drops it
+      // for anything else too (belt and braces, like toggleWantsVideo).
+      const from = getDialAddressType(phoneNumber) === 'phone' && callerId ? callerId : undefined;
 
       // Immediately set the call state to show the call screen
       // This happens BEFORE the actual call is initiated
@@ -195,10 +205,11 @@ const Dialer: React.FC = () => {
         // channel, never for a phone number (useDialFieldStore).
         isVideoCall: wantsVideo,
         isCameraOn: wantsVideo,
+        outboundCallerId: from ?? null,
       });
 
       try {
-        await makeCall(phoneNumber, wantsVideo, pickedLabel);
+        await makeCall(phoneNumber, wantsVideo, pickedLabel, from);
         log.debug('makeCall completed');
       } catch (error) {
         log.error('makeCall failed:', error);
@@ -349,6 +360,11 @@ const Dialer: React.FC = () => {
   // Phone numbers can't do video: the store keeps wantsVideo false and the
   // toggle is disabled. (An empty field isn't a phone number yet.)
   const isPhone = addressType === 'phone' && phoneNumber !== '';
+  // The caller ID is the mirror image: it applies to phone numbers only, so a
+  // SIP URI or Fabric address in the field disables it (an empty field keeps
+  // it live -- the choice can be made before typing).
+  const isNonPhoneAddress = phoneNumber !== '' && addressType !== 'phone';
+  const callerIdLabel = callerId ? `Caller ID: ${formatPhoneNumber(callerId)}` : 'Caller ID: default';
   // A Fabric address's badge says which channel the field carries.
   const addressLabel =
     addressType === 'fabric' ? `${addressMeta.label} · ${wantsVideo ? 'video' : 'audio'}` : addressMeta.label;
@@ -537,6 +553,32 @@ const Dialer: React.FC = () => {
               {phoneNumber && !callError ? addressLabel : ''}
             </span>
             <div className="flex shrink-0 items-center gap-2">
+              {/* The caller ID for calls to phone numbers: opens the Caller ID
+                  sheet (the space's numbers and verified caller IDs). Video's
+                  lockout the other way round. mousedown is swallowed so the
+                  address input stays focused and is what the sheet returns
+                  focus to -- Enter still dials after a pick. Text only from
+                  360px, like the type label; the full value is in the title. */}
+              <button
+                type="button"
+                onClick={() => setIsCallerIdOpen(true)}
+                onMouseDown={(e) => e.preventDefault()}
+                disabled={isInCall || isCallingInProgress || isNonPhoneAddress}
+                aria-label={callerIdLabel}
+                aria-haspopup="dialog"
+                aria-expanded={isCallerIdOpen}
+                title={isNonPhoneAddress ? 'Caller ID applies to phone numbers only' : callerIdLabel}
+                className={`flex h-11 items-center gap-2 rounded-lg border px-3 text-sm font-medium transition-colors disabled:opacity-50 ${
+                  callerId
+                    ? 'border-accent-edge bg-accent-soft text-accent-text'
+                    : 'border-edge-strong bg-surface text-muted hover:bg-surface-hover hover:text-ink'
+                }`}
+              >
+                <PhoneOutgoing size={16} />
+                <span className="hidden max-w-[7.5rem] truncate min-[360px]:inline-block">
+                  {callerId ? (callerName ?? formatPhoneNumber(callerId)) : 'From'}
+                </span>
+              </button>
               {/* For a Fabric address the Video toggle is the channel selector:
                   it rewrites the field's `?channel=`, so what's shown is what's
                   dialed (useDialFieldStore). For a SIP URI it's the camera
@@ -608,6 +650,10 @@ const Dialer: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* Mounted only while open: the sheet fetches on mount, and the
+          workbench spec expects the address input to keep focus on load. */}
+      {isCallerIdOpen && <CallerIdSheet onClose={() => setIsCallerIdOpen(false)} />}
     </div>
   );
 };
