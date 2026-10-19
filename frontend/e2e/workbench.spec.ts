@@ -93,10 +93,11 @@ test.describe('Desktop workbench', () => {
     await expect(page.getByRole('region', { name: 'Inspector' })).toContainText('Status: ringing');
   });
 
-  test('the call toolbar carries Hold, Transfer and Share', async ({ page }) => {
+  test('the call toolbar carries Hold and Share; Transfer is hidden', async ({ page }) => {
     await setState(page, { isInCall: true, callStatus: 'connected', connectedAt: Date.now(), remoteNumber: '+15551234567' });
     await expect(page.locator('button[aria-label="Hold call"]')).toBeVisible();
-    await expect(page.locator('button[aria-label="Transfer call"]')).toBeVisible();
+    // Hidden behind SHOW_TRANSFER (src/components/CallScreen.tsx).
+    await expect(page.locator('button[aria-label="Transfer call"]')).toHaveCount(0);
     const share = page.locator('button[aria-label="Start screen share"]');
     await expect(share).toBeDisabled();
     await setState(page, { canScreenShare: true });

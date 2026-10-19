@@ -16,6 +16,11 @@ import { useWorkbench } from '../hooks/useWorkbench';
 import { signalWireService } from '../services/signalwire';
 import { log } from '../utils/log';
 
+// Transfer is hidden: on 4.0.0-rc.5 the server refuses every transfer
+// (-32002 Permission Denied). Flip to true to bring back the toolbar button,
+// the More-sheet row and the modal; their code stays compiled and linted.
+const SHOW_TRANSFER: boolean = false;
+
 interface CallScreenProps {
   phoneNumber: string;
   onEndCall: () => void;
@@ -333,7 +338,7 @@ const CallScreen: React.FC<CallScreenProps> = ({
                 onToggleCamera={onToggleCamera}
                 isOnHold={isOnHold}
                 onToggleHold={toggleHold}
-                onOpenTransfer={() => setIsTransferModalOpen(true)}
+                onOpenTransfer={SHOW_TRANSFER ? () => setIsTransferModalOpen(true) : undefined}
                 canScreenShare={canScreenShare}
                 screenShareStatus={screenShareStatus}
                 /* Straight from the click, no await first: getDisplayMedia
@@ -354,10 +359,14 @@ const CallScreen: React.FC<CallScreenProps> = ({
           onClose={() => setIsControlsSheetOpen(false)}
           isOnHold={isOnHold}
           onToggleHold={toggleHold}
-          onOpenTransfer={() => {
-            setIsControlsSheetOpen(false);
-            setIsTransferModalOpen(true);
-          }}
+          onOpenTransfer={
+            SHOW_TRANSFER
+              ? () => {
+                  setIsControlsSheetOpen(false);
+                  setIsTransferModalOpen(true);
+                }
+              : undefined
+          }
           onOpenDevicePicker={() => {
             setIsControlsSheetOpen(false);
             setIsDevicePickerOpen(true);
@@ -385,11 +394,13 @@ const CallScreen: React.FC<CallScreenProps> = ({
           onRequestIceRestart={requestIceRestart}
         />
 
-        <TransferModal
-          isOpen={isTransferModalOpen}
-          onClose={() => setIsTransferModalOpen(false)}
-          onTransfer={transferCall}
-        />
+        {SHOW_TRANSFER && (
+          <TransferModal
+            isOpen={isTransferModalOpen}
+            onClose={() => setIsTransferModalOpen(false)}
+            onTransfer={transferCall}
+          />
+        )}
 
         {isDevicePickerOpen && (
           <div className="absolute inset-0 z-20 flex flex-col justify-center">

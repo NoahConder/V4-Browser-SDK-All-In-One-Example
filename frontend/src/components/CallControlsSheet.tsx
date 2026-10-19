@@ -8,7 +8,8 @@ interface CallControlsSheetProps {
   onClose: () => void;
   isOnHold: boolean;
   onToggleHold: () => void;
-  onOpenTransfer: () => void;
+  // Omitted: no Transfer row is rendered (SHOW_TRANSFER in CallScreen.tsx).
+  onOpenTransfer?: () => void;
   onOpenDevicePicker: () => void;
   onOpenStats: () => void;
   canScreenShare: boolean;
@@ -64,7 +65,7 @@ const CallControlsSheet: React.FC<CallControlsSheetProps> = ({
         active={isOnHold}
         onClick={onToggleHold}
       />
-      <SheetRow icon={PhoneForwarded} label="Transfer Call" onClick={onOpenTransfer} />
+      {onOpenTransfer && <SheetRow icon={PhoneForwarded} label="Transfer Call" onClick={onOpenTransfer} />}
       {canScreenShare && (
         <>
           <SheetRow

@@ -73,7 +73,8 @@ interface CallToolbarProps {
   onToggleCamera: () => void;
   isOnHold: boolean;
   onToggleHold: () => void;
-  onOpenTransfer: () => void;
+  // Omitted: no Transfer control is rendered (SHOW_TRANSFER in CallScreen.tsx).
+  onOpenTransfer?: () => void;
   canScreenShare: boolean;
   screenShareStatus: ScreenShareStatus;
   // Must run straight from the click: getDisplayMedia needs the user gesture.
@@ -119,7 +120,9 @@ const CallToolbar: React.FC<CallToolbarProps> = ({
         active={isOnHold}
         onClick={onToggleHold}
       />
-      <ControlButton icon={PhoneForwarded} label="Transfer" ariaLabel="Transfer call" onClick={onOpenTransfer} />
+      {onOpenTransfer && (
+        <ControlButton icon={PhoneForwarded} label="Transfer" ariaLabel="Transfer call" onClick={onOpenTransfer} />
+      )}
       <ControlButton
         icon={screenShareStatus === 'started' ? ScreenShareOff : ScreenShare}
         label="Share"

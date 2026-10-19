@@ -244,7 +244,9 @@ test.describe('in a call', () => {
     await expect.poll(() => drainLog(page)).toEqual([['endCall']]);
   });
 
-  test('typing in the Transfer field sends no DTMF; Escape closes it', async ({ page }) => {
+  // Skipped while SHOW_TRANSFER (src/components/CallScreen.tsx) is false: the
+  // More sheet has no Transfer row to open. Restore test() with the flag.
+  test.skip('typing in the Transfer field sends no DTMF; Escape closes it', async ({ page }) => {
     await setState(page, { callStatus: 'connected', connectedAt: Date.now() });
     await page.click('button[aria-label="More call controls"]');
     await page.click('text=Transfer Call');
@@ -273,10 +275,14 @@ test.describe('in a call', () => {
     await expect(page.locator('button[aria-label="Speaker"]')).toBeEnabled();
   });
 
-  test('the toolbar carries hold, transfer and screen share on phones too', async ({ page }) => {
+  test('the toolbar carries hold and screen share on phones too; transfer is hidden', async ({ page }) => {
     await expect(page.locator('button[aria-label="Hold call"]')).toBeVisible();
-    await expect(page.locator('button[aria-label="Transfer call"]')).toBeVisible();
+    // Hidden behind SHOW_TRANSFER (src/components/CallScreen.tsx).
+    await expect(page.locator('button[aria-label="Transfer call"]')).toHaveCount(0);
     await expect(page.locator('button[aria-label="Start screen share"]')).toBeDisabled();
     await expect(page.locator('button[aria-label="End call"]')).toHaveCount(1);
+    await page.click('button[aria-label="More call controls"]');
+    await expect(page.locator('[role="dialog"] >> text=Hold Call')).toHaveCount(1);
+    await expect(page.locator('[role="dialog"] >> text=Transfer Call')).toHaveCount(0);
   });
 });
