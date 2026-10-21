@@ -79,8 +79,8 @@ function DirectoryAddressList({ onSelectAddress }: DirectoryAddressListProps) {
 
   // A type filter or a search is only useful over the whole directory: the SDK
   // pages it 100 at a time sorted by name with no server-side filter or
-  // search, and apps dominate (the test space had 387 entries with 2
-  // subscribers and 3 rooms, which sat two or three pages deep). So while
+  // search, and apps dominate (on a space with a few hundred SWML scripts
+  // the subscribers and rooms sat two or three pages deep). So while
   // either narrows the list, keep loading until the SDK says there's no more;
   // an unfiltered "All" keeps manual paging.
   useEffect(() => {

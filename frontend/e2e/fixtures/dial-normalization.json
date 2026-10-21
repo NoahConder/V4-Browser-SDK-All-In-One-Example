@@ -5,6 +5,8 @@
   { "input": "+1 (555) 123-4567", "expected": "+15551234567" },
   { "input": "15551234567", "expected": "+15551234567" },
   { "input": "+44 20 7946 0958", "expected": "+442079460958" },
+  { "input": "+5551234567", "expected": "+5551234567" },
+  { "input": "(+44) 20 7946 0958", "expected": "+442079460958" },
   { "input": "5551234", "expected": "+5551234" },
   { "input": "sip:bob@example.com", "expected": "sip:bob@example.com" },
   { "input": "/public/room ", "expected": "/public/room" },

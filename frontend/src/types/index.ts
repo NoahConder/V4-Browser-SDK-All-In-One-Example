@@ -1,8 +1,9 @@
 export interface CallState {
   isClientReady: boolean;
   // Whether this browser can route audio to a chosen output device at all
-  // (HTMLMediaElement.setSinkId -- missing on Firefox and Safari). A fact
-  // about the session, preserved across resets like isClientReady.
+  // (HTMLMediaElement.setSinkId -- missing before Firefox 116 and Safari
+  // 18.4). A fact about the session, preserved across resets like
+  // isClientReady.
   canSelectAudioOutput: boolean;
   // client.isRegistered$ -- reachable for incoming calls. False under Do Not
   // Disturb. Session state, preserved across resets like isClientReady.

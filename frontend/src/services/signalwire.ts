@@ -644,8 +644,9 @@ class SignalWireService {
   }
 
   // Whether this browser can route audio to a chosen output device at all
-  // (HTMLMediaElement.setSinkId -- missing on Firefox and Safari). Read once
-  // after initialize(); the Speaker control is disabled when false.
+  // (HTMLMediaElement.setSinkId -- missing before Firefox 116 and Safari
+  // 18.4). Read once after initialize(); the Speaker control is disabled when
+  // false.
   canSelectAudioOutput(): boolean {
     return this.client?.platformCapabilities.audioOutputSelection ?? false;
   }
@@ -923,8 +924,6 @@ class SignalWireService {
   // warning: isNetworkHealthy$ is false and networkIssues$ non-empty for the
   // whole call -- "Health: Degraded" and a warning triangle on every voice
   // call. Ignore that issue unless the far end is actually sending video.
-  // (Worth fixing upstream: skip the video check when the peer connection has
-  // no video receiver.)
   private relevantIssues(issues: NetworkIssue[]): NetworkIssue[] {
     return this.remoteHasVideo ? issues : issues.filter((issue) => issue.type !== 'no_inbound_video');
   }

@@ -15,20 +15,20 @@ Every SignalWire interaction happens in the browser through the published npm pa
 | Caller ID on calls to phone numbers | `client.dial(address, { from })`, carried as the invite's `caller_id_number`; the choices are the space's phone numbers and verified caller IDs | [signalwire.ts](frontend/src/services/signalwire.ts), [CallerIdSheet.tsx](frontend/src/components/CallerIdSheet.tsx) |
 | Receive a call | `client.incomingCalls$`, `call.answer()`, `call.reject()` | [signalwire.ts](frontend/src/services/signalwire.ts), [IncomingCall.tsx](frontend/src/components/IncomingCall.tsx) |
 | Call lifecycle and errors | `call.status$`, `call.hangup()`, `call.errors$`, `recoveryState$`/`recoveryEvent$` | [signalwire.ts](frontend/src/services/signalwire.ts), [useSignalWire.ts](frontend/src/hooks/useSignalWire.ts) |
-| DTMF | `call.sendDigits()` | [DialPad.tsx](frontend/src/components/DialPad.tsx), [CallScreen.tsx](frontend/src/components/CallScreen.tsx) |
+| DTMF | `call.sendDigits()` | [signalwire.ts](frontend/src/services/signalwire.ts), [DialPad.tsx](frontend/src/components/DialPad.tsx), [CallScreen.tsx](frontend/src/components/CallScreen.tsx) |
 | Camera on/off mid-call | `call.self.addVideoInputDevice()`, `muteVideo()`/`unmuteVideo()` | [signalwire.ts](frontend/src/services/signalwire.ts) |
-| Hold | `call.toggleHold()` (server refusals arrive on `call.errors$`) | [CallToolbar.tsx](frontend/src/components/CallToolbar.tsx) |
-| Screen share | `call.startScreenShare()`, gated on `call.self.capabilities.screenshare$` | [CallToolbar.tsx](frontend/src/components/CallToolbar.tsx) |
-| Device selection | `audioInputDevices$`, `videoInputDevices$`, `audioOutputDevices$`, `selectAudioOutputDevice()`, `applySelectedAudioOutputDevice()` | [DevicePicker.tsx](frontend/src/components/DevicePicker.tsx) |
-| Audio processing toggles | `call.setEchoCancellation()`, `setNoiseSuppression()`, `setAutoGainControl()` | [InspectorPane.tsx](frontend/src/components/InspectorPane.tsx), [CallControlsSheet.tsx](frontend/src/components/CallControlsSheet.tsx) |
-| Call quality and statistics | `qualityLevel$`, `qualityScore$`, `networkIssues$`, `networkMetrics$`, `getStats()` | [CallQualityBadge.tsx](frontend/src/components/CallQualityBadge.tsx), [CallStatsSheet.tsx](frontend/src/components/CallStatsSheet.tsx) |
+| Hold | `call.toggleHold()` (server refusals arrive on `call.errors$`) | [signalwire.ts](frontend/src/services/signalwire.ts), [CallToolbar.tsx](frontend/src/components/CallToolbar.tsx) |
+| Screen share | `call.startScreenShare()`, gated on `call.self.capabilities.screenshare$` | [signalwire.ts](frontend/src/services/signalwire.ts), [CallToolbar.tsx](frontend/src/components/CallToolbar.tsx) |
+| Device selection | `audioInputDevices$`, `videoInputDevices$`, `audioOutputDevices$`, `selectAudioOutputDevice()`, `applySelectedAudioOutputDevice()` | [signalwire.ts](frontend/src/services/signalwire.ts), [DevicePicker.tsx](frontend/src/components/DevicePicker.tsx) |
+| Audio processing toggles | `call.setEchoCancellation()`, `setNoiseSuppression()`, `setAutoGainControl()` | [signalwire.ts](frontend/src/services/signalwire.ts), [InspectorPane.tsx](frontend/src/components/InspectorPane.tsx), [CallControlsSheet.tsx](frontend/src/components/CallControlsSheet.tsx) |
+| Call quality and statistics | `qualityLevel$`, `qualityScore$`, `networkIssues$`, `networkMetrics$`, `getStats()` | [signalwire.ts](frontend/src/services/signalwire.ts), [CallQualityBadge.tsx](frontend/src/components/CallQualityBadge.tsx), [CallStatsSheet.tsx](frontend/src/components/CallStatsSheet.tsx) |
 | Audio level meters | `localAudioLevel$` for the mic; the remote bar is an app-side `AnalyserNode` on the remote stream | [AudioLevelMeter.tsx](frontend/src/components/AudioLevelMeter.tsx), [remoteAudioMeter.ts](frontend/src/services/remoteAudioMeter.ts) |
 | Directory of dialable addresses | `client.directory$` (`hasMore$`, `loadMore()`) | [DirectoryAddressList.tsx](frontend/src/components/DirectoryAddressList.tsx) |
 | Pre-call connection test and diagnostics export | `client.preflight()`, `client.exportDiagnostics()` | [DiagnosticsPanel.tsx](frontend/src/components/DiagnosticsPanel.tsx), [diagnostics.ts](frontend/src/services/diagnostics.ts) |
 | Event log of SDK activity | `call.status$`, `call.errors$`, `client.warnings$`, `recoveryEvent$`, `deviceRecovered$`, `isRegistered$`, ICE state | [signalwire.ts](frontend/src/services/signalwire.ts) (`getEventLog$`), [EventLog.tsx](frontend/src/components/EventLog.tsx) |
-| Do Not Disturb | `client.unregister()`/`register()`, `isRegistered$` | [SubscriberPicker.tsx](frontend/src/components/SubscriberPicker.tsx), [InspectorPane.tsx](frontend/src/components/InspectorPane.tsx) |
+| Do Not Disturb | `client.unregister()`/`register()`, `isRegistered$` | [signalwire.ts](frontend/src/services/signalwire.ts), [SubscriberPicker.tsx](frontend/src/components/SubscriberPicker.tsx), [InspectorPane.tsx](frontend/src/components/InspectorPane.tsx) |
 | Device hot-plug notices | `client.deviceRecovered$` | [signalwire.ts](frontend/src/services/signalwire.ts) |
-| SDK settings applied live | `setLogLevel`, `setDebugOptions`, `preferences.preferredAudioCodecs`, `preferences.relayOnly` | [settings.ts](frontend/src/services/settings.ts), [DiagnosticsPanel.tsx](frontend/src/components/DiagnosticsPanel.tsx) |
+| SDK settings applied live | `setLogLevel`, `setDebugOptions`, `preferences.preferredAudioCodecs`, `preferences.relayOnly` | [signalwire.ts](frontend/src/services/signalwire.ts), [DiagnosticsPanel.tsx](frontend/src/components/DiagnosticsPanel.tsx) |
 | Call reattach after a page reload | `reconnectAttachedCalls: true`, reattached calls arriving on `calls$` | [signalwire.ts](frontend/src/services/signalwire.ts), [App.tsx](frontend/src/App.tsx) |
 
 ## Features
@@ -57,11 +57,11 @@ Every SignalWire interaction happens in the browser through the published npm pa
 - Node.js 20.19+ and npm (required by Vite 8; the devcontainer provides it)
 - Python 3 (the devcontainer uses Python 3.12)
 - A SignalWire space, plus a Project ID and API token from its Dashboard (see Setup). No subscriber needs to exist in advance; the backend creates one on first run.
-- A modern browser with WebRTC support. Chrome and Edge support everything; Firefox and Safari lack `setSinkId`, so the speaker/output selection is disabled there.
+- A modern browser with WebRTC support. Chrome and Edge support everything; Firefox before 116 and Safari before 18.4 lack `setSinkId`, so speaker/output selection is disabled there.
 
 ## Setup
 
-The quickest route is the included devcontainer (`.devcontainer/`), which creates the venv and installs all dependencies for you. You still need to create `backend/.env` (step 2). To set up manually:
+The quickest route is the included devcontainer (`.devcontainer/`), which creates the venv and installs the app's dependencies for you (the test suites need two more installs; see Development). You still need to create `backend/.env` (step 2). To set up manually:
 
 ### 1. SignalWire credentials
 
@@ -101,7 +101,7 @@ DIALER_API_KEY=choose-a-long-random-string
 FLASK_DEBUG=False
 ```
 
-- `DIALER_API_KEY` is required: without it the token endpoints return 503 and the app can't connect. It is **not a secret**. Vite bakes it into the public JS bundle, so anyone who loads the page can read it. Together with the per-IP rate limits it stops automated scanners from minting tokens or listing resources through the backend; it does not protect a deployment that's reachable by people you don't trust.
+- `DIALER_API_KEY` is required: without it every `/api` route returns 503 and the app can't connect. It is **not a secret**. Vite bakes it into the public JS bundle, so anyone who loads the page can read it. Together with the per-IP rate limits it stops automated scanners from minting tokens or listing resources through the backend; it does not protect a deployment that's reachable by people you don't trust.
 - `FRONTEND_URL` sets the allowed CORS origin, and its hostname is added to Vite's allowed hosts (useful for ngrok and other tunnels).
 - Leave `FLASK_DEBUG` off. It enables the Werkzeug debugger, which allows code execution from the browser, and the backend listens on all interfaces.
 
@@ -159,7 +159,7 @@ npm test                          # Playwright suite, phone and desktop projects
 npm run test:shots                # screenshots of every screen at four viewports → e2e/screenshots/
 ```
 
-The Playwright suite in `frontend/e2e/` needs no SignalWire credentials: it opens the app with `?e2e=1`, a dev-server-only seam that skips the SignalWire connection, and drives the UI state directly. The `phone` project runs the behavioral specs at a phone viewport; the `desktop` project runs the workbench spec at 1280×800. Backend tests: `pip install -r backend/requirements-dev.txt` once, then `python -m pytest backend/tests` from the repo root (with the venv active). The two suites share `frontend/e2e/fixtures/dial-normalization.json`, so a change to phone-number normalization on one side fails the other side's test until it's mirrored. `.github/workflows/ci.yml` runs all of this on push and pull request.
+The Playwright suite in `frontend/e2e/` needs no SignalWire credentials: it opens the app with `?e2e=1`, a dev-server-only seam that skips the SignalWire connection, and drives the UI state directly. The `phone` project runs the behavioral specs at a phone viewport; the `desktop` project runs the workbench spec at 1280×800. The first run needs a browser: `npx playwright install chromium` in `frontend/`. Backend tests: `pip install -r backend/requirements-dev.txt` once, then `python -m pytest backend/tests` from the repo root (with the venv active). The two suites share `frontend/e2e/fixtures/dial-normalization.json`, so a change to phone-number normalization on one side fails the other side's test until it's mirrored. `.github/workflows/ci.yml` runs all of this on pushes to `main` and on pull requests.
 
 The app's own console logging is off by default; turn on "App debug logs" in Diagnostics & Settings to see call-flow traces (the SDK's log level is a separate setting there).
 
@@ -308,7 +308,7 @@ The picker lists the space's phone numbers and its verified caller IDs. If the b
 2. Make sure no other application is using the microphone.
 3. Use headphones to avoid echo.
 4. After a page reload that reattached a call, the browser's autoplay policy may hold back remote audio until you interact with the page; the call screen shows **Tap to enable audio** when that happens.
-5. The Speaker control is disabled in browsers without `setSinkId` (Firefox, Safari).
+5. The Speaker control is disabled in browsers without `setSinkId` (Firefox before 116, Safari before 18.4).
 
 ### Token refresh
 

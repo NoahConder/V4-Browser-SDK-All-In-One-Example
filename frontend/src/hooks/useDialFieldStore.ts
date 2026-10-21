@@ -7,7 +7,7 @@ const MAX_LENGTH = 128;
 // Joining a video call with the camera off (cameraOff below) is hidden: on
 // rc.5, turning the camera on after a receive-only dial never reaches the far
 // end. Flip to restore the dial-row toggle; cameraOff is ignored while false.
-export const SHOW_CAMERA_OFF_JOIN = true;
+export const SHOW_CAMERA_OFF_JOIN = false;
 
 export interface PickedDestination {
   destination: string;

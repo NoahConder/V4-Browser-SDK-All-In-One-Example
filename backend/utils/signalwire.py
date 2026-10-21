@@ -1,4 +1,5 @@
 import os
+import re
 import time
 import requests
 from typing import Dict, Optional
@@ -258,18 +259,16 @@ class SignalWireClient:
         if self.is_dial_address(phone_number):
             return phone_number.strip()
 
-        # Remove all non-digit characters
-        cleaned = ''.join(filter(str.isdigit, phone_number))
+        # A leading '+' (after formatting characters) means the number is
+        # already international and is kept as typed, like normalizeDestination().
+        international = re.sub(r'[^\d+]', '', phone_number).startswith('+')
+        digits = ''.join(filter(str.isdigit, phone_number))
 
-        # Add US country code if not present and number is 10 digits
-        if len(cleaned) == 10:
-            cleaned = '1' + cleaned
+        # Add the US country code to a bare 10-digit number
+        if not international and len(digits) == 10:
+            digits = '1' + digits
 
-        # Add + prefix if not present
-        if not cleaned.startswith('+'):
-            cleaned = '+' + cleaned
-
-        return cleaned
+        return '+' + digits
 
 
 # One lazily built REST client shared by every blueprint (they used to each

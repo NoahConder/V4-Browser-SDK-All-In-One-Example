@@ -21,7 +21,7 @@ if [ ! -f backend/.env ]; then
   echo "  SPACE_NAME=your-space.signalwire.com"
   echo "  PROJECT_ID=your-project-id"
   echo "  AUTH_TOKEN=your-auth-token"
-  echo "  DIALER_API_KEY=some-random-value   # required, or /api/auth/token fails closed"
+  echo "  DIALER_API_KEY=some-random-value   # required; every /api route fails closed without it"
   echo "Optional: PORT, FRONTEND_URL"
   echo ""
 fi

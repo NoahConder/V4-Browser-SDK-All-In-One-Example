@@ -54,7 +54,7 @@ function DevicesBody() {
       <SheetStat
         label="Speaker selection"
         value={canSelectAudioOutput ? 'Supported' : 'Not supported'}
-        hint="HTMLMediaElement.setSinkId — missing on Firefox and Safari"
+        hint="HTMLMediaElement.setSinkId — missing before Firefox 116 and Safari 18.4"
       />
 
       <SheetSection label="Audio processing" />

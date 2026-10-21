@@ -63,7 +63,7 @@ def health_check():
     """Detailed health check"""
     try:
         # Check if environment variables are set. DIALER_API_KEY is reported
-        # separately: without it the token endpoints fail closed (503), which
+        # separately: without it every /api route fails closed (503), which
         # is the most common misconfiguration.
         config_status = all([
             os.getenv('SPACE_NAME'),
