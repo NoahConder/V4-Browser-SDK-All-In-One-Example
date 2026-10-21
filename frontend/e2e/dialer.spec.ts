@@ -32,6 +32,18 @@ test.describe('dial pad on a small phone', () => {
     }
   });
 
+  // Skipped while SHOW_CAMERA_OFF_JOIN (src/hooks/useDialFieldStore.ts) is
+  // false: Video on keeps From. Restore test() with the flag.
+  test('Video on swaps From for the camera-off toggle, which fits', async ({ page }) => {
+    await page.click('button[aria-label="Video call off"]');
+    await expect(page.locator('button[aria-label^="Caller ID"]')).toHaveCount(0);
+    for (const label of ['Start with camera on', 'Video call on', 'Call']) {
+      const box = (await page.locator(`button[aria-label="${label}"]`).boundingBox())!;
+      expect(box.x).toBeGreaterThanOrEqual(0);
+      expect(box.x + box.width).toBeLessThanOrEqual(320);
+    }
+  });
+
   test('tap Delete removes one character; hold 0 types +', async ({ page }) => {
     const input = page.locator(ADDRESS_INPUT);
     await input.fill('5551234567');
@@ -170,6 +182,57 @@ test.describe('video toggle', () => {
     await expect
       .poll(() => evalInApp(page, `return recents.getState().entries[0];`))
       .toMatchObject({ label: 'Alice', destination: '/private/alice?channel=video', video: true });
+  });
+
+  // While SHOW_CAMERA_OFF_JOIN (src/hooks/useDialFieldStore.ts) is false the
+  // toggle never renders and the dial row keeps From with Video on.
+  test.skip('the camera-off toggle is hidden', async ({ page }) => {
+    await page.locator(ADDRESS_INPUT).fill('/public/room');
+    await page.click('button[aria-label="Video call off"]');
+    await expect(page.locator('button[aria-label^="Start with camera"]')).toHaveCount(0);
+    await expect(page.locator('button[aria-label^="Caller ID"]')).toHaveCount(1);
+  });
+
+  // Skipped while SHOW_CAMERA_OFF_JOIN is false (the toggle isn't rendered).
+  // Restore test() with the flag, and drop the hidden-toggle test above.
+  test('camera off: shown only with Video on, joins receiving video but not sending', async ({ page }) => {
+    const input = page.locator(ADDRESS_INPUT);
+    await input.fill('/public/room');
+    await expect(page.locator('button[aria-label="Start with camera on"]')).toHaveCount(0);
+    await page.click('button[aria-label="Video call off"]');
+    await page.click('button[aria-label="Start with camera on"]');
+    const toggle = page.locator('button[aria-label="Start with camera off"]');
+    await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+    // A send-side choice: the dial string keeps its video channel.
+    await expect(input).toHaveValue('/public/room?channel=video');
+    await input.press('Enter');
+    await expect.poll(() => drainLog(page)).toEqual([['makeCall', '/public/room?channel=video', true, 'camera off']]);
+    expect(await evalInApp(page, `const st = store.getState(); return [st.isVideoCall, st.isCameraOn];`)).toEqual([true, false]);
+  });
+
+  test('camera off is ignored with Video off, and survives toggling Video', async ({ page }) => {
+    const input = page.locator(ADDRESS_INPUT);
+    await input.fill('/public/room');
+    await page.click('button[aria-label="Video call off"]');
+    await page.click('button[aria-label="Start with camera on"]');
+    await page.click('button[aria-label="Video call on"]');
+    await expect(page.locator('button[aria-label="Start with camera off"]')).toHaveCount(0);
+    await input.press('Enter');
+    await expect.poll(() => drainLog(page)).toEqual([['makeCall', '/public/room?channel=audio', false]]);
+
+    await setState(page, { isInCall: false, callStatus: 'idle' });
+    await page.click('button[aria-label="Video call off"]');
+    await expect(page.locator('button[aria-label="Start with camera off"]')).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  test('answering a video call honors camera off', async ({ page }) => {
+    await page.locator(ADDRESS_INPUT).fill('/public/room');
+    await page.click('button[aria-label="Video call off"]');
+    await page.click('button[aria-label="Start with camera on"]');
+    await setState(page, { isInCall: false, isIncoming: true, isVideoCall: true, callStatus: 'ringing', remoteNumber: '+15551234567' });
+    await page.click('button[aria-label="Accept"]');
+    await expect.poll(() => drainLog(page)).toEqual([['answer', 'camera off']]);
+    expect(await evalInApp(page, `const st = store.getState(); return [st.isVideoCall, st.isCameraOn];`)).toEqual([true, false]);
   });
 
   test('withChannel and channelOf follow the truth table', async ({ page }) => {

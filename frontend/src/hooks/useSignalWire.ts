@@ -12,6 +12,7 @@ import {
 import { signalWireService, ClientNotReadyError, type SignalWireCallbacks } from '../services/signalwire';
 import { useCallStore } from './useCallStore';
 import { useRecentsStore } from './useRecentsStore';
+import { SHOW_CAMERA_OFF_JOIN, useDialFieldStore } from './useDialFieldStore';
 import { callsAPI, describeFetchError } from '../services/api';
 import { dialPath, formatPhoneNumber } from '../utils/address';
 import { log } from '../utils/log';
@@ -307,8 +308,9 @@ export const useSignalWire = () => {
   // `label` is the picked resource's display name, when the destination came
   // from the resources panel; typed numbers are formatted for display. `from`
   // is the chosen caller ID, passed only for a phone number (Dialer.tsx; the
-  // service checks again).
-  const makeCall = async (phoneNumber: string, video: boolean = false, label?: string, from?: string) => {
+  // service checks again). `cameraOff` joins a video call without sending
+  // video until Camera is tapped.
+  const makeCall = async (phoneNumber: string, video: boolean = false, label?: string, from?: string, cameraOff: boolean = false) => {
     try {
       log.debug('useSignalWire.makeCall() called with:', phoneNumber, 'video:', video, 'from:', from);
       setError(null);
@@ -333,7 +335,7 @@ export const useSignalWire = () => {
 
       // Make the actual call
       log.debug('Making actual call via SignalWire service...');
-      const call = await signalWireService.makeCall(phoneNumber, video, from);
+      const call = await signalWireService.makeCall(phoneNumber, video, from, cameraOff);
       log.debug('SignalWire service returned call object:', call);
       // The user hung up while the dial was in flight; the UI already reset.
       if (!call) return;
@@ -384,13 +386,17 @@ export const useSignalWire = () => {
     try {
       setCallState({ callError: null });
       const { isVideoCall } = useCallStore.getState();
-      await signalWireService.answerCall(isVideoCall);
+      // The dial row's camera-off choice covers answered calls too, but only
+      // while it's showing (hidden with Video off, or by SHOW_CAMERA_OFF_JOIN).
+      const dialField = useDialFieldStore.getState();
+      const cameraOff = SHOW_CAMERA_OFF_JOIN && dialField.wantsVideo && dialField.cameraOff;
+      await signalWireService.answerCall(isVideoCall, cameraOff);
       setCallState({
         isInCall: true,
         isIncoming: false,
         callStatus: 'connected',
         connectedAt: Date.now(),
-        isCameraOn: isVideoCall,
+        isCameraOn: isVideoCall && !cameraOff,
       });
     } catch (err) {
       log.error('Failed to answer call:', err);

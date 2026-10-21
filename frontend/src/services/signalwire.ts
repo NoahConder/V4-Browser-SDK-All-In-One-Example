@@ -1339,7 +1339,7 @@ class SignalWireService {
 
   // Resolves null if the user hung up before dial() completed (the call is
   // hung up instead of adopted).
-  async makeCall(phoneNumber: string, video: boolean = false, from?: string): Promise<Call | null> {
+  async makeCall(phoneNumber: string, video: boolean = false, from?: string, cameraOff: boolean = false): Promise<Call | null> {
     if (!this.client) {
       throw new Error('SignalWire client not initialized');
     }
@@ -1369,11 +1369,15 @@ class SignalWireService {
       // when none was chosen so the invite is exactly what it was before.
       const callerId = from && !isDialAddress(to) ? from : undefined;
       log.debug('Dialing:', to, callerId ? `from ${callerId}` : '');
-      this.logEvent('user', video ? 'Dialing (video)' : 'Dialing', callerId ? `${to} · from ${callerId}` : to);
+      this.logEvent('user', video ? (cameraOff ? 'Dialing (video, camera off)' : 'Dialing (video)') : 'Dialing', callerId ? `${to} · from ${callerId}` : to);
 
+      // Camera off on join is receive-only video: no capture at all, and the
+      // app's video: false wins over a `?channel=video` destination. Camera
+      // adds the track later (toggleCamera's addVideoInputDevice branch) --
+      // which on rc.5 never reaches the far end, hence SHOW_CAMERA_OFF_JOIN.
       const options: OutboundDialOptions = {
         audio: true,
-        video,
+        video: video && !cameraOff,
         receiveVideo: video,
         ...(callerId ? { from: callerId } : {}),
       };
@@ -1448,7 +1452,7 @@ class SignalWireService {
     }
   }
 
-  async answerCall(video: boolean = false) {
+  async answerCall(video: boolean = false, cameraOff: boolean = false) {
     if (!this.pendingCall) {
       throw new Error('No incoming call to answer');
     }
@@ -1476,7 +1480,7 @@ class SignalWireService {
 
     try {
       log.debug('Answering incoming call...');
-      this.logEvent('user', video ? 'Answered (video)' : 'Answered');
+      this.logEvent('user', video ? (cameraOff ? 'Answered (video, camera off)' : 'Answered (video)') : 'Answered');
       toneService.stopIncomingCallTone();
 
       const call = this.pendingCall;
@@ -1484,7 +1488,8 @@ class SignalWireService {
       this.currentCall = call;
       this.wasIncomingCall = true;
 
-      call.answer({ audio: true, video });
+      // Camera off: receive the caller's video, send none (as in makeCall).
+      call.answer({ audio: true, video: video && !cameraOff, receiveVideo: video });
       this.setupCallSubscriptions(call);
       this.setupRemoteAudioFallback(call);
 
@@ -1547,9 +1552,12 @@ class SignalWireService {
     tracks.forEach((track) => { track.enabled = !this.isMicMuted; });
   }
 
-  // Works whether the call started as audio-only or with video: if there's no
-  // local video track yet, addVideoInputDevice() acquires the camera and
-  // renegotiates; otherwise it's a plain mute/unmute of the existing track.
+  // With no local video track (a call that joined without sending video, or
+  // one whose camera muteVideo() stopped), addVideoInputDevice() acquires the
+  // camera; otherwise it's a plain mute/unmute of the existing track. On rc.5 a
+  // call this browser dialed without sending video never completes the
+  // renegotiation adding the camera needs: the re-offer is created but never
+  // sent, so the far end gets no video (answered calls renegotiate fine).
   async toggleCamera(cameraOn: boolean) {
     if (!this.currentCall) {
       log.warn('No active call to toggle camera');

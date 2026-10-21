@@ -42,10 +42,10 @@ export const stubCallMethods = (page: Page) =>
   evalInApp(
     page,
     `
-    s.makeCall = async (n, video, from) => { log('makeCall', n, video, ...(from === undefined ? [] : [from])); return { id: 'sdk-call-1' }; };
+    s.makeCall = async (n, video, from, cameraOff) => { log('makeCall', n, video, ...(from === undefined ? [] : [from]), ...(cameraOff ? ['camera off'] : [])); return { id: 'sdk-call-1' }; };
     s.sendDTMF = async (d) => { log('dtmf', d); };
     s.endCall = async () => { log('endCall'); };
-    s.answerCall = async () => { log('answer'); };
+    s.answerCall = async (video, cameraOff) => { log('answer', ...(cameraOff ? ['camera off'] : [])); };
     s.rejectCall = async () => { log('reject'); };
     s.toggleMute = async (m) => { log('mute', m); };
     s.resumeRemoteAudio = () => { log('resumeRemoteAudio'); };

@@ -4,6 +4,11 @@ import { channelOf, getDialAddressType, withChannel } from '../utils/address';
 // Long enough for SIP URIs and Fabric addresses.
 const MAX_LENGTH = 128;
 
+// Joining a video call with the camera off (cameraOff below) is hidden: on
+// rc.5, turning the camera on after a receive-only dial never reaches the far
+// end. Flip to restore the dial-row toggle; cameraOff is ignored while false.
+export const SHOW_CAMERA_OFF_JOIN = true;
+
 export interface PickedDestination {
   destination: string;
   label: string;
@@ -17,6 +22,11 @@ interface DialFieldStore {
   // string. Always false for a phone number; a free choice for a SIP URI or
   // an empty field.
   wantsVideo: boolean;
+  // Join a video call (placed, or answered) with the camera off: the call
+  // receives video but sends none until Camera is tapped. A send-side choice,
+  // independent of `?channel=` -- it never touches the field's text, and it's
+  // ignored while wantsVideo is off (so it survives toggling Video).
+  cameraOff: boolean;
   // The display name of a destination picked from a list (resources panel,
   // Destinations pane, Subscribers), so the Recents log reads "Alice", not a
   // URL. Only meaningful while the field still holds that destination --
@@ -27,6 +37,7 @@ interface DialFieldStore {
   deleteLast: () => void;
   clear: () => void;
   toggleWantsVideo: () => void;
+  toggleCameraOff: () => void;
   // A row picked from a list: fill the field (a Fabric address rewritten to
   // the chosen channel), sync the video toggle, remember the label. Doesn't
   // dial.
@@ -56,6 +67,7 @@ const videoFor = (text: string, current: boolean): boolean => {
 export const useDialFieldStore = create<DialFieldStore>((set) => ({
   phoneNumber: '',
   wantsVideo: false,
+  cameraOff: false,
   picked: null,
   setPhoneNumber: (value) =>
     set((state) => {
@@ -90,6 +102,7 @@ export const useDialFieldStore = create<DialFieldStore>((set) => ({
           : state.picked;
       return { phoneNumber, wantsVideo, picked };
     }),
+  toggleCameraOff: () => set((state) => ({ cameraOff: !state.cameraOff })),
   selectAddress: (path, video, label) =>
     set(() => {
       // The flag wins: a Recents entry may hold a bare address with video on,

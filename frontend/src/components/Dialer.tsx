@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Activity, AtSign, ChevronDown, ChevronUp, History, List, Phone, PhoneOutgoing, Slash, SlidersHorizontal, User, Video, VideoOff, X } from 'lucide-react';
+import { Activity, AtSign, Camera, CameraOff, ChevronDown, ChevronUp, History, List, Phone, PhoneOutgoing, Slash, SlidersHorizontal, User, Video, VideoOff, X } from 'lucide-react';
 import DialPad from './DialPad';
 import AppBar from './AppBar';
 import CallScreen from './CallScreen';
@@ -14,7 +14,7 @@ import CallerIdSheet from './CallerIdSheet';
 import { useAddressSuggestions, type AddressSuggestion } from '../hooks/useAddressSuggestions';
 import { useCallStore } from '../hooks/useCallStore';
 import { useCallerIdStore } from '../hooks/useCallerIdStore';
-import { useDialFieldStore } from '../hooks/useDialFieldStore';
+import { SHOW_CAMERA_OFF_JOIN, useDialFieldStore } from '../hooks/useDialFieldStore';
 import { useRecentsStore } from '../hooks/useRecentsStore';
 import { useSignalWire } from '../hooks/useSignalWire';
 import { useWorkbench } from '../hooks/useWorkbench';
@@ -79,12 +79,16 @@ const Dialer: React.FC = () => {
   // through the same selectAddress path (see useDialFieldStore).
   const phoneNumber = useDialFieldStore((s) => s.phoneNumber);
   const wantsVideo = useDialFieldStore((s) => s.wantsVideo);
+  const cameraOff = useDialFieldStore((s) => s.cameraOff);
+  // What the next call obeys: the toggle only counts while it's shown.
+  const joinCameraOff = SHOW_CAMERA_OFF_JOIN && wantsVideo && cameraOff;
   const picked = useDialFieldStore((s) => s.picked);
   const setPhoneNumber = useDialFieldStore((s) => s.setPhoneNumber);
   const appendKey = useDialFieldStore((s) => s.appendKey);
   const deleteLast = useDialFieldStore((s) => s.deleteLast);
   const clearField = useDialFieldStore((s) => s.clear);
   const toggleWantsVideo = useDialFieldStore((s) => s.toggleWantsVideo);
+  const toggleCameraOff = useDialFieldStore((s) => s.toggleCameraOff);
   const selectDestination = useDialFieldStore((s) => s.selectAddress);
   // Non-null inside the desktop workbench (Workbench.tsx): the header panels'
   // contents live in its side panes, so the icons and overlays aren't rendered.
@@ -203,13 +207,15 @@ const Dialer: React.FC = () => {
         isSpeakerOn: false,
         // wantsVideo is already what the field allows: a Fabric address's
         // channel, never for a phone number (useDialFieldStore).
+        // Camera off still makes it a video call (the far end's video shows);
+        // only the local camera waits for the Camera button.
         isVideoCall: wantsVideo,
-        isCameraOn: wantsVideo,
+        isCameraOn: wantsVideo && !joinCameraOff,
         outboundCallerId: from ?? null,
       });
 
       try {
-        await makeCall(phoneNumber, wantsVideo, pickedLabel, from);
+        await makeCall(phoneNumber, wantsVideo, pickedLabel, from, joinCameraOff);
         log.debug('makeCall completed');
       } catch (error) {
         log.error('makeCall failed:', error);
@@ -558,27 +564,51 @@ const Dialer: React.FC = () => {
                   lockout the other way round. mousedown is swallowed so the
                   address input stays focused and is what the sheet returns
                   focus to -- Enter still dials after a pick. Text only from
-                  360px, like the type label; the full value is in the title. */}
-              <button
-                type="button"
-                onClick={() => setIsCallerIdOpen(true)}
-                onMouseDown={(e) => e.preventDefault()}
-                disabled={isInCall || isCallingInProgress || isNonPhoneAddress}
-                aria-label={callerIdLabel}
-                aria-haspopup="dialog"
-                aria-expanded={isCallerIdOpen}
-                title={isNonPhoneAddress ? 'Caller ID applies to phone numbers only' : callerIdLabel}
-                className={`flex h-11 items-center gap-2 rounded-lg border px-3 text-sm font-medium transition-colors disabled:opacity-50 ${
-                  callerId
-                    ? 'border-accent-edge bg-accent-soft text-accent-text'
-                    : 'border-edge-strong bg-surface text-muted hover:bg-surface-hover hover:text-ink'
-                }`}
-              >
-                <PhoneOutgoing size={16} />
-                <span className="hidden max-w-[7.5rem] truncate min-[360px]:inline-block">
-                  {callerId ? (callerName ?? formatPhoneNumber(callerId)) : 'From'}
-                </span>
-              </button>
+                  360px, like the type label; the full value is in the title.
+                  With Video on the destination can't be a phone number, so
+                  the slot holds the camera-off choice instead (when
+                  SHOW_CAMERA_OFF_JOIN is on): join the video call receiving
+                  video but sending none until Camera is tapped in the call.
+                  It doesn't touch the field. */}
+              {SHOW_CAMERA_OFF_JOIN && wantsVideo ? (
+                <button
+                  type="button"
+                  onClick={toggleCameraOff}
+                  onMouseDown={(e) => e.preventDefault()}
+                  disabled={isInCall || isCallingInProgress}
+                  aria-label={cameraOff ? 'Start with camera off' : 'Start with camera on'}
+                  title={cameraOff ? 'Start with camera off' : 'Start with camera on'}
+                  aria-pressed={cameraOff}
+                  className={`flex h-11 w-11 items-center justify-center rounded-lg border transition-colors disabled:opacity-50 ${
+                    cameraOff
+                      ? 'border-accent-edge bg-accent-soft text-accent-text'
+                      : 'border-edge-strong bg-surface text-muted hover:bg-surface-hover hover:text-ink'
+                  }`}
+                >
+                  {cameraOff ? <CameraOff size={16} /> : <Camera size={16} />}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setIsCallerIdOpen(true)}
+                  onMouseDown={(e) => e.preventDefault()}
+                  disabled={isInCall || isCallingInProgress || isNonPhoneAddress}
+                  aria-label={callerIdLabel}
+                  aria-haspopup="dialog"
+                  aria-expanded={isCallerIdOpen}
+                  title={isNonPhoneAddress ? 'Caller ID applies to phone numbers only' : callerIdLabel}
+                  className={`flex h-11 items-center gap-2 rounded-lg border px-3 text-sm font-medium transition-colors disabled:opacity-50 ${
+                    callerId
+                      ? 'border-accent-edge bg-accent-soft text-accent-text'
+                      : 'border-edge-strong bg-surface text-muted hover:bg-surface-hover hover:text-ink'
+                  }`}
+                >
+                  <PhoneOutgoing size={16} />
+                  <span className="hidden max-w-[7.5rem] truncate min-[360px]:inline-block">
+                    {callerId ? (callerName ?? formatPhoneNumber(callerId)) : 'From'}
+                  </span>
+                </button>
+              )}
               {/* For a Fabric address the Video toggle is the channel selector:
                   it rewrites the field's `?channel=`, so what's shown is what's
                   dialed (useDialFieldStore). For a SIP URI it's the camera
