@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { X } from 'lucide-react';
 import ResourceAddressList, { type ResourcePage } from './ResourceAddressList';
 import DirectoryAddressList from './DirectoryAddressList';
@@ -12,7 +12,11 @@ export type ResourceTab = 'directory' | 'recents' | 'swml' | 'sip' | 'subscriber
 
 type SelectAddress = (path: string, video: boolean, label?: string) => void;
 
-// Short labels so the whole tab strip fits a 320px-wide phone.
+// Short labels, set tight (12px, 6px padding): all five fit the workbench's
+// narrowest Destinations pane (19rem at 1024px) and four fit the phone panel
+// at 320px. At 13px with 8px padding "Subscribers" was cut off at every
+// workbench width. The strip still scrolls sideways if it ever outgrows its
+// pane (browser zoom, a larger default font).
 const TAB_META: Record<ResourceTab, { label: string; title: string }> = {
   directory: { label: 'Directory', title: "This subscriber's address book (SDK directory)" },
   recents: { label: 'Recents', title: 'Calls made and received in this browser' },
@@ -71,13 +75,26 @@ export function DestinationsTabs({
   className = '',
   panelClassName = '',
 }: DestinationsTabsProps) {
+  // The strip scrolls sideways where it doesn't fit: keep the selected tab
+  // (which other UI can select, e.g. the History button) in view.
+  const tablistRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const list = tablistRef.current;
+    const tab = list?.querySelector<HTMLElement>('[aria-selected="true"]');
+    if (!list || !tab) return;
+    if (tab.offsetLeft < list.scrollLeft) list.scrollLeft = tab.offsetLeft;
+    else if (tab.offsetLeft + tab.offsetWidth > list.scrollLeft + list.clientWidth)
+      list.scrollLeft = tab.offsetLeft + tab.offsetWidth - list.clientWidth;
+  }, [activeTab]);
+
   return (
     <div className={className}>
       <div className="mb-2 flex shrink-0 items-center justify-between gap-2">
         <div
+          ref={tablistRef}
           role="tablist"
           aria-label="Dialable resources"
-          className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1 border-b border-edge text-[13px] font-medium"
+          className="relative flex min-w-0 flex-1 items-center overflow-x-auto border-b border-edge text-xs font-medium [scrollbar-width:none]"
         >
           {tabs.map((key) => (
             <button
@@ -89,9 +106,9 @@ export function DestinationsTabs({
               aria-controls="resources-tabpanel"
               title={TAB_META[key].title}
               onClick={() => onTabChange(key)}
-              className={`relative shrink-0 px-2 py-2 transition-colors ${
+              className={`relative shrink-0 px-1.5 py-2 transition-colors ${
                 activeTab === key
-                  ? 'text-accent-text after:absolute after:inset-x-2 after:-bottom-px after:h-0.5 after:rounded-full after:bg-accent'
+                  ? 'text-accent-text after:absolute after:inset-x-1.5 after:bottom-0 after:h-0.5 after:rounded-full after:bg-accent'
                   : 'text-muted hover:text-ink'
               }`}
             >

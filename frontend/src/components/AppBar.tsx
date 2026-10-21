@@ -54,7 +54,9 @@ const AppBar: React.FC<AppBarProps> = ({ children, onIdentityClick }) => {
       <div className="flex min-w-0 items-center gap-2 sm:gap-3">
         <span className="flex shrink-0 items-baseline gap-2">
           <span className="font-display text-base font-semibold tracking-tight text-ink-strong">SignalWire</span>
-          <span className="hidden text-xs text-muted desk:inline">Browser SDK reference</span>
+          {/* Workbench widths only: in the tablet column the labeled panel
+              buttons need the room. */}
+          <span className="hidden text-xs text-muted lg:inline">Browser SDK reference</span>
         </span>
         <span
           role="status"

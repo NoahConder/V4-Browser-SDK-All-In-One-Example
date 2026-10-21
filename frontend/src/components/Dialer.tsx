@@ -549,16 +549,22 @@ const Dialer: React.FC = () => {
           />
           </div>
 
-          {/* The address type, the video choice and Call. The label is dropped
-              while an error is showing: the badge icon already says the same
-              thing, and on small phones the banner plus the label push the
-              keypad down. */}
-          <div className="mt-3 flex w-full max-w-xl items-center justify-between gap-3">
-            {/* No room for it beside Video and Call on 320px phones. */}
-            <span className="hidden min-w-0 truncate text-xs font-medium uppercase tracking-wider text-faint min-[360px]:inline">
-              {phoneNumber && !callError ? addressLabel : ''}
-            </span>
-            <div className="flex shrink-0 items-center gap-2">
+          {/* The address type, on its own line under the field: beside From,
+              Video and Call it only fit on wide layouts and was cut to "PHO…"
+              on phones. The line is always there, so typing the first
+              character doesn't move the field. The label is dropped while an
+              error is showing: the badge icon already says the same thing,
+              and on small phones the banner plus the label push the keypad
+              down. No room for the line on 320px phones. */}
+          <span className="mt-1.5 hidden h-4 w-full max-w-xl truncate px-1 text-xs font-medium uppercase tracking-wider text-faint min-[360px]:block">
+            {phoneNumber && !callError ? addressLabel : ''}
+          </span>
+
+          {/* The caller ID (or the camera-off choice), the video choice and
+              Call. The caller ID's name truncates rather than pushing Call
+              out of a narrow column. */}
+          <div className="mt-3 flex w-full max-w-xl justify-end min-[360px]:mt-1.5">
+            <div className="flex min-w-0 items-center gap-2">
               {/* The caller ID for calls to phone numbers: opens the Caller ID
                   sheet (the space's numbers and verified caller IDs). Video's
                   lockout the other way round. mousedown is swallowed so the
@@ -579,7 +585,7 @@ const Dialer: React.FC = () => {
                   aria-label={cameraOff ? 'Start with camera off' : 'Start with camera on'}
                   title={cameraOff ? 'Start with camera off' : 'Start with camera on'}
                   aria-pressed={cameraOff}
-                  className={`flex h-11 w-11 items-center justify-center rounded-lg border transition-colors disabled:opacity-50 ${
+                  className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border transition-colors disabled:opacity-50 ${
                     cameraOff
                       ? 'border-accent-edge bg-accent-soft text-accent-text'
                       : 'border-edge-strong bg-surface text-muted hover:bg-surface-hover hover:text-ink'
@@ -597,14 +603,14 @@ const Dialer: React.FC = () => {
                   aria-haspopup="dialog"
                   aria-expanded={isCallerIdOpen}
                   title={isNonPhoneAddress ? 'Caller ID applies to phone numbers only' : callerIdLabel}
-                  className={`flex h-11 items-center gap-2 rounded-lg border px-3 text-sm font-medium transition-colors disabled:opacity-50 ${
+                  className={`flex h-11 min-w-0 items-center gap-2 rounded-lg border px-3 text-sm font-medium transition-colors disabled:opacity-50 ${
                     callerId
                       ? 'border-accent-edge bg-accent-soft text-accent-text'
                       : 'border-edge-strong bg-surface text-muted hover:bg-surface-hover hover:text-ink'
                   }`}
                 >
-                  <PhoneOutgoing size={16} />
-                  <span className="hidden max-w-[7.5rem] truncate min-[360px]:inline-block">
+                  <PhoneOutgoing size={16} className="shrink-0" />
+                  <span className="hidden max-w-[7.5rem] min-w-0 truncate min-[360px]:inline-block">
                     {callerId ? (callerName ?? formatPhoneNumber(callerId)) : 'From'}
                   </span>
                 </button>
@@ -620,7 +626,7 @@ const Dialer: React.FC = () => {
                 aria-label={wantsVideo ? 'Video call on' : 'Video call off'}
                 title={isPhone ? "Video isn't available for phone numbers" : wantsVideo ? 'Video call on' : 'Video call off'}
                 aria-pressed={wantsVideo}
-                className={`flex h-11 items-center gap-2 rounded-lg border px-3 text-sm font-medium transition-colors disabled:opacity-50 ${
+                className={`flex h-11 shrink-0 items-center gap-2 rounded-lg border px-3 text-sm font-medium transition-colors disabled:opacity-50 ${
                   wantsVideo
                     ? 'border-accent bg-accent text-on-accent'
                     : 'border-edge-strong bg-surface text-muted hover:bg-surface-hover hover:text-ink'
@@ -637,7 +643,7 @@ const Dialer: React.FC = () => {
                 onMouseDown={(e) => e.preventDefault()}
                 disabled={isInCall || isCallingInProgress}
                 aria-label="Call"
-                className="flex h-11 items-center gap-2 rounded-lg bg-call px-5 text-sm font-semibold text-on-call shadow-card transition-colors hover:bg-call-hover disabled:opacity-40"
+                className="flex h-11 shrink-0 items-center gap-2 rounded-lg bg-call px-5 text-sm font-semibold text-on-call shadow-card transition-colors hover:bg-call-hover disabled:opacity-40"
               >
                 <Phone size={16} fill="currentColor" />
                 <span>Call</span>

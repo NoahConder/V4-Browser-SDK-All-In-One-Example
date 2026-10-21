@@ -229,18 +229,23 @@ const CallScreen: React.FC<CallScreenProps> = ({
 
         {/* The call card: status strip, media (or the DTMF pad), meters and the
             toolbar. It fills a phone's screen; in the workbench it is a card in
-            the center column. */}
+            the center column. Only the stage (video or keypad) scrolls: when
+            the screen is too short for the keypad, the meters and the toolbar
+            stay put below it, so Mute and End never leave the screen. */}
         <div
           className={`relative z-10 flex min-h-0 flex-1 flex-col overflow-y-auto ${
             workbench ? 'items-center px-6 py-4' : ''
           }`}
         >
           <div className={`flex min-h-0 flex-col ${workbench ? 'glass-panel w-full max-w-3xl rounded-xl' : 'flex-1'}`}>
+            {/* Status strip above the stage; beside it on landscape phones
+                (`short`), which have the width but not the height. */}
+            <div className={`flex min-h-0 flex-col short:flex-row ${workbench ? '' : 'flex-1'}`}>
             {/* Status strip. The status line is the first polite live region on
                 the screen (the e2e helpers read it). Media down but the call not
                 over (ICE disconnected/failed or the SDK mid-recovery): the bar's
                 dot stays bound to signaling (isClientReady); this one is media. */}
-            <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2 px-4 pb-3 pt-4 sm:px-6">
+            <div className="flex shrink-0 flex-wrap items-start justify-between gap-x-4 gap-y-2 px-4 pb-3 pt-4 sm:px-6 short:w-1/2">
               <div className="min-w-0">
                 <div className="inline-flex items-center gap-2 text-sm text-muted" aria-live="polite">
                   {(callStatus !== 'connected' || isMediaDisrupted) && (
@@ -286,13 +291,17 @@ const CallScreen: React.FC<CallScreenProps> = ({
               </div>
             </div>
 
+            {/* The stage: fills the rest of a phone's screen (which keeps the
+                toolbar at the bottom whether or not the keypad is open) and
+                scrolls on its own when its content doesn't fit. */}
+            <div className={`flex min-h-0 flex-col overflow-y-auto ${workbench ? '' : 'flex-1'}`}>
             {/* Video layer -- always mounted (regardless of showDialPad/showVideoUI)
                 so the service's ref attach survives both toggling mid-call;
                 visibility is purely CSS (hidden, not unmounted) so the stream keeps
                 decoding underneath. */}
             <div
               className={`relative overflow-hidden bg-black ${
-                showVideoUI && !showDialPad ? (workbench ? 'aspect-video' : 'min-h-0 flex-1') : 'hidden'
+                showVideoUI && !showDialPad ? (workbench ? 'aspect-video shrink-0' : 'min-h-0 flex-1') : 'hidden'
               }`}
             >
               <video ref={remoteVideoRef} autoPlay playsInline className="absolute inset-0 h-full w-full object-cover" />
@@ -309,9 +318,11 @@ const CallScreen: React.FC<CallScreenProps> = ({
 
             {/* The DTMF pad: the far end and the statistics don't pause for it,
                 so the status strip stays in view above. */}
+            {/* On landscape phones the digits sit beside the keys, not above
+                them, so the whole pad fits between the bar and the toolbar. */}
             {showDialPad && (
-              <div className="flex flex-col items-center gap-3 px-4 py-3 sm:px-6">
-                <div className="flex w-full max-w-sm items-center justify-center rounded-lg border border-edge-strong bg-surface-2 px-4 py-3">
+              <div className="flex flex-col items-center gap-3 px-4 py-3 sm:px-6 low:gap-2 low:py-2 short:flex-row short:justify-center short:py-0">
+                <div className="flex w-full max-w-sm items-center justify-center rounded-lg border border-edge-strong bg-surface-2 px-4 py-3 low:py-2 short:min-w-0 short:flex-1">
                   {dialPadInput ? (
                     <div className="min-w-0 font-mono text-2xl font-medium tracking-wide wrap-anywhere sm:text-3xl">
                       {dialPadInput}
@@ -322,19 +333,33 @@ const CallScreen: React.FC<CallScreenProps> = ({
                     </div>
                   )}
                 </div>
-                {/* Smaller in the workbench card so End stays above the fold. */}
-                <div className={workbench ? 'w-full max-w-[13rem]' : 'w-full'}>
+                {/* Smaller in the workbench card, and on phones without the
+                    height for the full pad (portrait: 375x667-class phones,
+                    then 320x568; landscape: 320px-tall phones), so all four
+                    rows fit above the toolbar. */}
+                <div
+                  className={
+                    workbench
+                      ? 'w-full max-w-[13rem] low:max-w-[12rem]'
+                      : 'w-full low:max-w-56 [@media(min-height:501px)_and_(max-height:620px)]:max-w-40 short:w-44 short:shrink-0 [@media(max-height:360px)]:w-32'
+                  }
+                >
                   <DialPad mode="dtmf" onKeyPress={handleDialPadKey} disabled={callStatus !== 'connected'} />
                 </div>
               </div>
             )}
+            </div>
+            </div>
 
-            {/* Audio-only on a phone: the toolbar sits at the bottom. */}
-            {!showDialPad && !showVideoUI && !workbench && <div className="flex-1" />}
+            {/* Hidden while the keypad is open on `low` screens: the keys
+                need the room. */}
+            {callStatus === 'connected' && (
+              <div className={showDialPad ? 'low:hidden' : ''}>
+                <AudioLevelMeter isMuted={isMuted} />
+              </div>
+            )}
 
-            {callStatus === 'connected' && <AudioLevelMeter isMuted={isMuted} />}
-
-            <div className={`px-4 pt-4 sm:px-6 ${workbench ? 'pb-5' : 'pb-safe'}`}>
+            <div className={`shrink-0 px-4 pt-4 sm:px-6 short:pt-2 ${workbench ? 'pb-5' : 'pb-safe'}`}>
               <CallToolbar
                 isMuted={isMuted}
                 onToggleMute={onToggleMute}

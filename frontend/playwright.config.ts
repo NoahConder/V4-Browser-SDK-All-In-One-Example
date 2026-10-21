@@ -36,7 +36,7 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'], viewport: { width: 1280, height: 800 } },
     },
     {
-      // Non-asserting screenshots of every screen at four viewports, for
+      // Non-asserting screenshots of every screen at six viewports, for
       // eyeballing layout changes: `npm run test:shots`, then look in
       // e2e/screenshots/.
       name: 'shots',

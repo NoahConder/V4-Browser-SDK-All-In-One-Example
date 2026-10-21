@@ -156,7 +156,7 @@ cd frontend
 npm run build                     # type-check + production build
 npm run lint                      # eslint
 npm test                          # Playwright suite, phone and desktop projects (starts or reuses the dev server)
-npm run test:shots                # screenshots of every screen at four viewports → e2e/screenshots/
+npm run test:shots                # screenshots of every screen at six viewports → e2e/screenshots/
 ```
 
 The Playwright suite in `frontend/e2e/` needs no SignalWire credentials: it opens the app with `?e2e=1`, a dev-server-only seam that skips the SignalWire connection, and drives the UI state directly. The `phone` project runs the behavioral specs at a phone viewport; the `desktop` project runs the workbench spec at 1280×800. The first run needs a browser: `npx playwright install chromium` in `frontend/`. Backend tests: `pip install -r backend/requirements-dev.txt` once, then `python -m pytest backend/tests` from the repo root (with the venv active). The two suites share `frontend/e2e/fixtures/dial-normalization.json`, so a change to phone-number normalization on one side fails the other side's test until it's mirrored. `.github/workflows/ci.yml` runs all of this on pushes to `main` and on pull requests.

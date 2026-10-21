@@ -30,10 +30,12 @@ interface ControlButtonProps {
   disabled?: boolean;
   // Tooltip, mainly to explain a disabled control.
   title?: string;
+  className?: string;
 }
 
-// A flat, labeled in-call control. Stacked icon-over-label on phones; a
-// compact icon-beside-label pill on desktop (the `desk` screen).
+// A flat, labeled in-call control. Stacked icon-over-label on phones,
+// tablets and narrow workbench windows; a compact icon-beside-label pill where
+// four of those fit a row of the call card (the `wide` screen).
 export const ControlButton: React.FC<ControlButtonProps> = ({
   icon: Icon,
   label,
@@ -43,6 +45,7 @@ export const ControlButton: React.FC<ControlButtonProps> = ({
   danger,
   disabled,
   title,
+  className = '',
 }) => (
   <button
     type="button"
@@ -51,13 +54,13 @@ export const ControlButton: React.FC<ControlButtonProps> = ({
     title={title}
     aria-label={ariaLabel ?? label}
     aria-pressed={active}
-    className={`flex h-14 min-w-0 flex-col items-center justify-center gap-1 rounded-lg border text-[11px] font-medium transition-colors disabled:opacity-40 desk:h-11 desk:min-w-24 desk:flex-row desk:gap-2 desk:px-3 desk:text-xs ${
+    className={`flex h-14 min-w-0 flex-col short:h-12 items-center justify-center gap-1 rounded-lg border text-[11px] font-medium transition-colors disabled:opacity-40 wide:h-11 wide:flex-row wide:gap-2 wide:px-3 wide:text-xs ${
       danger
         ? 'border-hangup bg-hangup text-on-hangup hover:bg-hangup-hover'
         : active
           ? 'border-accent bg-accent text-on-accent'
           : 'border-edge-strong bg-surface text-ink hover:bg-surface-hover'
-    }`}
+    } ${className}`}
   >
     <Icon size={18} />
     <span aria-hidden>{label}</span>
@@ -86,8 +89,13 @@ interface CallToolbarProps {
   onEndCall: () => void;
 }
 
-// Every in-call control in one row (wrapping), on phones and desktop alike,
-// so the SDK's call controls are all visible rather than behind "More".
+// Every in-call control on one grid, on phones and desktop alike, so the
+// SDK's call controls are all visible rather than behind "More". Four columns
+// make the eight controls two full rows with End bottom-right, the same on
+// every width; landscape phones (`short`) have the width for one row and not
+// the height for two. Transfer (SHOW_TRANSFER) makes nine, so five columns.
+// On `low` screens an open keypad leaves room for one row: the toolbar keeps
+// Mute, Keypad (to close it), Speaker and End until the keypad is closed.
 const CallToolbar: React.FC<CallToolbarProps> = ({
   isMuted,
   onToggleMute,
@@ -108,20 +116,28 @@ const CallToolbar: React.FC<CallToolbarProps> = ({
   onEndCall,
 }) => {
   const isScreenShareBusy = screenShareStatus === 'starting' || screenShareStatus === 'stopping';
+  const secondary = isKeypadOpen ? 'low:hidden' : '';
   return (
-    <div className="grid grid-cols-3 gap-2 min-[360px]:grid-cols-4 sm:grid-cols-5 desk:flex desk:flex-wrap desk:items-center desk:justify-center">
+    <div className={`grid gap-2 ${onOpenTransfer ? 'grid-cols-5 short:grid-cols-9' : 'grid-cols-4 short:grid-cols-8'}`}>
       <ControlButton icon={MicOff} label="Mute" active={isMuted} onClick={onToggleMute} />
       <ControlButton icon={Keyboard} label="Keypad" active={isKeypadOpen} onClick={onToggleKeypad} />
-      <ControlButton icon={Video} label="Camera" active={isCameraOn} onClick={onToggleCamera} />
+      <ControlButton icon={Video} label="Camera" active={isCameraOn} onClick={onToggleCamera} className={secondary} />
       <ControlButton
         icon={isOnHold ? Play : Pause}
         label={isOnHold ? 'Resume' : 'Hold'}
         ariaLabel={isOnHold ? 'Resume call' : 'Hold call'}
         active={isOnHold}
         onClick={onToggleHold}
+        className={secondary}
       />
       {onOpenTransfer && (
-        <ControlButton icon={PhoneForwarded} label="Transfer" ariaLabel="Transfer call" onClick={onOpenTransfer} />
+        <ControlButton
+          icon={PhoneForwarded}
+          label="Transfer"
+          ariaLabel="Transfer call"
+          onClick={onOpenTransfer}
+          className={secondary}
+        />
       )}
       <ControlButton
         icon={screenShareStatus === 'started' ? ScreenShareOff : ScreenShare}
@@ -133,6 +149,7 @@ const CallToolbar: React.FC<CallToolbarProps> = ({
           canScreenShare ? undefined : 'Screen share is granted on video room and conference calls, not on 1:1 calls'
         }
         onClick={onToggleScreenShare}
+        className={secondary}
       />
       <ControlButton
         icon={Volume2}
@@ -142,7 +159,13 @@ const CallToolbar: React.FC<CallToolbarProps> = ({
         disabled={!canSelectAudioOutput}
         title={canSelectAudioOutput ? undefined : 'Choosing an audio output is not supported in this browser'}
       />
-      <ControlButton icon={MoreHorizontal} label="More" ariaLabel="More call controls" onClick={onOpenMore} />
+      <ControlButton
+        icon={MoreHorizontal}
+        label="More"
+        ariaLabel="More call controls"
+        onClick={onOpenMore}
+        className={secondary}
+      />
       <ControlButton icon={PhoneOff} label="End" ariaLabel="End call" danger onClick={onEndCall} />
     </div>
   );

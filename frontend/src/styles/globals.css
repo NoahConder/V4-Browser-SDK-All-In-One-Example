@@ -203,14 +203,17 @@
     height: 100dvh;
   }
 
-  /* Tablet and narrow desktop: a phone-width column, so the header controls
+  /* Tablet and narrow desktop: a tablet-width column, so the header controls
      sit next to the dial pad instead of in the far corner of a wide window.
-     Not on phones in landscape (the `short` layouts need the full width), and
-     not from 1024px up, where the workbench puts panes beside the phone
+     40rem is what the top bar needs once its panel buttons carry labels (the
+     `desk` screen): wordmark, status pill, identity chip, four labeled
+     buttons and the theme toggle; at 30rem they overlapped. Not on phones in
+     landscape (the `short` layouts need the full width), and not from 1024px
+     up, where the workbench puts panes beside the phone
      (hooks/useMediaQuery.ts's WORKBENCH_QUERY must match the upper bound). */
   @media (min-width: 640px) and (max-width: 1023px) and (min-height: 501px) {
     #root {
-      max-width: 30rem;
+      max-width: 40rem;
       margin-inline: auto;
       border-inline: 1px solid var(--color-edge);
     }
@@ -219,8 +222,12 @@
 
 @utility workbench {
   /* Desktop: Destinations | the call stage | Inspector. The side panes are
-     bounded and the stage takes the rest; Workbench.tsx sets --pane-left /
+     bounded and the stage takes the rest, but never less than 22rem: the side
+     panes grow toward their maximum before a 1fr track gets anything, so
+     without that floor a 1024px window left the stage 19rem, clipping the
+     Call button and wrapping the number on the call card. Destinations starts
+     at 19rem so its five tabs fit at 1024px. Workbench.tsx sets --pane-left /
      --pane-right to the rail width while a pane is collapsed. */
   display: grid;
-  grid-template-columns: var(--pane-left, minmax(17rem, 21rem)) minmax(0, 1fr) var(--pane-right, minmax(20rem, 24rem));
+  grid-template-columns: var(--pane-left, minmax(19rem, 21rem)) minmax(22rem, 1fr) var(--pane-right, minmax(20rem, 24rem));
 }

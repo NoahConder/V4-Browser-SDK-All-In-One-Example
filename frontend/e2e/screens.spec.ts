@@ -1,7 +1,7 @@
 import { test, type Page } from '@playwright/test';
 import { ADDRESS_INPUT, openDialer, setState, stubCallMethods } from './helpers';
 
-// Non-asserting screenshots of each screen at four viewports, for eyeballing
+// Non-asserting screenshots of each screen at six viewports, for eyeballing
 // layout changes. Only the `shots` project runs this file:
 // `npm run test:shots`, then look in e2e/screenshots/.
 // Dark is the app's default theme; the two `-light` entries repeat the phone
@@ -10,6 +10,8 @@ const VIEWPORTS: Record<string, { width: number; height: number; colorScheme?: '
   iphone: { width: 390, height: 844 },
   se: { width: 320, height: 568 },
   landscape: { width: 844, height: 390 },
+  tablet: { width: 768, height: 1024 },
+  'tablet-landscape': { width: 1024, height: 768 },
   desktop: { width: 1280, height: 800 },
   'iphone-light': { width: 390, height: 844, colorScheme: 'light' },
   'desktop-light': { width: 1280, height: 800, colorScheme: 'light' },
@@ -48,7 +50,8 @@ for (const [name, viewport] of Object.entries(VIEWPORTS)) {
     await page.locator('body').click({ position: { x: 5, y: viewport.height - 5 } });
     await shot('02-number');
 
-    if (name.startsWith('desktop')) {
+    // WORKBENCH_QUERY: (min-width: 1024px) and (min-height: 501px).
+    if (viewport.width >= 1024 && viewport.height >= 501) {
       // The workbench: panes instead of header panels.
       await page.getByRole('tab', { name: 'Recents' }).click();
       await shot('03-recents');
