@@ -1,0 +1,33 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+
+# Node
+node_modules/
+frontend/dist/
+
+# Playwright
+frontend/test-results/
+frontend/playwright-report/
+frontend/e2e/screenshots/
+
+# Python tests
+.pytest_cache/
+
+# Env / secrets
+backend/.env
+backend/.env.local
+frontend/.env
+frontend/.env.local
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+
+# Build artifacts
+*.tsbuildinfo

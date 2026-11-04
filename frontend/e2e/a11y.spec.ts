@@ -1,0 +1,87 @@
+import { expect, test } from '@playwright/test';
+import { drainLog, openDialer, setState, stubCallMethods } from './helpers';
+
+const activeDescription = (page: import('@playwright/test').Page) =>
+  page.evaluate(() => {
+    const el = document.activeElement;
+    if (!el) return 'none';
+    const label = el.getAttribute('aria-label') ?? el.getAttribute('placeholder') ?? '';
+    return `${el.tagName.toLowerCase()}[${label}]`;
+  });
+
+test('installable: manifest, icons, zoomable viewport, theme color', async ({ page, request }) => {
+  await openDialer(page);
+  for (const [path, type] of [
+    ['/manifest.webmanifest', 'json'],
+    ['/icon-192.png', 'image/png'],
+    ['/icon-512.png', 'image/png'],
+    ['/apple-touch-icon.png', 'image/png'],
+  ]) {
+    const response = await request.get(path);
+    expect(response.status(), path).toBe(200);
+    expect(response.headers()['content-type'], path).toContain(type);
+  }
+  const viewport = (await page.locator('meta[name="viewport"]').getAttribute('content')) ?? '';
+  expect(viewport).not.toContain('user-scalable=no');
+  expect(viewport).toContain('viewport-fit=cover');
+  // One theme-color per color scheme (light and dark canvases).
+  await expect(page.locator('meta[name="theme-color"]')).toHaveCount(2);
+  await expect(page.locator('link[rel="manifest"]')).toHaveCount(1);
+  await expect(page.locator('.glass-bar.pt-safe')).toHaveCount(1);
+});
+
+test('header panels are modal dialogs that trap and return focus', async ({ page }) => {
+  await openDialer(page);
+  await page.click('button[aria-label="Diagnostics"]');
+  const dialog = page.locator('[role="dialog"][aria-labelledby="diagnostics-title"]');
+  await expect(dialog).toHaveAttribute('aria-modal', 'true');
+  // Nothing in this panel wants the keyboard on open (the test field opts out
+  // like the search boxes do), so focus lands on the first control.
+  expect(await activeDescription(page)).toBe('button[Close]');
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  expect(await activeDescription(page)).toBe('button[Diagnostics]');
+
+  await page.click('button[aria-label="Subscriber"]');
+  const subscriberDialog = page.locator('[role="dialog"][aria-labelledby="subscriber-title"]');
+  await expect(subscriberDialog).toBeVisible();
+  const items = await subscriberDialog.evaluate((el) => el.querySelectorAll('button:not([disabled])').length);
+  for (let i = 0; i < items + 1; i++) await page.keyboard.press('Tab');
+  expect(await page.evaluate(() => !!document.activeElement?.closest('[role="dialog"]'))).toBe(true);
+});
+
+test('in-call sheets are modal dialogs; the status line is a live region', async ({ page }) => {
+  await openDialer(page);
+  await stubCallMethods(page);
+  await setState(page, { isInCall: true, callStatus: 'connected', connectedAt: Date.now(), remoteNumber: '+15551234567' });
+  await page.click('button[aria-label="More call controls"]');
+  const sheet = page.locator('[role="dialog"][aria-modal="true"]:has-text("More Controls")');
+  await expect(sheet).toBeVisible();
+  expect(await page.evaluate(() => !!document.activeElement?.closest('[role="dialog"]'))).toBe(true);
+  await page.keyboard.press('Escape');
+  await expect(sheet).toHaveCount(0);
+  expect(await activeDescription(page)).toBe('button[More call controls]');
+  await expect(page.locator('[aria-live="polite"]:has-text("Connected")')).toHaveCount(1);
+});
+
+test('incoming call: Accept and Decline, no keyboard shortcuts; subscriber caller ids are shown by name', async ({ page }) => {
+  await openDialer(page);
+  await stubCallMethods(page);
+  // A browser-to-browser caller arrives as "subscriber://<name>"; only the name is shown.
+  await setState(page, { isInCall: false, isIncoming: true, callStatus: 'ringing', remoteNumber: 'subscriber://bob-test' });
+  await expect(page.locator('.select-text:has-text("bob-test")')).toBeVisible();
+  await expect(page.locator('text=subscriber://')).toHaveCount(0);
+  await setState(page, { isInCall: false, isIncoming: true, callStatus: 'ringing', remoteNumber: '+15551234567' });
+  const accept = page.locator('button[aria-label="Accept"]');
+  await expect(accept).toBeVisible();
+  // Enter and Escape on the page do nothing; Enter on a focused button acts
+  // on that button only.
+  await page.locator('body').press('Enter');
+  await page.locator('body').press('Escape');
+  expect(await drainLog(page)).toEqual([]);
+  await page.locator('button[aria-label="Decline"]').press('Enter');
+  await expect.poll(() => drainLog(page)).toEqual([['reject']]);
+  await setState(page, { isInCall: false, isIncoming: true, callStatus: 'ringing', remoteNumber: '+15551234567' });
+  await accept.click();
+  await expect.poll(() => drainLog(page)).toEqual([['answer']]);
+});

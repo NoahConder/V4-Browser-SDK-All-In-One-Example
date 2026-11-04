@@ -1,0 +1,155 @@
+import { expect, test } from '@playwright/test';
+import { STATS_STUBS, drainLog, evalInApp, openDialer, setState } from './helpers';
+
+declare global {
+  interface Window {
+    __level: { next(v: number): void };
+    __issues: { next(v: unknown[]): void };
+    __remoteStream: MediaStream;
+  }
+}
+
+test.describe('call statistics and audio meter', () => {
+  test.beforeEach(async ({ page }) => {
+    await openDialer(page);
+    await evalInApp(page, STATS_STUBS);
+    await setState(page, { isInCall: true, callStatus: 'connected', connectedAt: Date.now() - 5000, remoteNumber: '+15551234567' });
+    await expect(page.locator('button[aria-label="Call statistics"]')).toBeVisible();
+  });
+
+  test('the meters follow the mic and remote levels without re-rendering', async ({ page }) => {
+    const bar = page.locator('.bg-success.origin-left');
+    await expect(bar).toHaveCSS('transform', /matrix\(0\.2,/);
+    await page.evaluate(() => window.__level.next(0.64));
+    await expect(bar).toHaveCSS('transform', /matrix\(0\.8,/);
+    // The remote bar reads the stubbed 0.25 through the same square root.
+    await expect(page.locator('.bg-accent.origin-left')).toHaveCSS('transform', /matrix\(0\.5,/);
+  });
+
+  test('the stats sheet shows metrics, transport, recovery and the call id', async ({ page }) => {
+    await page.click('button[aria-label="Call statistics"]');
+    const sheet = page.locator('[role="dialog"]:has-text("Call Statistics")');
+    await expect(sheet).toBeVisible();
+    const text = (await sheet.innerText()).replace(/\s+/g, ' ');
+    for (const expected of [
+      '42 ms',
+      '7 ms',
+      '1.0% total · 3.8% recent',
+      '512 kbps',
+      'PCMU 8k (pt 0)',
+      'relay (TURN) → host (direct)',
+      'udp via tls · 44 ms',
+      '↑ 2.2 MB · ↓ 830 KB',
+      'reinvite_started (1/3) — test',
+      'call-abc-123',
+    ]) {
+      expect(text, expected).toContain(expected);
+    }
+
+    // The call card's strip has a copy button of the same name; this is the sheet's.
+    await sheet.locator('button[aria-label="Copy Call ID"]').click();
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('call-abc-123');
+
+    const restart = sheet.locator('button:has-text("Request ICE Restart")');
+    await expect(restart).toBeEnabled();
+    await setState(page, { recoveryState: 'recovering' });
+    await expect(sheet.locator('button:has-text("Recovery in progress")')).toBeDisabled();
+    await setState(page, { recoveryState: 'idle' });
+    await restart.click();
+    await expect.poll(() => drainLog(page)).toEqual([['iceRestart']]);
+    await expect(sheet).toHaveCount(0);
+  });
+
+  test('the sheet also opens from the More sheet and closes on Escape', async ({ page }) => {
+    await page.click('button[aria-label="More call controls"]');
+    await page.click('text=Call Statistics');
+    await expect(page.locator('text=Round-trip time')).toHaveCount(1);
+    await page.keyboard.press('Escape');
+    await expect(page.locator('text=Round-trip time')).toHaveCount(0);
+  });
+
+  test('the badge shows while media is disrupted even before connect', async ({ page }) => {
+    await setState(page, { callStatus: 'connecting', connectedAt: null, isMediaDisrupted: true });
+    await expect(page.locator('button[aria-label="Call statistics"]')).toHaveCount(1);
+    await setState(page, { isMediaDisrupted: false });
+    await expect(page.locator('button[aria-label="Call statistics"]')).toHaveCount(0);
+  });
+
+  test('Health lists the SDK issues behind a Degraded reading', async ({ page }) => {
+    await page.click('button[aria-label="Call statistics"]');
+    const sheet = page.locator('[role="dialog"]:has-text("Call Statistics")');
+    await expect(sheet).toContainText('Healthy');
+    await page.evaluate(() =>
+      window.__issues.next([{ type: 'high_jitter', severity: 'warning', value: 9.1, threshold: 8, timestamp: Date.now() }]),
+    );
+    await expect(sheet).toContainText('Degraded · 1 issue');
+    await expect(sheet).toContainText('Jitter spike · warning · 9 ms (threshold 8 ms)');
+    await page.evaluate(() =>
+      window.__issues.next([
+        { type: 'high_packet_loss', severity: 'critical', value: 12.34, threshold: 10, timestamp: Date.now() },
+        { type: 'no_inbound_audio', severity: 'critical', value: 2500, threshold: 2000, timestamp: Date.now() },
+      ]),
+    );
+    await expect(sheet).toContainText('Degraded · 2 issues');
+    await expect(sheet).toContainText('Packet loss · critical · 12.3% (threshold 10.0%)');
+    await expect(sheet).toContainText('No inbound audio · critical · 2500 ms (threshold 2000 ms)');
+    await page.evaluate(() => window.__issues.next([]));
+    await expect(sheet).toContainText('Healthy');
+  });
+
+  test("the SDK's no-inbound-video issue is ignored unless the far end sends video", async ({ page }) => {
+    // It only means something when the far end sends video (see
+    // relevantIssues() in the service).
+    const relevant = (remoteHasVideo: boolean) =>
+      evalInApp<string[]>(
+        page,
+        `s.remoteHasVideo = ${remoteHasVideo};
+         return s.relevantIssues([
+           { type: 'no_inbound_video', severity: 'warning', timestamp: 0 },
+           { type: 'high_rtt', severity: 'critical', timestamp: 0 },
+         ]).map((issue) => issue.type);`,
+      );
+    expect(await relevant(false)).toEqual(['high_rtt']);
+    expect(await relevant(true)).toEqual(['no_inbound_video', 'high_rtt']);
+  });
+});
+
+// The real remote meter (services/remoteAudioMeter.ts), fed through the
+// service's handleRemoteMedia() with a synthetic stream: a 0.5-amplitude sine
+// (RMS ~0.35) from the tone service's AudioContext, which Playwright's
+// --autoplay-policy=no-user-gesture-required lets run without a gesture.
+test.describe('remote audio meter', () => {
+  test('meters the stream routed to the remote sink and detaches on call end', async ({ page }) => {
+    await openDialer(page);
+    await setState(page, { isInCall: true, callStatus: 'connected', connectedAt: Date.now() - 5000, remoteNumber: '+15551234567' });
+    const bar = page.locator('.bg-accent.origin-left');
+    await expect(bar).toHaveCSS('transform', /matrix\(0,/);
+
+    await evalInApp(page, `
+      const { toneService } = await import('/src/services/tones.ts');
+      const ctx = toneService.getAudioContext();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      gain.gain.value = 0.5;
+      const dest = ctx.createMediaStreamDestination();
+      osc.connect(gain);
+      gain.connect(dest);
+      osc.start();
+      window.__remoteStream = dest.stream;
+      s.handleRemoteMedia(dest.stream);
+    `);
+    await expect(bar).toHaveCSS('transform', /matrix\(0\.[3-9]/);
+
+    // The peer-connection fallback delivers the same track in a new
+    // MediaStream wrapper; the tap must not be rebuilt for it.
+    const rebuilt = await evalInApp<boolean>(page, `
+      const before = s.remoteAudioMeter.source;
+      s.handleRemoteMedia(new MediaStream(window.__remoteStream.getAudioTracks()));
+      return s.remoteAudioMeter.source !== before;
+    `);
+    expect(rebuilt).toBe(false);
+
+    await evalInApp(page, `s.remoteAudioMeter.setStream(null);`);
+    await expect(bar).toHaveCSS('transform', /matrix\(0,/);
+  });
+});

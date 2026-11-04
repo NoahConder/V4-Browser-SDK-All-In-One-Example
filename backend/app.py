@@ -1,19 +1,12 @@
 import os
-from flask import Flask, jsonify, request, send_from_directory, abort
+from flask import Flask, jsonify, request
 from flask_cors import CORS
 from dotenv import load_dotenv
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 # Load environment variables
 load_dotenv()
-
-# Where the built React frontend lives (populated by the Docker build). When
-# present, this single service serves the SPA at "/" and the API under "/api".
-FRONTEND_DIST = os.getenv(
-    "FRONTEND_DIST",
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend_dist"),
-)
 
 # Configure logging
 logging.basicConfig(
@@ -22,45 +15,45 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Create Flask app. static_folder=None — we serve the SPA via an explicit
-# catch-all below so it can fall back to index.html for client-side routes.
-app = Flask(__name__, static_folder=None)
-app.config['SECRET_KEY'] = os.getenv('SECRET_KEY') or os.urandom(32).hex()
+# Create Flask app
+app = Flask(__name__)
 
-# Configure CORS
+# Configure CORS. No cookies are involved (the API key travels in a header),
+# so credentials support isn't needed.
 frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:5173')
-CORS(app, origins=[frontend_url], supports_credentials=True)
+CORS(app, origins=[frontend_url])
 
 # Import blueprints
 from api.auth import auth_bp
 from api.calls import calls_bp
+from api.swml import swml_bp
+from api.sip_credentials import sip_credentials_bp
+from api.subscribers import subscribers_bp
+from api.caller_ids import caller_ids_bp
 
 # Register blueprints
 app.register_blueprint(auth_bp, url_prefix='/api/auth')
 app.register_blueprint(calls_bp, url_prefix='/api/calls')
+app.register_blueprint(swml_bp, url_prefix='/api/swml')
+app.register_blueprint(sip_credentials_bp, url_prefix='/api/sip')
+app.register_blueprint(subscribers_bp, url_prefix='/api/subscribers')
+app.register_blueprint(caller_ids_bp, url_prefix='/api/caller-ids')
+
+# Request headers whose values must never reach the log.
+_SENSITIVE_HEADERS = {'x-api-key', 'authorization', 'cookie'}
 
 
-@app.route('/', defaults={'path': ''})
-@app.route('/<path:path>')
-def serve_frontend(path):
-    """Serve the built React SPA; fall back to index.html for client routes.
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
-    API paths are handled by the blueprints (more specific rules win); guard
-    anyway so a stray /api/* never gets the SPA shell.
-    """
-    if path.startswith('api/'):
-        abort(404)
-    candidate = os.path.join(FRONTEND_DIST, path)
-    if path and os.path.isfile(candidate):
-        return send_from_directory(FRONTEND_DIST, path)
-    index_html = os.path.join(FRONTEND_DIST, 'index.html')
-    if os.path.isfile(index_html):
-        return send_from_directory(FRONTEND_DIST, 'index.html')
-    # No build present (e.g. backend-only dev) — report status as JSON.
+
+@app.route('/')
+def index():
+    """Health check endpoint"""
     return jsonify({
         "status": "online",
         "service": "SignalWire Dialer Backend",
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": _now_iso(),
         "version": "1.0.0"
     })
 
@@ -69,19 +62,23 @@ def serve_frontend(path):
 def health_check():
     """Detailed health check"""
     try:
-        # Check if environment variables are set
+        # Check if environment variables are set. DIALER_API_KEY is reported
+        # separately: without it every /api route fails closed (503), which
+        # is the most common misconfiguration.
         config_status = all([
             os.getenv('SPACE_NAME'),
             os.getenv('PROJECT_ID'),
             os.getenv('AUTH_TOKEN')
         ])
+        api_key_configured = bool(os.getenv('DIALER_API_KEY'))
 
         return jsonify({
-            "status": "healthy" if config_status else "degraded",
+            "status": "healthy" if config_status and api_key_configured else "degraded",
             "checks": {
                 "server": True,
                 "config": config_status,
-                "timestamp": datetime.utcnow().isoformat()
+                "dialer_api_key": api_key_configured,
+                "timestamp": _now_iso()
             }
         }), 200 if config_status else 503
 
@@ -89,7 +86,7 @@ def health_check():
         logger.error(f"Health check failed: {str(e)}")
         return jsonify({
             "status": "unhealthy",
-            "error": str(e)
+            "error": "Health check failed"
         }), 503
 
 
@@ -114,9 +111,14 @@ def internal_error(error):
 
 @app.before_request
 def log_request_info():
-    """Log incoming requests"""
-    logger.debug(f"Headers: {dict(request.headers)}")
-    logger.debug(f"Body: {request.get_data()}")
+    """Log incoming requests at DEBUG, with secrets redacted. Bodies aren't
+    logged: the auth endpoints post tokens."""
+    if logger.isEnabledFor(logging.DEBUG):
+        headers = {
+            name: ('<redacted>' if name.lower() in _SENSITIVE_HEADERS else value)
+            for name, value in request.headers.items()
+        }
+        logger.debug(f"{request.method} {request.path} headers={headers} body_bytes={request.content_length or 0}")
 
 
 if __name__ == '__main__':
@@ -129,7 +131,7 @@ if __name__ == '__main__':
         logger.warning("Please copy .env.example to .env and configure your SignalWire credentials")
 
     # Run the Flask app
-    port = int(os.getenv('PORT', 5001))  # Changed to 5001 to avoid conflict
+    port = int(os.getenv('PORT', 5001))
     debug = os.getenv('FLASK_DEBUG', 'False').lower() == 'true'
 
     logger.info(f"Starting SignalWire Dialer Backend on port {port}")

@@ -1,16 +1,79 @@
 import React, { useRef, useState } from 'react';
-import { Phone, Delete } from 'lucide-react';
+import { Delete } from 'lucide-react';
 import { DialPadKey } from '../types';
+import { toneService } from '../services/tones';
+
+// Clicking a key shouldn't pull focus off the address input: the caret stays
+// put for typing, and Enter in the field still dials instead of re-pressing
+// the last key the mouse focused.
+const keepFocus = (e: React.MouseEvent) => e.preventDefault();
+
+interface LongPressOptions {
+  holdMs: number;
+  onTap: () => void;
+  onHold: () => void;
+  disabled?: boolean;
+}
+
+// Tap vs. hold on one key (Delete: delete / clear all; 0: '0' / '+').
+// Pointer (not mouse + touch) events: a tap fires touchend and then the
+// compatibility mousedown/mouseup, which would act twice.
+function useLongPress({ holdMs, onTap, onHold, disabled }: LongPressOptions) {
+  const [isHolding, setIsHolding] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fired = useRef(false);
+
+  const cancel = () => {
+    if (timer.current) {
+      clearTimeout(timer.current);
+      timer.current = null;
+    }
+    setIsHolding(false);
+  };
+
+  return {
+    isHolding,
+    handlers: {
+      onPointerDown: () => {
+        if (disabled) return;
+        fired.current = false;
+        timer.current = setTimeout(() => {
+          fired.current = true;
+          setIsHolding(true);
+          onHold();
+        }, holdMs);
+      },
+      onPointerUp: () => {
+        const wasHold = fired.current;
+        cancel();
+        fired.current = false;
+        if (!wasHold && !disabled) onTap();
+      },
+      onPointerLeave: cancel,
+      onPointerCancel: cancel,
+      // Keyboard activation of a focused key still types once.
+      onKeyDown: (e: React.KeyboardEvent) => {
+        if ((e.key === 'Enter' || e.key === ' ') && !disabled) {
+          e.preventDefault();
+          onTap();
+        }
+      },
+      onMouseDown: keepFocus,
+      onContextMenu: (e: React.MouseEvent) => e.preventDefault(),
+    },
+  };
+}
 
 interface DialPadProps {
   onKeyPress: (key: string) => void;
-  onCall: () => void;
-  onDelete: () => void;
-  onClearAll?: () => void; // Optional callback for clearing all
-  hasNumber: boolean;
+  // 'dial' is the idle dialer's pad: hold 0 for '+', and a Delete key that
+  // clears everything when held. 'dtmf' is the in-call pad: digits only --
+  // every digit has already been sent, so there is nothing to delete.
+  mode: 'dial' | 'dtmf';
+  onDelete?: () => void;
+  onClearAll?: () => void;
+  hasNumber?: boolean;
   disabled?: boolean;
-  hideText?: string; // Optional text to show instead of delete icon
-  callButtonText?: string; // Optional text to show on call button instead of phone icon
 }
 
 const dialPadKeys: DialPadKey[][] = [
@@ -36,182 +99,98 @@ const dialPadKeys: DialPadKey[][] = [
   ],
 ];
 
+// The 12-key pad (globals.css's keypad-grid / key-button), flat and sized by
+// its column, plus a Delete row in dial mode. Key tones come from the shared
+// tone service.
 const DialPad: React.FC<DialPadProps> = ({
   onKeyPress,
-  onCall,
+  mode,
   onDelete,
   onClearAll,
-  hasNumber,
+  hasNumber = false,
   disabled = false,
-  hideText,
-  callButtonText
 }) => {
-  const [isLongPressing, setIsLongPressing] = useState(false);
-  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const deleteButtonRef = useRef<HTMLButtonElement>(null);
+  const isDial = mode === 'dial';
+
   const handleKeyPress = (key: string) => {
     if (!disabled) {
       onKeyPress(key);
-      // Play DTMF tone here if needed
-      playDTMFTone(key);
+      toneService.playDtmf(key);
     }
   };
 
-  const handleDeleteMouseDown = () => {
-    // Start timer for long press (2 seconds)
-    longPressTimer.current = setTimeout(() => {
-      setIsLongPressing(true);
-      // Trigger clear all if callback provided
-      if (onClearAll) {
-        onClearAll();
-      } else {
-        // If no clear all callback, repeatedly delete
-        onDelete();
-      }
-      // Visual/haptic feedback could go here
-    }, 2000);
-  };
-
-  const handleDeleteMouseUp = () => {
-    // Clear the timer
-    if (longPressTimer.current) {
-      clearTimeout(longPressTimer.current);
-      longPressTimer.current = null;
-    }
-
-    // If it wasn't a long press, do a normal delete
-    if (!isLongPressing) {
-      onDelete();
-    }
-
-    setIsLongPressing(false);
-  };
-
-  const handleDeleteMouseLeave = () => {
-    // Cancel long press if mouse/finger leaves button
-    if (longPressTimer.current) {
-      clearTimeout(longPressTimer.current);
-      longPressTimer.current = null;
-    }
-    setIsLongPressing(false);
-  };
-
-  const playDTMFTone = (key: string) => {
-    // Simple tone generation using Web Audio API
-    const audioContext = new (window.AudioContext ||
-      (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext)();
-    const oscillator1 = audioContext.createOscillator();
-    const oscillator2 = audioContext.createOscillator();
-    const gainNode = audioContext.createGain();
-
-    // DTMF frequencies
-    const frequencies: { [key: string]: [number, number] } = {
-      '1': [697, 1209],
-      '2': [697, 1336],
-      '3': [697, 1477],
-      '4': [770, 1209],
-      '5': [770, 1336],
-      '6': [770, 1477],
-      '7': [852, 1209],
-      '8': [852, 1336],
-      '9': [852, 1477],
-      '*': [941, 1209],
-      '0': [941, 1336],
-      '#': [941, 1477],
-    };
-
-    if (frequencies[key]) {
-      oscillator1.frequency.value = frequencies[key][0];
-      oscillator2.frequency.value = frequencies[key][1];
-
-      oscillator1.connect(gainNode);
-      oscillator2.connect(gainNode);
-      gainNode.connect(audioContext.destination);
-
-      gainNode.gain.value = 0.1;
-
-      oscillator1.start();
-      oscillator2.start();
-
-      setTimeout(() => {
-        oscillator1.stop();
-        oscillator2.stop();
-        audioContext.close();
-      }, 200);
-    }
-  };
+  // Hold Delete 2 s to clear everything. Hold 0 to type '+' (idle dialer
+  // only -- there's no '+' in DTMF), as the key's label advertises.
+  const deleteHold = useLongPress({
+    holdMs: 2000,
+    disabled: !hasNumber,
+    onTap: () => onDelete?.(),
+    onHold: () => (onClearAll ? onClearAll() : onDelete?.()),
+  });
+  const zeroHold = useLongPress({
+    holdMs: 600,
+    disabled,
+    onTap: () => handleKeyPress('0'),
+    onHold: () => {
+      onKeyPress('+');
+      toneService.playDtmf('0');
+    },
+  });
+  const isClearing = deleteHold.isHolding;
 
   return (
-    <div className="flex justify-center items-center w-full px-4">
-      <div className="grid grid-cols-3 gap-3 sm:gap-4" style={{ maxWidth: '260px' }}>
-        {/* Number Keys */}
-        {dialPadKeys.map((row, rowIndex) => (
-          <React.Fragment key={rowIndex}>
-            {row.map((key) => (
-              <button
-                key={key.number}
-                className="dial-button bg-ios-gray-700 hover:bg-ios-gray-600"
-                onClick={() => handleKeyPress(key.number)}
-                disabled={disabled}
-              >
-                {key.special ? (
-                  // Special characters with different sizes and positioning
-                  <span className={`font-light leading-none ${
-                    key.number === '*'
-                      ? 'text-6xl sm:text-7xl relative top-[10px]'  // Asterisk lowered more for proper centering
-                      : 'text-3xl sm:text-4xl'  // Hash stays normal
-                  }`}>{key.number}</span>
-                ) : (
-                  <>
-                    <span className="dial-button-number">{key.number}</span>
-                    {key.letters && (
-                      <span className="dial-button-letters">
-                        {key.letters.trim() || '\u00A0'} {/* Non-breaking space for alignment */}
-                      </span>
-                    )}
-                  </>
-                )}
-              </button>
-            ))}
-          </React.Fragment>
-        ))}
+    <div className="keypad-grid mx-auto">
+      {dialPadKeys.map((row, rowIndex) => (
+        <React.Fragment key={rowIndex}>
+          {row.map((key) => (
+            <button
+              key={key.number}
+              className="key-button"
+              aria-label={key.number === '0' && isDial ? '0, hold for +' : undefined}
+              disabled={disabled}
+              {...(key.number === '0' && isDial
+                ? zeroHold.handlers
+                : { onClick: () => handleKeyPress(key.number), onMouseDown: keepFocus })}
+            >
+              {key.special ? (
+                <span
+                  className={`font-display font-medium leading-none tracking-tight ${
+                    key.number === '*' ? 'relative top-1.5 text-4xl' : 'text-2xl'
+                  }`}
+                >
+                  {key.number}
+                </span>
+              ) : (
+                <>
+                  <span className="dial-button-number">{key.number}</span>
+                  {key.letters && (
+                    <span className="dial-button-letters">
+                      {key.letters.trim() || '\u00A0'} {/* Non-breaking space for alignment */}
+                    </span>
+                  )}
+                </>
+              )}
+            </button>
+          ))}
+        </React.Fragment>
+      ))}
 
-        {/* Bottom Row: Empty, Call Button, Delete */}
-        <div className="dial-button invisible"></div>
-
+      {isDial && (
         <button
-          onClick={onCall}
-          disabled={disabled}
-          className="dial-button bg-ios-green hover:bg-green-600"
+          aria-label="Delete"
+          title="Delete; hold to clear"
+          disabled={!hasNumber}
+          {...deleteHold.handlers}
+          className={`col-span-3 flex h-11 items-center justify-center gap-2 rounded-lg border text-sm transition-colors disabled:opacity-40 ${
+            isClearing
+              ? 'border-hangup/50 bg-hangup/80 text-on-hangup'
+              : 'border-edge-strong bg-surface text-muted hover:bg-surface-hover hover:text-ink'
+          }`}
         >
-          {callButtonText ? (
-            <span className="text-lg font-normal">{callButtonText}</span>
-          ) : (
-            <Phone size={32} fill="white" />
-          )}
+          <Delete size={18} className={isClearing ? 'animate-pulse' : ''} />
+          <span>{isClearing ? 'Clearing…' : 'Delete'}</span>
         </button>
-
-        {hasNumber ? (
-          <button
-            ref={deleteButtonRef}
-            onMouseDown={handleDeleteMouseDown}
-            onMouseUp={handleDeleteMouseUp}
-            onMouseLeave={handleDeleteMouseLeave}
-            onTouchStart={handleDeleteMouseDown}
-            onTouchEnd={handleDeleteMouseUp}
-            onTouchCancel={handleDeleteMouseLeave}
-            className={`dial-button hover:bg-ios-gray-600 ${isLongPressing ? 'bg-red-600' : ''}`}
-          >
-            {hideText ? (
-              <span className="text-sm text-gray-300">{hideText}</span>
-            ) : (
-              <Delete size={24} className={isLongPressing ? 'text-white animate-pulse' : 'text-gray-300'} />
-            )}
-          </button>
-        ) : (
-          <div className="dial-button invisible"></div>
-        )}
-      </div>
+      )}
     </div>
   );
 };

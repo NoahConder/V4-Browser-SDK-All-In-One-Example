@@ -1,55 +1,102 @@
+import { log } from '../utils/log';
+
+// Standard DTMF pairs (low, high) in Hz.
+const DTMF_FREQUENCIES: Record<string, [number, number]> = {
+  '1': [697, 1209], '2': [697, 1336], '3': [697, 1477],
+  '4': [770, 1209], '5': [770, 1336], '6': [770, 1477],
+  '7': [852, 1209], '8': [852, 1336], '9': [852, 1477],
+  '*': [941, 1209], '0': [941, 1336], '#': [941, 1477],
+};
+
 class ToneService {
   private audioContext: AudioContext | null = null;
   private incomingCallInterval: ReturnType<typeof setInterval> | null = null;
   private currentRingtoneOscillators: OscillatorNode[] = [];
 
-  private getAudioContext(): AudioContext {
+  // The page's one AudioContext: the tones, DTMF feedback and the remote level
+  // meter (services/remoteAudioMeter.ts) share it. Created on first use and
+  // asked to resume; outside a user gesture that only completes once the page
+  // has had one (see primeOnFirstGesture).
+  getAudioContext(): AudioContext {
     if (!this.audioContext) {
       this.audioContext = new (window.AudioContext ||
         (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext)();
-      console.log('🔊 AudioContext created, state:', this.audioContext.state);
     }
 
     // Resume context if it's suspended (browser autoplay policy)
     if (this.audioContext.state === 'suspended') {
-      console.log('🔊 AudioContext is suspended, attempting to resume...');
-      this.audioContext.resume().then(() => {
-        console.log('🔊 AudioContext resumed successfully');
-      }).catch(err => {
-        console.error('🔊 Failed to resume AudioContext:', err);
+      this.audioContext.resume().catch(err => {
+        log.error('Failed to resume AudioContext:', err);
       });
     }
 
     return this.audioContext;
   }
 
+  // Browsers keep an AudioContext suspended until the page has had a user
+  // gesture, so a tab nobody has tapped yet would ring silently (and the
+  // resume() in getAudioContext() can't help). Create and resume the context
+  // from the first pointer/keyboard gesture on the page. Called once from
+  // App.tsx.
+  primeOnFirstGesture() {
+    const prime = () => {
+      void this.resume();
+      window.removeEventListener('pointerdown', prime);
+      window.removeEventListener('keydown', prime);
+    };
+    window.addEventListener('pointerdown', prime);
+    window.addEventListener('keydown', prime);
+  }
+
+  // Resume the shared AudioContext; only succeeds inside a user gesture.
+  async resume(): Promise<void> {
+    const context = this.getAudioContext();
+    if (context.state === 'suspended') {
+      await context.resume();
+    }
+  }
+
+  // Short dual-tone feedback for a dial-pad key, on the shared context (one
+  // AudioContext per keypress was wasteful and runs into the browser's
+  // context limit on long numbers).
+  playDtmf(key: string) {
+    const frequencies = DTMF_FREQUENCIES[key];
+    if (!frequencies) return;
+    const context = this.getAudioContext();
+    const gainNode = context.createGain();
+    gainNode.gain.value = 0.1;
+    gainNode.connect(context.destination);
+    const now = context.currentTime;
+    for (const freq of frequencies) {
+      const oscillator = context.createOscillator();
+      oscillator.frequency.value = freq;
+      oscillator.connect(gainNode);
+      oscillator.start(now);
+      oscillator.stop(now + 0.2);
+    }
+  }
+
   // Play a repeating whimsical ringtone for incoming calls
   playIncomingCallTone() {
-    console.log('🎵 playIncomingCallTone() called');
 
     // Clear any existing ringtone
     this.stopIncomingCallTone();
 
     const context = this.getAudioContext();
-    console.log('🎵 AudioContext state:', context.state);
 
     // Play initial ring immediately
     this.playWhimsicalRing(context);
 
     // Repeat the ring pattern every 2 seconds
     this.incomingCallInterval = setInterval(() => {
-      console.log('🎵 Playing repeat ring...');
       this.playWhimsicalRing(context);
     }, 2000);
 
-    console.log('🎵 Ringtone started, interval ID:', this.incomingCallInterval);
   }
 
   // Stop the incoming call ringtone
   stopIncomingCallTone() {
-    console.log('🎵 stopIncomingCallTone() called');
     if (this.incomingCallInterval) {
-      console.log('🎵 Clearing interval:', this.incomingCallInterval);
       clearInterval(this.incomingCallInterval);
       this.incomingCallInterval = null;
     }
@@ -58,7 +105,7 @@ class ToneService {
     this.currentRingtoneOscillators.forEach(osc => {
       try {
         osc.stop();
-      } catch (e) {
+      } catch {
         // Oscillator might already be stopped
       }
     });
@@ -66,7 +113,6 @@ class ToneService {
   }
 
   private playWhimsicalRing(context: AudioContext) {
-    console.log('🎶 playWhimsicalRing() called, context state:', context.state);
     const currentTime = context.currentTime;
 
     // Create a more whimsical pattern with ascending notes
@@ -101,25 +147,16 @@ class ToneService {
       oscillator.start(currentTime + note.time);
       oscillator.stop(currentTime + note.time + note.duration);
 
-      // Keep track of oscillators so we can stop them if needed
+      // Keep track of oscillators so stopIncomingCallTone() can cut them
+      // short; each removes itself once it has finished on its own.
       this.currentRingtoneOscillators.push(oscillator);
+      oscillator.onended = () => {
+        this.currentRingtoneOscillators = this.currentRingtoneOscillators.filter((o) => o !== oscillator);
+      };
     });
-
-    // Clean up old oscillators after they finish
-    setTimeout(() => {
-      this.currentRingtoneOscillators = this.currentRingtoneOscillators.filter(() => {
-        try {
-          // If the oscillator is still valid, keep it
-          return true;
-        } catch (e) {
-          // If it throws, it's already stopped, remove it
-          return false;
-        }
-      });
-    }, 1000);
   }
 
-  // Play a gentle, whimsical disconnect tone when remote party hangs up
+  // Play a short disconnect tone when a call ends
   playDisconnectTone() {
     const context = this.getAudioContext();
     const currentTime = context.currentTime;

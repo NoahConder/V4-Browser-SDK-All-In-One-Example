@@ -3,11 +3,30 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/phone.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <!-- Pinch-zoom stays enabled (accessibility); iOS ignores user-scalable
+         anyway. viewport-fit=cover plus the pt-safe/pb-safe utilities handle
+         the notch and home indicator. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <!-- Canvas colors, one per scheme; services/theme.ts rewrites
+         them when the Appearance setting overrides the system. -->
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#fafbfc" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0e0e18" />
+    <meta name="color-scheme" content="light dark" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
-    <title>SignalWire Dialer</title>
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <!-- Type: Lexend for text, Instrument Sans for display,
+         JetBrains Mono for addresses and figures. System fonts fill in offline
+         (see --font-* in globals.css). -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@500;600;700&family=JetBrains+Mono:wght@400;500&family=Lexend:wght@400;500;600&display=swap"
+    />
+    <title>SignalWire Browser SDK Dialer</title>
   </head>
   <body>
     <div id="root"></div>

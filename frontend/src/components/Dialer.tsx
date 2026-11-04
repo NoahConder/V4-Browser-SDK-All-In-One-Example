@@ -1,74 +1,200 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { Activity, AtSign, Camera, CameraOff, ChevronDown, ChevronUp, History, List, Phone, PhoneOutgoing, Slash, SlidersHorizontal, User, Video, VideoOff, X } from 'lucide-react';
 import DialPad from './DialPad';
+import AppBar from './AppBar';
 import CallScreen from './CallScreen';
 import IncomingCall from './IncomingCall';
+import DialableResourcesPanel, { type ResourceTab } from './DialableResourcesPanel';
+import DevicePicker from './DevicePicker';
+import DiagnosticsPanel from './DiagnosticsPanel';
+import SubscriberPicker from './SubscriberPicker';
+import ErrorBanner from './ErrorBanner';
+import AddressSuggestions from './AddressSuggestions';
+import CallerIdSheet from './CallerIdSheet';
+import { useAddressSuggestions, type AddressSuggestion } from '../hooks/useAddressSuggestions';
 import { useCallStore } from '../hooks/useCallStore';
+import { useCallerIdStore } from '../hooks/useCallerIdStore';
+import { SHOW_CAMERA_OFF_JOIN, useDialFieldStore } from '../hooks/useDialFieldStore';
+import { useRecentsStore } from '../hooks/useRecentsStore';
 import { useSignalWire } from '../hooks/useSignalWire';
+import { useWorkbench } from '../hooks/useWorkbench';
+import { type DialAddressType, countDigits, formatPhoneNumber, getDialAddressType, isDialAddress } from '../utils/address';
+import { log } from '../utils/log';
+
+type HeaderPanel = 'devices' | 'diagnostics' | 'resources' | 'subscriber';
+
+// `label` is the accessible name and tooltip; `short` is the word shown under
+// the icon where there's room (the `desk` screen -- tablets and desktop). On
+// phones the icons stand alone, which is why they need to be guessable.
+const HEADER_PANEL_BUTTONS: Array<{ panel: HeaderPanel; label: string; short: string; icon: typeof Phone }> = [
+  { panel: 'devices', label: 'Audio & Video Devices', short: 'Devices', icon: SlidersHorizontal },
+  { panel: 'diagnostics', label: 'Diagnostics', short: 'Diagnostics', icon: Activity },
+  { panel: 'resources', label: 'Dialable Resources', short: 'Resources', icon: List },
+  { panel: 'subscriber', label: 'Subscriber', short: 'Subscriber', icon: User },
+];
+
+const DIAL_ADDRESS_META: Record<DialAddressType, { icon: typeof Phone; label: string; badgeClass: string }> = {
+  phone: { icon: Phone, label: 'Phone number', badgeClass: 'bg-surface-2 text-muted' },
+  sip: { icon: AtSign, label: 'SIP address', badgeClass: 'bg-accent-soft text-accent-text' },
+  fabric: { icon: Slash, label: 'Fabric address', badgeClass: 'bg-grass-soft text-grass-text' },
+};
+
+// iOS-style auto-shrink: the largest of these sizes at which the value (or the
+// placeholder, when empty) fits the input's actual width. Measured rather than
+// guessed from the length, so a phone number stays large on a wide screen yet
+// still fits a 320px one; SWML/SIP resource addresses (full URLs with a
+// `?channel=...` query string) bottom out at the smallest size and scroll.
+const ADDRESS_FONT_SIZES_PX = [24, 20, 18, 16, 14, 12];
+
+let measureContext: CanvasRenderingContext2D | null = null;
+
+// Desktop only: the keypad is folded away by default (a tester types or picks
+// a destination; the pad is mostly for DTMF once in a call) and the choice
+// persists. Phones always show it.
+const KEYPAD_PREF_KEY = 'dialer_keypad';
+
+const loadKeypadPref = (): boolean => {
+  try {
+    return localStorage.getItem(KEYPAD_PREF_KEY) === '1';
+  } catch {
+    return false;
+  }
+};
+
+const fitAddressFontSize = (input: HTMLInputElement, text: string): number => {
+  measureContext ??= document.createElement('canvas').getContext('2d');
+  const style = getComputedStyle(input);
+  const available = input.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+  if (!measureContext || available <= 0) return ADDRESS_FONT_SIZES_PX[0];
+  for (const size of ADDRESS_FONT_SIZES_PX) {
+    measureContext.font = `${style.fontWeight} ${size}px ${style.fontFamily}`;
+    if (measureContext.measureText(text).width <= available) return size;
+  }
+  return ADDRESS_FONT_SIZES_PX[ADDRESS_FONT_SIZES_PX.length - 1];
+};
 
 const Dialer: React.FC = () => {
-  const [phoneNumber, setPhoneNumber] = useState('');
+  // The field's value, video choice and picked label live in a store so the
+  // workbench's Destinations pane -- a sibling, not a child -- can fill them
+  // through the same selectAddress path (see useDialFieldStore).
+  const phoneNumber = useDialFieldStore((s) => s.phoneNumber);
+  const wantsVideo = useDialFieldStore((s) => s.wantsVideo);
+  const cameraOff = useDialFieldStore((s) => s.cameraOff);
+  // What the next call obeys: the toggle only counts while it's shown.
+  const joinCameraOff = SHOW_CAMERA_OFF_JOIN && wantsVideo && cameraOff;
+  const picked = useDialFieldStore((s) => s.picked);
+  const setPhoneNumber = useDialFieldStore((s) => s.setPhoneNumber);
+  const appendKey = useDialFieldStore((s) => s.appendKey);
+  const deleteLast = useDialFieldStore((s) => s.deleteLast);
+  const clearField = useDialFieldStore((s) => s.clear);
+  const toggleWantsVideo = useDialFieldStore((s) => s.toggleWantsVideo);
+  const toggleCameraOff = useDialFieldStore((s) => s.toggleCameraOff);
+  const selectDestination = useDialFieldStore((s) => s.selectAddress);
+  // Non-null inside the desktop workbench (Workbench.tsx): the header panels'
+  // contents live in its side panes, so the icons and overlays aren't rendered.
+  const workbench = useWorkbench();
   const [isCallingInProgress, setIsCallingInProgress] = useState(false);
-  const [lastDialedNumber, setLastDialedNumber] = useState(() => {
-    // Load last dialed number from localStorage
-    return localStorage.getItem('lastDialedNumber') || '';
-  });
-
-  const {
-    isInCall,
-    isIncoming,
-    remoteNumber,
-    isMuted,
-    isSpeakerOn,
-    setCallState,
-    resetCallState,
-  } = useCallStore();
-
-  const { makeCall, endCall, answerCall, rejectCall, toggleMute, toggleSpeaker } = useSignalWire();
-
-  // Save last dialed number to localStorage whenever it changes
-  useEffect(() => {
-    if (lastDialedNumber) {
-      localStorage.setItem('lastDialedNumber', lastDialedNumber);
-    }
-  }, [lastDialedNumber]);
-
-  const handleKeyInput = (key: string) => {
-    if (phoneNumber.length < 20) {  // Increased to support international numbers
-      setPhoneNumber((prev) => prev + key);
-    }
+  const [isAddressInputFocused, setIsAddressInputFocused] = useState(false);
+  // The caller ID for calls to phone numbers (useCallerIdStore; null = the
+  // server chooses), its name for the button, and whether its sheet is open.
+  const callerId = useCallerIdStore((s) => s.callerId);
+  const callerName = useCallerIdStore((s) => s.callerName);
+  const [isCallerIdOpen, setIsCallerIdOpen] = useState(false);
+  const [showKeypad, setShowKeypad] = useState(loadKeypadPref);
+  const toggleKeypad = () => {
+    setShowKeypad((prev) => {
+      try {
+        localStorage.setItem(KEYPAD_PREF_KEY, prev ? '0' : '1');
+      } catch {
+        // Storage unavailable: the choice just doesn't persist.
+      }
+      return !prev;
+    });
   };
+  // Suggestions under the field while it has focus and at least two characters
+  // (Recents, then the loaded Directory). Picking one fills the field and
+  // dismisses the list for that exact value; Escape dismisses it too, until
+  // the value changes again. Up/Down move the highlight; Enter on a highlighted
+  // row picks it instead of dialing.
+  const [suggestionsDismissedFor, setSuggestionsDismissedFor] = useState<string | null>(null);
+  const [highlightedSuggestion, setHighlightedSuggestion] = useState(-1);
+  const suggestions = useAddressSuggestions(phoneNumber, isAddressInputFocused && suggestionsDismissedFor !== phoneNumber);
+  const showSuggestions = suggestions.length > 0;
+  useEffect(() => setHighlightedSuggestion(-1), [phoneNumber]);
+  // Only one header panel (device picker, diagnostics, dialable resources, subscriber
+  // picker) may be open at a time -- opening any of them covers the center dial pad,
+  // so keep them mutually exclusive instead of letting all four stack.
+  const [activeHeaderPanel, setActiveHeaderPanel] = useState<HeaderPanel | null>(null);
+  const isDevicePickerOpen = activeHeaderPanel === 'devices';
+  const isDiagnosticsPanelOpen = activeHeaderPanel === 'diagnostics';
+  const isResourcesPanelOpen = activeHeaderPanel === 'resources';
+  const isSubscriberPanelOpen = activeHeaderPanel === 'subscriber';
+  const toggleHeaderPanel = (panel: HeaderPanel) =>
+    setActiveHeaderPanel((prev) => (prev === panel ? null : panel));
+  // The resources panel's tab is owned here so other controls (the History
+  // button) can open a specific one; it also survives closing and reopening
+  // the panel.
+  const [resourcesTab, setResourcesTab] = useState<ResourceTab>('directory');
+  const addressInputRef = useRef<HTMLInputElement>(null);
+  const [addressFontSize, setAddressFontSize] = useState(ADDRESS_FONT_SIZES_PX[0]);
+  // The picked label counts only while the field still holds that destination
+  // (editing it by hand makes the label stale). Passed to makeCall for Recents.
+  const pickedLabel = picked && picked.destination === phoneNumber ? picked.label : undefined;
 
-  const handleDelete = () => {
-    setPhoneNumber((prev) => prev.slice(0, -1));
-  };
+  // Selector-based (not `useCallStore()`) so this component only re-renders
+  // when a field it actually reads changes -- not on every call-quality tick
+  // (qualityLevel/qualityScore/networkIssueCount update ~1/sec during a call
+  // via signalwire.ts's qualitySub). Matches CallScreen.tsx's pattern.
+  const isInCall = useCallStore((s) => s.isInCall);
+  const isIncoming = useCallStore((s) => s.isIncoming);
+  const remoteNumber = useCallStore((s) => s.remoteNumber);
+  const isMuted = useCallStore((s) => s.isMuted);
+  const isSpeakerOn = useCallStore((s) => s.isSpeakerOn);
+  const isVideoCall = useCallStore((s) => s.isVideoCall);
+  const isCameraOn = useCallStore((s) => s.isCameraOn);
+  const remoteHasVideo = useCallStore((s) => s.remoteHasVideo);
+  const callError = useCallStore((s) => s.callError);
+  const clientNotice = useCallStore((s) => s.clientNotice);
+  const pendingDialClear = useCallStore((s) => s.pendingDialClear);
+  const setCallState = useCallStore((s) => s.setCallState);
+  const resetCallState = useCallStore((s) => s.resetCallState);
 
-  const handleClearAll = () => {
-    setPhoneNumber('');
-  };
+  const { makeCall, endCall, answerCall, rejectCall, toggleMute, toggleCamera, toggleSpeaker } = useSignalWire();
+
+  const handleKeyInput = (key: string) => appendKey(key);
+  const handleDelete = () => deleteLast();
+  const handleClearAll = () => clearField();
 
   const handleCall = async () => {
-    console.log('📢 handleCall() triggered');
-    console.log('Current phoneNumber:', phoneNumber);
-    console.log('Last dialed number:', lastDialedNumber);
+    log.debug('handleCall() triggered');
+    log.debug('Current phoneNumber:', phoneNumber);
 
     // Prevent multiple simultaneous calls
     if (isCallingInProgress) {
-      console.log('⚠️ Call already in progress, ignoring duplicate request');
+      log.debug('Call already in progress, ignoring duplicate request');
       return;
     }
 
-    // If no number is entered but we have a last dialed number, just populate it
-    if (!phoneNumber && lastDialedNumber) {
-      console.log('🔄 Populating with last dialed number:', lastDialedNumber);
-      setPhoneNumber(lastDialedNumber);
-      return; // Don't dial, just populate
+    // Empty field + Call, like iOS: fill in the last outbound destination
+    // (and whether it was a video call) rather than dialing.
+    if (!phoneNumber) {
+      const lastOutbound = useRecentsStore.getState().entries.find((entry) => entry.direction === 'outbound');
+      if (lastOutbound) {
+        log.debug('Populating with last dialed destination:', lastOutbound.destination);
+        selectDestination(lastOutbound.destination, lastOutbound.video, lastOutbound.label);
+      }
+      return;
     }
 
-    // If a number is entered, dial it
-    if (phoneNumber && phoneNumber.length >= 7) {
-      console.log('📞 Dialing:', phoneNumber);
-      setLastDialedNumber(phoneNumber);
+    // If a number is entered, dial it. SIP URIs and Fabric addresses can be
+    // shorter than a phone number, so only phone-number-looking input needs
+    // the 7-digit sanity check (digits only -- "555-1234" has 7).
+    if (phoneNumber && (isDialAddress(phoneNumber) || countDigits(phoneNumber) >= 7)) {
+      log.debug('Dialing:', phoneNumber);
       setIsCallingInProgress(true);
+      // The caller ID applies to phone numbers only; the service drops it
+      // for anything else too (belt and braces, like toggleWantsVideo).
+      const from = getDialAddressType(phoneNumber) === 'phone' && callerId ? callerId : undefined;
 
       // Immediately set the call state to show the call screen
       // This happens BEFORE the actual call is initiated
@@ -80,13 +206,20 @@ const Dialer: React.FC = () => {
         callStatus: 'connecting',
         isMuted: false,
         isSpeakerOn: false,
+        // wantsVideo is already what the field allows: a Fabric address's
+        // channel, never for a phone number (useDialFieldStore).
+        // Camera off still makes it a video call (the far end's video shows);
+        // only the local camera waits for the Camera button.
+        isVideoCall: wantsVideo,
+        isCameraOn: wantsVideo && !joinCameraOff,
+        outboundCallerId: from ?? null,
       });
 
       try {
-        await makeCall(phoneNumber);
-        console.log('✅ makeCall completed');
+        await makeCall(phoneNumber, wantsVideo, pickedLabel, from, joinCameraOff);
+        log.debug('makeCall completed');
       } catch (error) {
-        console.error('❌ makeCall failed:', error);
+        log.error('makeCall failed:', error);
         // Reset state if call fails
         resetCallState();
       } finally {
@@ -94,104 +227,93 @@ const Dialer: React.FC = () => {
         setIsCallingInProgress(false);
       }
     } else {
-      console.log('⚠️ Number too short:', phoneNumber?.length || 0, 'digits');
+      log.debug('Number too short:', countDigits(phoneNumber), 'digits');
     }
   };
 
   const handleEndCall = async () => {
-    console.log('🔴 handleEndCall called');
-    console.log('State before ending - isInCall:', isInCall, 'isIncoming:', isIncoming);
-
     await endCall();
-
-    // Reset calling flag when call ends
+    // For an outbound call the hook sets pendingDialClear; the effect below
+    // clears the field. The flag is reset here too in case the dial was
+    // still in flight (endCall then resolves without a call to tear down).
     setIsCallingInProgress(false);
-
-    // Clear the phone number for outgoing calls
-    // (callDirection will be 'outbound' for calls we initiated)
-    const { callDirection } = useCallStore.getState();
-    if (callDirection === 'outbound') {
-      setPhoneNumber('');
-    }
-
-    console.log('State after ending - isInCall:', useCallStore.getState().isInCall, 'isIncoming:', useCallStore.getState().isIncoming);
   };
 
-  // Handle clearing number when outbound call ends (remote hangup)
+  // An outbound call ended (hung up here or by the far end): clear the field.
   useEffect(() => {
-    const handleClearNumber = () => {
-      console.log('🗑️ Clearing dialed number after outbound call ended');
-      setPhoneNumber('');
-      setIsCallingInProgress(false); // Reset calling flag
-    };
+    if (!pendingDialClear) return;
+    clearField();
+    setIsCallingInProgress(false);
+    setCallState({ pendingDialClear: false });
+  }, [pendingDialClear, setCallState, clearField]);
 
-    window.addEventListener('clearDialedNumber', handleClearNumber);
-    return () => window.removeEventListener('clearDialedNumber', handleClearNumber);
-  }, []);
+  const addressInputValue = isAddressInputFocused ? phoneNumber : formatPhoneNumber(phoneNumber);
+  const isDialerShown = !isInCall && !isIncoming;
 
-  // Handle keyboard input
-  useEffect(() => {
-    const handleKeyboardInput = (e: KeyboardEvent) => {
-      // Don't handle keyboard input if in a call
-      if (isInCall || isIncoming) return;
-
-      // Handle number keys (0-9)
-      if (e.key >= '0' && e.key <= '9') {
-        handleKeyInput(e.key);
-      }
-      // Handle special characters
-      else if (e.key === '*' || e.key === '#' || e.key === '+') {
-        handleKeyInput(e.key);
-      }
-      // Handle backspace/delete
-      else if (e.key === 'Backspace' || e.key === 'Delete') {
-        handleDelete();
-      }
-      // Handle Enter to make a call (or redial if no number entered)
-      else if (e.key === 'Enter') {
-        handleCall();
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyboardInput);
-    return () => window.removeEventListener('keydown', handleKeyboardInput);
-    // Re-bind only when the values the handlers gate on change. handleCall/
-    // handleKeyInput are recreated every render, so listing them would re-attach
-    // the listener on every render with no behavioral benefit.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phoneNumber, isInCall, isIncoming]);
-
-  const formatPhoneNumber = (number: string): string => {
-    // If number starts with +, keep it as international
-    if (number.startsWith('+')) {
-      return number;
-    }
-
-    // Remove all non-digit characters except + at the beginning
-    const cleaned = number.replace(/[^\d+]/g, '').replace(/\+(?!^)/g, '');
-
-    // For numbers with only digits
-    const digitsOnly = cleaned.replace(/^\+/, '');
-
-    if (digitsOnly.length === 10) {
-      return `(${digitsOnly.slice(0, 3)}) ${digitsOnly.slice(3, 6)}-${digitsOnly.slice(6)}`;
-    } else if (digitsOnly.length === 11 && digitsOnly[0] === '1') {
-      return `+1 (${digitsOnly.slice(1, 4)}) ${digitsOnly.slice(4, 7)}-${digitsOnly.slice(7)}`;
-    }
-
-    // Return as-is for other formats (including * and #)
-    return number;
+  // A row picked from the resources or subscriber panel: fill the field, sync
+  // the video toggle to the channel that was chosen, remember the label for
+  // Recents, close the panel. Doesn't auto-dial.
+  const selectAddress = (path: string, video: boolean, label?: string) => {
+    selectDestination(path, video, label);
+    setActiveHeaderPanel(null);
   };
 
-  // Debug current state
-  console.log('🎨 Dialer render - isInCall:', isInCall, 'isIncoming:', isIncoming);
+  const pickSuggestion = (suggestion: AddressSuggestion) => {
+    selectDestination(suggestion.destination, suggestion.video, suggestion.label);
+    setSuggestionsDismissedFor(suggestion.destination);
+    setHighlightedSuggestion(-1);
+  };
+
+  // Keys in the address field. While the suggestion list is open, Up/Down
+  // move the highlight, Enter picks the highlighted row and Escape closes the
+  // list. Otherwise Enter places the call, like submitting the field. Defined
+  // per render, so it always sees the current value, video toggle and label.
+  const handleAddressKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (showSuggestions) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setHighlightedSuggestion((index) => (index + 1) % suggestions.length);
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setHighlightedSuggestion((index) => (index <= 0 ? suggestions.length - 1 : index - 1));
+        return;
+      }
+      if (e.key === 'Enter' && highlightedSuggestion >= 0) {
+        e.preventDefault();
+        pickSuggestion(suggestions[highlightedSuggestion]);
+        return;
+      }
+      if (e.key === 'Escape') {
+        setSuggestionsDismissedFor(phoneNumber);
+        return;
+      }
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleCall();
+    }
+  };
+
+  // Re-fit on every value change and whenever the input's width changes
+  // (rotation, an error banner, the clear button appearing).
+  useLayoutEffect(() => {
+    const input = addressInputRef.current;
+    if (!input) return;
+    const fit = () => setAddressFontSize(fitAddressFontSize(input, input.value || input.placeholder));
+    fit();
+    const observer = new ResizeObserver(fit);
+    observer.observe(input);
+    return () => observer.disconnect();
+  }, [addressInputValue, isDialerShown]);
 
   // Show incoming call modal
   if (isIncoming && !isInCall) {
-    console.log('📱 Showing IncomingCall screen');
     return (
       <IncomingCall
-        phoneNumber={remoteNumber}
+        phoneNumber={formatPhoneNumber(remoteNumber)}
+        isVideoCall={isVideoCall}
         onAnswer={answerCall}
         onReject={rejectCall}
       />
@@ -200,58 +322,352 @@ const Dialer: React.FC = () => {
 
   // Show active call screen
   if (isInCall) {
-    console.log('📞 Showing CallScreen');
     return (
       <CallScreen
-        phoneNumber={remoteNumber || phoneNumber}
+        phoneNumber={formatPhoneNumber(remoteNumber || phoneNumber)}
         onEndCall={handleEndCall}
         isMuted={isMuted}
         isSpeakerOn={isSpeakerOn}
+        isVideoCall={isVideoCall}
+        isCameraOn={isCameraOn}
+        remoteHasVideo={remoteHasVideo}
         onToggleMute={toggleMute}
         onToggleSpeaker={toggleSpeaker}
+        onToggleCamera={toggleCamera}
       />
     );
   }
 
-  console.log('📱 Showing main Dialer');
+  const addressType = getDialAddressType(phoneNumber);
+  const addressMeta = DIAL_ADDRESS_META[addressType];
+  const AddressIcon = addressMeta.icon;
+  // Phone numbers can't do video: the store keeps wantsVideo false and the
+  // toggle is disabled. (An empty field isn't a phone number yet.)
+  const isPhone = addressType === 'phone' && phoneNumber !== '';
+  // The caller ID is the mirror image: it applies to phone numbers only, so a
+  // SIP URI or Fabric address in the field disables it (an empty field keeps
+  // it live -- the choice can be made before typing).
+  const isNonPhoneAddress = phoneNumber !== '' && addressType !== 'phone';
+  const callerIdLabel = callerId ? `Caller ID: ${formatPhoneNumber(callerId)}` : 'Caller ID: default';
+  // A Fabric address's badge says which channel the field carries.
+  const addressLabel =
+    addressType === 'fabric' ? `${addressMeta.label} · ${wantsVideo ? 'video' : 'audio'}` : addressMeta.label;
 
   // Show dialer
   return (
-    <div className="flex flex-col h-screen bg-black">
-      {/* Status Bar */}
-      <div className="relative flex items-center justify-between px-6 py-2 text-sm">
-        <span className="text-ios-green">●</span>
-        <span className="absolute left-1/2 transform -translate-x-1/2 text-gray-400">SignalWire</span>
-        <span className="text-gray-400">{new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+    <div className={`app-shell relative flex flex-col ${workbench ? 'h-full min-h-0' : 'h-dvh'}`}>
+      {/* Top bar + header panels. z-30 so the panels (positioned absolutely
+          just below the bar) overlay the dial pad instead of pushing it down.
+          Inside the workbench the bar is the workbench's own (Workbench.tsx),
+          above all three panes, so the call stage renders none. */}
+      <div className="relative z-30">
+        {!workbench && (
+        <AppBar onIdentityClick={() => toggleHeaderPanel('subscriber')}>
+          {HEADER_PANEL_BUTTONS.map(({ panel, label, short, icon: Icon }) => {
+            const isOpen = activeHeaderPanel === panel;
+            return (
+              <button
+                key={panel}
+                type="button"
+                onClick={() => toggleHeaderPanel(panel)}
+                aria-label={label}
+                title={label}
+                aria-pressed={isOpen}
+                className={`flex h-10 w-10 flex-col items-center justify-center gap-0.5 rounded-lg transition-colors hover:bg-surface-hover hover:text-ink desk:h-12 desk:w-16 ${
+                  isOpen ? 'bg-accent-soft text-accent-text' : 'text-muted'
+                }`}
+              >
+                <Icon size={18} />
+                <span aria-hidden className="hidden text-[10px] leading-none desk:block">
+                  {short}
+                </span>
+              </button>
+            );
+          })}
+        </AppBar>
+        )}
+
+        {!workbench && (
+          <div className="absolute inset-x-0 top-full">
+            {/* Dims the dial pad behind an open panel; tap outside to close. -z-10
+                keeps it under the status bar (inside this z-30 layer) so the header
+                icons stay tappable for switching panels. */}
+            {activeHeaderPanel && (
+              <div className="fixed inset-0 -z-10 bg-scrim" onClick={() => setActiveHeaderPanel(null)} />
+            )}
+
+            <SubscriberPicker
+              isOpen={isSubscriberPanelOpen}
+              onClose={() => setActiveHeaderPanel(null)}
+              onSelectAddress={selectAddress}
+            />
+
+            <DialableResourcesPanel
+              isOpen={isResourcesPanelOpen}
+              activeTab={resourcesTab}
+              onTabChange={setResourcesTab}
+              onClose={() => setActiveHeaderPanel(null)}
+              onSelectAddress={selectAddress}
+            />
+
+            <DevicePicker isOpen={isDevicePickerOpen} onClose={() => setActiveHeaderPanel(null)} />
+
+            <DiagnosticsPanel isOpen={isDiagnosticsPanelOpen} onClose={() => setActiveHeaderPanel(null)} />
+          </div>
+        )}
       </div>
 
-      {/* Main Content Container */}
-      <div className="flex-1 flex flex-col min-h-0">
-        {/* Phone Number Display */}
-        <div className="flex-1 flex items-center justify-center px-4 py-4 min-h-0">
-          <div className="text-center">
-            {phoneNumber ? (
-              <div className="text-3xl sm:text-4xl font-light">
-                {formatPhoneNumber(phoneNumber)}
-              </div>
-            ) : (
-              <div className="text-xl sm:text-2xl text-gray-500">Enter a number</div>
+      {/* Main content -- scrolls rather than overlapping if it ever outgrows
+          the screen; side-by-side on short (landscape phone) screens. In the
+          workbench the stage is top-aligned, like the panes beside it. */}
+      <div className="flex-1 flex flex-col min-h-0 overflow-y-auto short:flex-row short:items-center">
+        {/* Address field -- type a number, SIP URI, or Fabric address directly */}
+        <div
+          className={`flex flex-col items-center px-4 py-3 min-[360px]:px-6 short:px-4 ${
+            workbench ? 'w-full pt-10' : 'flex-1 justify-center'
+          }`}
+        >
+          {/* In this column (not a full-width row above it) so it takes space
+              from the address area rather than pushing the dial pad off small
+              and landscape screens. */}
+          {callError && (
+            <ErrorBanner
+              message={callError}
+              onDismiss={() => setCallState({ callError: null })}
+              className="mb-2 w-full"
+            />
+          )}
+          {clientNotice && (
+            <ErrorBanner
+              tone="info"
+              message={clientNotice}
+              onDismiss={() => setCallState({ clientNotice: null })}
+              className="mb-2 w-full"
+            />
+          )}
+          <div className="relative w-full max-w-xl">
+          <div
+            className={`glass-panel flex w-full items-center gap-2 rounded-xl px-3 min-[360px]:gap-3 min-[360px]:px-4 py-3 transition-colors ${
+              isAddressInputFocused ? 'border-accent-edge bg-surface' : ''
+            }`}
+          >
+            <span
+              title={addressLabel}
+              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-colors ${addressMeta.badgeClass}`}
+            >
+              <AddressIcon size={18} />
+            </span>
+
+            <input
+              ref={addressInputRef}
+              type="text"
+              inputMode="text"
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="none"
+              spellCheck={false}
+              autoFocus
+              value={addressInputValue}
+              onChange={(e) => setPhoneNumber(e.target.value)}
+              onKeyDown={handleAddressKeyDown}
+              onFocus={() => setIsAddressInputFocused(true)}
+              onBlur={() => setIsAddressInputFocused(false)}
+              disabled={isInCall || isCallingInProgress}
+              placeholder="Number or address"
+              aria-label="Number or address"
+              role="combobox"
+              aria-autocomplete="list"
+              aria-expanded={showSuggestions}
+              aria-controls="address-suggestions"
+              aria-activedescendant={highlightedSuggestion >= 0 ? `address-suggestions-${highlightedSuggestion}` : undefined}
+              style={{ fontSize: addressFontSize }}
+              className="w-full min-w-0 select-text bg-transparent font-display font-medium tracking-tight text-ink outline-hidden border-none placeholder:text-faint disabled:opacity-50"
+            />
+
+            {phoneNumber && !isInCall && !isCallingInProgress && (
+              <button
+                type="button"
+                onClick={handleClearAll}
+                aria-label="Clear"
+                className="-m-1 shrink-0 rounded-full p-2.5 text-muted transition-colors hover:bg-surface-hover hover:text-ink"
+              >
+                <X size={16} />
+              </button>
             )}
+
+            {/* Shortcut to the Recents tab; takes the Clear button's slot
+                while the field is empty. */}
+            {!phoneNumber && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (workbench) {
+                    workbench.openRecents();
+                    return;
+                  }
+                  setResourcesTab('recents');
+                  setActiveHeaderPanel('resources');
+                }}
+                aria-label="Recent calls"
+                title="Recent calls"
+                className="-m-1 shrink-0 rounded-full p-2.5 text-muted transition-colors hover:bg-surface-hover hover:text-ink"
+              >
+                <History size={16} />
+              </button>
+            )}
+
+          </div>
+
+          <AddressSuggestions
+            id="address-suggestions"
+            suggestions={suggestions}
+            highlighted={highlightedSuggestion}
+            onPick={pickSuggestion}
+            onHover={setHighlightedSuggestion}
+          />
+          </div>
+
+          {/* The address type, on its own line under the field so it never
+              truncates beside From, Video and Call. The line is always there,
+              so typing the first character doesn't move the field. The label
+              is dropped while an
+              error is showing: the badge icon already says the same thing,
+              and on small phones the banner plus the label push the keypad
+              down. No room for the line on 320px phones. */}
+          <span className="mt-1.5 hidden h-4 w-full max-w-xl truncate px-1 text-xs font-medium uppercase tracking-wider text-faint min-[360px]:block">
+            {phoneNumber && !callError ? addressLabel : ''}
+          </span>
+
+          {/* The caller ID (or the camera-off choice), the video choice and
+              Call. The caller ID's name truncates rather than pushing Call
+              out of a narrow column. */}
+          <div className="mt-3 flex w-full max-w-xl justify-end min-[360px]:mt-1.5">
+            <div className="flex min-w-0 items-center gap-2">
+              {/* The caller ID for calls to phone numbers: opens the Caller ID
+                  sheet (the space's numbers and verified caller IDs). Video's
+                  lockout the other way round. mousedown is swallowed so the
+                  address input stays focused and is what the sheet returns
+                  focus to -- Enter still dials after a pick. Text only from
+                  360px, like the type label; the full value is in the title.
+                  With Video on the destination can't be a phone number, so
+                  the slot holds the camera-off choice instead (when
+                  SHOW_CAMERA_OFF_JOIN is on): join the video call receiving
+                  video but sending none until Camera is tapped in the call.
+                  It doesn't touch the field. */}
+              {SHOW_CAMERA_OFF_JOIN && wantsVideo ? (
+                <button
+                  type="button"
+                  onClick={toggleCameraOff}
+                  onMouseDown={(e) => e.preventDefault()}
+                  disabled={isInCall || isCallingInProgress}
+                  aria-label={cameraOff ? 'Start with camera off' : 'Start with camera on'}
+                  title={cameraOff ? 'Start with camera off' : 'Start with camera on'}
+                  aria-pressed={cameraOff}
+                  className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border transition-colors disabled:opacity-50 ${
+                    cameraOff
+                      ? 'border-accent-edge bg-accent-soft text-accent-text'
+                      : 'border-edge-strong bg-surface text-muted hover:bg-surface-hover hover:text-ink'
+                  }`}
+                >
+                  {cameraOff ? <CameraOff size={16} /> : <Camera size={16} />}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setIsCallerIdOpen(true)}
+                  onMouseDown={(e) => e.preventDefault()}
+                  disabled={isInCall || isCallingInProgress || isNonPhoneAddress}
+                  aria-label={callerIdLabel}
+                  aria-haspopup="dialog"
+                  aria-expanded={isCallerIdOpen}
+                  title={isNonPhoneAddress ? 'Caller ID applies to phone numbers only' : callerIdLabel}
+                  className={`flex h-11 min-w-0 items-center gap-2 rounded-lg border px-3 text-sm font-medium transition-colors disabled:opacity-50 ${
+                    callerId
+                      ? 'border-accent-edge bg-accent-soft text-accent-text'
+                      : 'border-edge-strong bg-surface text-muted hover:bg-surface-hover hover:text-ink'
+                  }`}
+                >
+                  <PhoneOutgoing size={16} className="shrink-0" />
+                  <span className="hidden max-w-[7.5rem] min-w-0 truncate min-[360px]:inline-block">
+                    {callerId ? (callerName ?? formatPhoneNumber(callerId)) : 'From'}
+                  </span>
+                </button>
+              )}
+              {/* For a Fabric address the Video toggle is the channel selector:
+                  it rewrites the field's `?channel=`, so what's shown is what's
+                  dialed (useDialFieldStore). For a SIP URI it's the camera
+                  choice; phone numbers can't do video, so it's disabled. */}
+              <button
+                type="button"
+                onClick={toggleWantsVideo}
+                disabled={isInCall || isCallingInProgress || isPhone}
+                aria-label={wantsVideo ? 'Video call on' : 'Video call off'}
+                title={isPhone ? "Video isn't available for phone numbers" : wantsVideo ? 'Video call on' : 'Video call off'}
+                aria-pressed={wantsVideo}
+                className={`flex h-11 shrink-0 items-center gap-2 rounded-lg border px-3 text-sm font-medium transition-colors disabled:opacity-50 ${
+                  wantsVideo
+                    ? 'border-accent bg-accent text-on-accent'
+                    : 'border-edge-strong bg-surface text-muted hover:bg-surface-hover hover:text-ink'
+                }`}
+              >
+                {wantsVideo ? <Video size={16} /> : <VideoOff size={16} />}
+                <span>Video</span>
+              </button>
+              {/* mousedown is swallowed so the click doesn't take focus from
+                  the address input (see DialPad's keepFocus). */}
+              <button
+                type="button"
+                onClick={handleCall}
+                onMouseDown={(e) => e.preventDefault()}
+                disabled={isInCall || isCallingInProgress}
+                aria-label="Call"
+                className="flex h-11 shrink-0 items-center gap-2 rounded-lg bg-call px-5 text-sm font-semibold text-on-call shadow-card transition-colors hover:bg-call-hover disabled:opacity-40"
+              >
+                <Phone size={16} fill="currentColor" />
+                <span>Call</span>
+              </button>
+            </div>
           </div>
         </div>
 
-        {/* Dial Pad Container */}
-        <div className="pb-6 sm:pb-8">
-          <DialPad
-            onKeyPress={handleKeyInput}
-            onCall={handleCall}
-            onDelete={handleDelete}
-            onClearAll={handleClearAll}
-            hasNumber={phoneNumber.length > 0}
-            disabled={isInCall || isCallingInProgress}
-          />
-        </div>
+        {/* First-visit orientation, while there's nothing in the field. */}
+        {workbench && !phoneNumber && (
+          <p className="mx-auto mb-4 max-w-xl px-4 text-center text-sm text-muted">
+            Type a phone number, a SIP URI (<span className="font-mono">sip:user@host</span>) or a Fabric address (
+            <span className="font-mono">/public/room</span>), or pick one from Destinations. Typing searches Recents and the
+            Directory.
+          </p>
+        )}
+
+        {/* The keypad: always on phones; folded behind a toggle in the workbench. */}
+        {workbench && (
+          <button
+            type="button"
+            onClick={toggleKeypad}
+            aria-pressed={showKeypad}
+            className="mx-auto mb-2 flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm text-muted transition-colors hover:bg-surface-hover hover:text-ink"
+          >
+            {showKeypad ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+            {showKeypad ? 'Hide keypad' : 'Show keypad'}
+          </button>
+        )}
+        {(!workbench || showKeypad) && (
+          <div className={workbench ? 'px-4 pb-8' : 'px-4 pb-safe sm:pb-8 short:flex-1 short:py-2'}>
+            <DialPad
+              mode="dial"
+              onKeyPress={handleKeyInput}
+              onDelete={handleDelete}
+              onClearAll={handleClearAll}
+              hasNumber={phoneNumber.length > 0}
+              disabled={isInCall || isCallingInProgress}
+            />
+          </div>
+        )}
       </div>
+
+      {/* Mounted only while open: the sheet fetches on mount, and the
+          workbench spec expects the address input to keep focus on load. */}
+      {isCallerIdOpen && <CallerIdSheet onClose={() => setIsCallerIdOpen(false)} />}
     </div>
   );
 };

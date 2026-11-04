@@ -6,21 +6,27 @@ export default {
   ],
   theme: {
     extend: {
-      colors: {
-        'ios-gray': {
-          900: '#1c1c1e',
-          800: '#2c2c2e',
-          700: '#3a3a3c',
-          600: '#48484a',
-          500: '#636366',
-          400: '#8e8e93',
-        },
-        'ios-green': '#34c759',
-        'ios-red': '#ff3b30',
+      screens: {
+        // Phones in landscape (and other very short viewports): layouts switch
+        // from a stacked column to side-by-side so nothing overlaps or scrolls.
+        short: { raw: '(max-height: 500px)' },
+        // Tablets and desktop: room for a word under each header icon. The
+        // same lower bound, up to 1023px, gives #root its tablet-width column
+        // in globals.css; landscape phones are excluded by the height clause.
+        desk: { raw: '(min-width: 640px) and (min-height: 501px)' },
+        // Workbench windows wide enough for four icon-beside-label call
+        // controls in a row of the call card (CallToolbar.tsx): the center
+        // column is 1224 - 45rem of side panes = 504px from here. Narrower,
+        // the controls stack their label under the icon, as on phones.
+        wide: { raw: '(min-width: 1224px) and (min-height: 501px)' },
+        // Not short, but without the height for the in-call keypad, the
+        // meters and both toolbar rows at once (most phones below an iPhone
+        // Pro's 844px, and 768-800px desktop windows): opening the keypad
+        // trims the toolbar to one row and hides the meters (CallScreen.tsx).
+        low: { raw: '(min-height: 501px) and (max-height: 800px)' },
       },
-      fontFamily: {
-        'sf': ['SF Pro Display', '-apple-system', 'BlinkMacSystemFont', 'system-ui', 'sans-serif'],
-      },
+      // Colors and fonts are the semantic tokens in src/styles/globals.css
+      // (@theme), not Tailwind config.
     },
   },
   plugins: [],
