@@ -85,6 +85,18 @@ const ENDED_CALL_STATUSES: readonly CallStatus[] = [
   'destroyed',
 ];
 
+// call.rtcPeerConnection throws once the call has been destroyed, and status$
+// delivers asynchronously, so a handler can run after that. Every read of the
+// peer connection goes through here and gets undefined instead.
+function peerConnectionOf(call: Call | null | undefined): RTCPeerConnection | undefined {
+  if (!call) return undefined;
+  try {
+    return call.rtcPeerConnection;
+  } catch {
+    return undefined;
+  }
+}
+
 export interface AudioProcessingState {
   echoCancellation: boolean;
   autoGain: boolean;
@@ -247,6 +259,12 @@ class SignalWireService {
   private pendingCall: Call | null = null;
   private currentToken: TokenData | null = null;
   private wasIncomingCall: boolean = false;
+  // The call that has reached 'connected' at least once. After early media,
+  // status$ can move from 'connected' back to 'connecting' when the far end
+  // answers and stay there while the call is up, so once a call has been
+  // connected its later pre-answer statuses don't change the UI, and DTMF
+  // is gated on this rather than on call.status.
+  private connectedCall: Call | null = null;
   // Mic mute for the current call, applied locally to the outgoing audio
   // track -- see toggleMute() for why this isn't the SDK's self.mute().
   private isMicMuted = false;
@@ -569,12 +587,14 @@ class SignalWireService {
         toneService.playIncomingCallTone();
         this.onIncomingCall?.(callerId, hasVideo, ringingCall.from, ringingCall.id);
 
-        // Watch for the caller hanging up before we answer
+        // Watch for the caller hanging up before we answer. This also fires
+        // when an answered or declined call ends later; by then it is no
+        // longer the pending call, so only the unsubscribe applies.
         const cleanupCanceled = () => {
-          log.debug('Incoming call canceled by caller');
-          this.logEvent('call', 'Caller hung up before answer', callerId);
-          toneService.stopIncomingCallTone();
           if (this.pendingCall?.id === ringingCall.id) {
+            log.debug('Incoming call canceled by caller');
+            this.logEvent('call', 'Caller hung up before answer', callerId);
+            toneService.stopIncomingCallTone();
             this.pendingCall = null;
             this.handleCallEnded();
           }
@@ -712,6 +732,12 @@ class SignalWireService {
       log.debug('Call status:', status);
       this.logEvent('call', `Status: ${status}`);
 
+      // See connectedCall's declaration: a connected call stays connected.
+      if ((status === 'trying' || status === 'connecting' || status === 'ringing') && this.connectedCall === call) {
+        log.debug(`Call status ${status} after connected - keeping the call connected`);
+        return;
+      }
+
       if (status === 'trying' || status === 'connecting') {
         this.onCallStatusChange?.('connecting');
       } else if (status === 'ringing') {
@@ -721,13 +747,22 @@ class SignalWireService {
         // in case status$ reports it.
         this.setMediaDisrupted(true);
       } else if (status === 'connected') {
+        this.connectedCall = call;
         if (this.onCallConnected) {
           this.onCallConnected();
         }
       } else if (status === 'disconnected' || status === 'failed' || status === 'destroyed') {
-        // 'destroyed' is what the SDK's own hangup()/destroy() emits (after
-        // 'disconnecting', never 'disconnected'), so it's the only terminal
-        // status for a hang-up this app didn't start itself.
+        // status$ also carries the peer connection's own connectionState, so
+        // a 'disconnected'/'failed' that the peer connection itself reports is
+        // media loss, not the end of the call: monitorPeerConnection() shows
+        // "Reconnecting…" and its grace timer hangs up if media never returns.
+        // A hang-up from either side still ends here: the SDK's own
+        // hangup()/destroy() emits 'destroyed' (after 'disconnecting'), and the
+        // far end's bye emits 'disconnected' while the connection is still up.
+        if (status !== 'destroyed' && peerConnectionOf(call)?.connectionState === status) {
+          log.debug(`Call status ${status} comes from the peer connection - treating it as media loss`);
+          return;
+        }
         toneService.playDisconnectTone();
         // Only clean up if this is still the active call (endCall may have already cleared it)
         if (this.currentCall === call) {
@@ -964,7 +999,7 @@ class SignalWireService {
   // what a tester wants to confirm (did the codec preference take? is media
   // relayed through TURN?). Polled by the stats sheet while it's open.
   async getConnectionStats(): Promise<ConnectionStatsSnapshot | null> {
-    const pc = this.currentCall?.rtcPeerConnection;
+    const pc = peerConnectionOf(this.currentCall);
     if (!pc) return null;
     const report = await pc.getStats();
     const byId = new Map<string, RTCStats>();
@@ -1129,7 +1164,7 @@ class SignalWireService {
   // connection's receivers and track events directly.
   private setupRemoteAudioFallback(call: Call) {
     // rtcPeerConnection is public on the v4 Call type (RTCPeerConnection | undefined)
-    const pc = call.rtcPeerConnection;
+    const pc = peerConnectionOf(call);
     if (pc) {
       log.debug('PC available immediately, state:', pc.connectionState, 'ice:', pc.iceConnectionState);
       this.monitorPeerConnection(pc, call);
@@ -1140,7 +1175,7 @@ class SignalWireService {
     let attempts = 0;
     this.remoteAudioCheckInterval = setInterval(() => {
       attempts++;
-      const rtcPC = call.rtcPeerConnection;
+      const rtcPC = peerConnectionOf(call);
       if (rtcPC) {
         log.debug('PC became available after', attempts, 'checks, state:', rtcPC.connectionState);
         if (this.remoteAudioCheckInterval) {
@@ -1244,8 +1279,19 @@ class SignalWireService {
       log.warn(`Media did not recover (ice: ${ice}, recovery: ${this.lastRecoveryState}) - ending call as fallback`);
       this.logEvent('error', 'Media did not recover — ending the call', `ICE ${ice}, recovery ${this.lastRecoveryState}`);
       this.handleCallEnded();
+      this.hangUpAbandonedCall(call);
     };
     this.mediaDisruptionTimer = setTimeout(onExpiry, graceMs);
+  }
+
+  // Ends the server side of a call this app has given up on locally. Without
+  // the bye the far end stays on a silent call until the server times the
+  // media out. Skipped when the SDK is already tearing the call down, since
+  // hangup() always sends a bye.
+  private hangUpAbandonedCall(call: Call) {
+    if (call.status === 'destroyed' || call.status === 'disconnecting') return;
+    this.logEvent('call', 'Hanging up the abandoned call');
+    call.hangup().catch((err) => log.warn('Hangup of an abandoned call failed:', err));
   }
 
   private checkReceivers(pc: RTCPeerConnection) {
@@ -1535,7 +1581,7 @@ class SignalWireService {
     const call = this.currentCall;
     if (!call) return;
     const tracks = new Set<MediaStreamTrack>(call.localStream?.getAudioTracks() ?? []);
-    for (const sender of call.rtcPeerConnection?.getSenders() ?? []) {
+    for (const sender of peerConnectionOf(call)?.getSenders() ?? []) {
       if (sender.track?.kind === 'audio') tracks.add(sender.track);
     }
     tracks.forEach((track) => { track.enabled = !this.isMicMuted; });
@@ -1950,10 +1996,12 @@ class SignalWireService {
 
   // DTMF only has somewhere to go once the call is connected (per the SDK's
   // call-controls guide); digits tapped while it's still ringing are dropped.
+  // "Connected" is connectedCall, not call.status (see its declaration).
   async sendDTMF(digit: string) {
-    if (this.currentCall?.status === 'connected') {
+    const call = this.currentCall;
+    if (call && this.connectedCall === call && !ENDED_CALL_STATUSES.includes(call.status)) {
       this.logEvent('user', `DTMF ${digit}`);
-      await this.currentCall.sendDigits(digit);
+      await call.sendDigits(digit);
     }
   }
 
@@ -1966,6 +2014,7 @@ class SignalWireService {
     this.cleanupCallSubscriptions();
     this.currentCall = null;
     this.pendingCall = null;
+    this.connectedCall = null;
     this.wasIncomingCall = false;
     // Not via setAudioProcessing() -- the store's own reset covers the UI.
     this.audioProcessing = { ...DEFAULT_AUDIO_PROCESSING };

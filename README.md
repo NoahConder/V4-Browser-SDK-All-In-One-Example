@@ -43,7 +43,7 @@ Every SignalWire interaction happens in the browser through the published npm pa
 - ✅ DTMF from the on-screen keypad (with key tones), once the call is connected
 - ✅ Audio/video device picker and echo cancellation / noise suppression / auto gain toggles
 - ✅ Live call-quality badge that opens a call-statistics panel (RTT, jitter, loss, active network issues, codecs, ICE path, recovery events, call id) that leaves the call controls usable, plus mic and remote audio-level meters; on the workbench the statistics stay in view for the whole call and keep the last call's numbers after hangup
-- ✅ "Reconnecting…" during media loss, deferring to the SDK's own recovery before giving up on a call
+- ✅ "Reconnecting…" during media loss, deferring to the SDK's own recovery before giving up on a call and hanging it up
 - ✅ Pre-call network diagnostics (with options), diagnostics export, and SDK settings: codec order, log level, WebSocket tracing, relay-only media
 - ✅ Directory of everything the subscriber can dial (other subscribers, rooms, SIP endpoints, SWML scripts), Recents that put a past destination back in the field, and browsers for the space's SWML scripts and SIP credentials, each with a search field
 - ✅ Subscribers panel: call any subscriber's browser (audio or video), switch the dialer to act as one, and Do Not Disturb

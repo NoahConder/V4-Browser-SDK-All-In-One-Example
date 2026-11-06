@@ -31,19 +31,21 @@ const HARNESS = `
   window.__h = {
     begin() {
       const pc = new FakePc();
-      const call = { id: 'fake', status: 'connected', rtcPeerConnection: pc, hangup: async () => {}, localStream: null, self: null };
+      const call = { id: 'fake', status: 'connected', rtcPeerConnection: pc, hangups: 0, hangup: async () => { call.hangups++; }, localStream: null, self: null };
+      window.__hc = call;
       s.currentCall = call; s.wasIncomingCall = false; s.lastRecoveryState = 'idle';
       store.getState().setCallState({ isInCall: true, callStatus: 'connected', remoteNumber: '+15551234567', connectedAt: Date.now() });
       s.monitorPeerConnection(pc, call);
       return pc;
     },
-    state() { const st = store.getState(); return { inCall: st.isInCall, disrupted: st.isMediaDisrupted, hasCall: s.currentCall !== null, timer: s.mediaDisruptionTimer !== null, listeners: s.pcListenerDisposers.length }; },
+    state() { const st = store.getState(); return { inCall: st.isInCall, disrupted: st.isMediaDisrupted, hasCall: s.currentCall !== null, timer: s.mediaDisruptionTimer !== null, listeners: s.pcListenerDisposers.length, hangups: window.__hc?.hangups ?? 0 }; },
   };
 `;
 
 declare global {
   interface Window {
-    __h: { begin(): unknown; state(): { inCall: boolean; disrupted: boolean; hasCall: boolean; timer: boolean; listeners: number } };
+    __h: { begin(): unknown; state(): { inCall: boolean; disrupted: boolean; hasCall: boolean; timer: boolean; listeners: number; hangups: number } };
+    __hc?: { hangups: number };
     __pc: { setIce(state: string): void };
     __old: { setIce(state: string): void };
     __fakeCall: (status: string) => { setStatus(status: string): void };
@@ -78,8 +80,9 @@ test.describe('media loss vs. call end', () => {
       window.__pc.setIce('failed');
     });
     await page.waitForTimeout(3000);
-    expect(await state(page)).toMatchObject({ inCall: true, hasCall: true, disrupted: true });
-    await expect.poll(() => state(page), { timeout: 10_000 }).toMatchObject({ inCall: false, hasCall: false, listeners: 0 });
+    expect(await state(page)).toMatchObject({ inCall: true, hasCall: true, disrupted: true, hangups: 0 });
+    // Giving up also hangs up, so the platform doesn't hold the far end on a dead call.
+    await expect.poll(() => state(page), { timeout: 10_000 }).toMatchObject({ inCall: false, hasCall: false, listeners: 0, hangups: 1 });
 
     // Events from the dead connection are ignored once it's over.
     await page.evaluate(() => window.__pc.setIce('closed'));
@@ -127,6 +130,80 @@ test.describe('SDK-side hang-ups and the connection test', () => {
     expect(await state(page)).toMatchObject({ inCall: true, hasCall: true });
     await page.evaluate(() => window.__call.setStatus('destroyed'));
     await expect.poll(() => state(page)).toMatchObject({ inCall: false, hasCall: false });
+  });
+
+  // status$ carries the peer connection's own connectionState too, so
+  // 'disconnected'/'failed' can mean media loss (the connection says the
+  // same) or the call ending (the far end's bye, connection still up).
+  test("a 'disconnected'/'failed' status from the peer connection keeps the call; the far end's bye ends it", async ({ page }) => {
+    await evalInApp(
+      page,
+      `
+      window.__call = window.__fakeCall('connected');
+      window.__call.rtcPeerConnection = { connectionState: 'connected' };
+      s.currentCall = window.__call; s.wasIncomingCall = false;
+      store.getState().setCallState({ isInCall: true, callStatus: 'connected', remoteNumber: 'Test App', connectedAt: Date.now() });
+      s.setupCallSubscriptions(window.__call);
+    `,
+    );
+    for (const media of ['disconnected', 'failed']) {
+      await evalInApp(page, `window.__call.rtcPeerConnection.connectionState = '${media}'; window.__call.setStatus('${media}');`);
+      await page.waitForTimeout(100);
+      expect(await state(page)).toMatchObject({ inCall: true, hasCall: true });
+    }
+    await evalInApp(page, `window.__call.rtcPeerConnection.connectionState = 'connected'; window.__call.setStatus('connected');`);
+    await evalInApp(page, `window.__call.setStatus('disconnected');`);
+    await expect.poll(() => state(page)).toMatchObject({ inCall: false, hasCall: false });
+  });
+
+  // status$ delivers asynchronously, so the far end's 'disconnected' can
+  // arrive after the SDK destroyed the call, when reading rtcPeerConnection
+  // throws. That must still end the call, with nothing thrown.
+  test("a far-end 'disconnected' after the call is destroyed still ends it, without an error", async ({ page }) => {
+    const errors: string[] = [];
+    page.on('pageerror', (e) => errors.push(e.message));
+    await evalInApp(
+      page,
+      `
+      window.__call = window.__fakeCall('connected');
+      Object.defineProperty(window.__call, 'rtcPeerConnection', {
+        get() { throw new Error('Dependency Main peer connection not found is not set or available.'); },
+      });
+      s.currentCall = window.__call; s.wasIncomingCall = false;
+      store.getState().setCallState({ isInCall: true, callStatus: 'connected', remoteNumber: 'Test App', connectedAt: Date.now() });
+      s.setupCallSubscriptions(window.__call);
+    `,
+    );
+    await page.evaluate(() => window.__call.setStatus('disconnected'));
+    await expect.poll(() => state(page)).toMatchObject({ inCall: false, hasCall: false });
+    await page.waitForTimeout(100);
+    expect(errors).toEqual([]);
+  });
+
+  // After early media, status$ can go ringing -> connected (media path up)
+  // -> connecting (the far end answers) and stay on 'connecting'. A call that
+  // has connected stays connected in the UI, and DTMF still goes out.
+  test('after early media a connected call stays connected and sends DTMF', async ({ page }) => {
+    await evalInApp(
+      page,
+      `
+      window.__call = window.__fakeCall('trying');
+      window.__call.digits = [];
+      window.__call.sendDigits = async (d) => { window.__call.digits.push(d); };
+      s.currentCall = window.__call; s.wasIncomingCall = false;
+      store.getState().setCallState({ isInCall: true, callStatus: 'connecting', remoteNumber: 'Test App' });
+      s.setupCallSubscriptions(window.__call);
+    `,
+    );
+    // Before the call has connected, digits are dropped.
+    await evalInApp(page, `await s.sendDTMF('1');`);
+    for (const status of ['ringing', 'connected', 'connecting']) {
+      await page.evaluate((st) => window.__call.setStatus(st), status);
+    }
+    await page.waitForTimeout(100);
+    expect(await evalInApp(page, `return store.getState().callStatus;`)).toBe('connected');
+    await evalInApp(page, `await s.sendDTMF('5');`);
+    expect(await evalInApp(page, `return window.__call.digits;`)).toEqual(['5']);
   });
 
   test('the media test call is left alone while preflight runs, and adopted otherwise', async ({ page }) => {
