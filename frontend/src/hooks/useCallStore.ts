@@ -11,6 +11,7 @@ const initialState: CallState = {
   canSelectAudioOutput: true,  // Session fact (platformCapabilities), preserved like isClientReady
   isRegistered: true,  // Session state (Do Not Disturb), preserved like isClientReady
   callError: null,
+  sessionError: null,
   clientNotice: null,
   isInCall: false,
   isIncoming: false,
@@ -31,9 +32,11 @@ const initialState: CallState = {
   isOnHold: false,
   canScreenShare: false,
   screenShareStatus: 'none',
-  isEchoCancellationOn: false,
-  isAutoGainOn: false,
-  isNoiseSuppressionOn: false,
+  // The browser's defaults, and the service's (DEFAULT_AUDIO_PROCESSING):
+  // what the next call starts with until its mic track reports otherwise.
+  isEchoCancellationOn: true,
+  isAutoGainOn: true,
+  isNoiseSuppressionOn: true,
   qualityLevel: null,
   qualityScore: null,
   networkIssueCount: 0,
@@ -58,6 +61,7 @@ export const useCallStore = create<CallStore>((set) => ({
         canSelectAudioOutput: state.canSelectAudioOutput,  // Browser capability, not call state
         isRegistered: state.isRegistered,  // Do Not Disturb is session state, not call state
         clientNotice: state.clientNotice,  // Dismissed explicitly, like callError
+        sessionError: state.sessionError,  // About the session, not the call; dismissed explicitly
         activeSubscriberName: state.activeSubscriberName,  // Session identity, not call state
         // Preserve callError -- a failed call attempt resets straight back to
         // idle (see Dialer.tsx's handleCall), and the whole point of the error

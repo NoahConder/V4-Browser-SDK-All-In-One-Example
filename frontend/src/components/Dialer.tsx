@@ -26,6 +26,47 @@ type HeaderPanel = 'devices' | 'diagnostics' | 'resources' | 'subscriber';
 // `label` is the accessible name and tooltip; `short` is the word shown under
 // the icon where there's room (the `desk` screen -- tablets and desktop). On
 // phones the icons stand alone, which is why they need to be guessable.
+// The address field shows a formatted number while it isn't focused and the
+// raw text once it is, so a click that focuses it lands on different
+// characters than the ones under the pointer. These map the click to "after
+// the Nth digit", which means the same place in both strings.
+const SIGNIFICANT_CHAR = /[\d+]/;
+const countSignificant = (text: string): number => [...text].filter((char) => SIGNIFICANT_CHAR.test(char)).length;
+
+// How many characters of the input's text lie left of the pointer, measured
+// with a hidden copy of the text in the input's own font.
+function clickedCharIndex(input: HTMLInputElement, clientX: number): number {
+  const style = getComputedStyle(input);
+  const probe = document.createElement('span');
+  probe.style.cssText = 'position:absolute;visibility:hidden;white-space:pre';
+  probe.style.font = style.font;
+  probe.style.letterSpacing = style.letterSpacing;
+  document.body.appendChild(probe);
+  const x = clientX - input.getBoundingClientRect().left - parseFloat(style.paddingLeft) + input.scrollLeft;
+  const text = input.value;
+  let index = 0;
+  let previousWidth = 0;
+  while (index < text.length) {
+    probe.textContent = text.slice(0, index + 1);
+    const width = probe.getBoundingClientRect().width;
+    // Past the middle of a character counts as after it, as a caret would.
+    if ((previousWidth + width) / 2 > x) break;
+    previousWidth = width;
+    index += 1;
+  }
+  probe.remove();
+  return index;
+}
+
+// The position in `text` just after its Nth digit (or leading '+').
+function positionAfterSignificant(text: string, count: number): number {
+  let position = 0;
+  for (let seen = 0; position < text.length && seen < count; position += 1) {
+    if (SIGNIFICANT_CHAR.test(text[position])) seen += 1;
+  }
+  return position;
+}
+
 const HEADER_PANEL_BUTTONS: Array<{ panel: HeaderPanel; label: string; short: string; icon: typeof Phone }> = [
   { panel: 'devices', label: 'Audio & Video Devices', short: 'Devices', icon: SlidersHorizontal },
   { panel: 'diagnostics', label: 'Diagnostics', short: 'Diagnostics', icon: Activity },
@@ -136,6 +177,9 @@ const Dialer: React.FC = () => {
   // the panel.
   const [resourcesTab, setResourcesTab] = useState<ResourceTab>('directory');
   const addressInputRef = useRef<HTMLInputElement>(null);
+  // Set by a click on the unfocused, formatted field: where the caret belongs
+  // once the field shows the raw text (see clickedCharIndex).
+  const clickedDigitsRef = useRef<number | null>(null);
   const [addressFontSize, setAddressFontSize] = useState(ADDRESS_FONT_SIZES_PX[0]);
   // The picked label counts only while the field still holds that destination
   // (editing it by hand makes the label stale). Passed to makeCall for Recents.
@@ -154,6 +198,7 @@ const Dialer: React.FC = () => {
   const isCameraOn = useCallStore((s) => s.isCameraOn);
   const remoteHasVideo = useCallStore((s) => s.remoteHasVideo);
   const callError = useCallStore((s) => s.callError);
+  const sessionError = useCallStore((s) => s.sessionError);
   const clientNotice = useCallStore((s) => s.clientNotice);
   const pendingDialClear = useCallStore((s) => s.pendingDialClear);
   const setCallState = useCallStore((s) => s.setCallState);
@@ -430,6 +475,13 @@ const Dialer: React.FC = () => {
           {/* In this column (not a full-width row above it) so it takes space
               from the address area rather than pushing the dial pad off small
               and landscape screens. */}
+          {sessionError && (
+            <ErrorBanner
+              message={sessionError}
+              onDismiss={() => setCallState({ sessionError: null })}
+              className="mb-2 w-full"
+            />
+          )}
           {callError && (
             <ErrorBanner
               message={callError}
@@ -470,7 +522,23 @@ const Dialer: React.FC = () => {
               value={addressInputValue}
               onChange={(e) => setPhoneNumber(e.target.value)}
               onKeyDown={handleAddressKeyDown}
-              onFocus={() => setIsAddressInputFocused(true)}
+              onMouseDown={(e) => {
+                const input = e.currentTarget;
+                if (document.activeElement === input || input.value === phoneNumber) return;
+                clickedDigitsRef.current = countSignificant(input.value.slice(0, clickedCharIndex(input, e.clientX)));
+              }}
+              onFocus={(e) => {
+                setIsAddressInputFocused(true);
+                const digits = clickedDigitsRef.current;
+                clickedDigitsRef.current = null;
+                if (digits === null) return;
+                // After the browser has placed its own caret for this click.
+                const input = e.currentTarget;
+                requestAnimationFrame(() => {
+                  const position = positionAfterSignificant(input.value, digits);
+                  input.setSelectionRange(position, position);
+                });
+              }}
               onBlur={() => setIsAddressInputFocused(false)}
               disabled={isInCall || isCallingInProgress}
               placeholder="Number or address"

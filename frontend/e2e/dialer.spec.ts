@@ -44,6 +44,38 @@ test.describe('dial pad on a small phone', () => {
     }
   });
 
+  test('a click into the formatted number puts the caret at the digit that was clicked', async ({ page }) => {
+    const input = page.locator(ADDRESS_INPUT);
+    await input.fill('5551234567');
+    await page.locator('button[aria-label="Call"]').focus();
+    await expect(input).toHaveValue('(555) 123-4567');
+    // Just right of the gap between "(555) 12" and "3-4567", measured in the
+    // field's own font once it has loaded (a fallback font has other widths).
+    const x = await input.evaluate(async (el: HTMLInputElement) => {
+      await document.fonts.ready;
+      const style = getComputedStyle(el);
+      const probe = document.createElement('span');
+      probe.style.cssText = 'position:absolute;visibility:hidden;white-space:pre';
+      probe.style.font = style.font;
+      probe.style.letterSpacing = style.letterSpacing;
+      document.body.appendChild(probe);
+      const widthOf = (text: string) => {
+        probe.textContent = text;
+        return probe.getBoundingClientRect().width;
+      };
+      const gap = widthOf('(555) 12');
+      const quarterOfNext = (widthOf('(555) 123') - gap) / 4;
+      probe.remove();
+      return parseFloat(style.paddingLeft) + gap + quarterOfNext;
+    });
+    const box = (await input.boundingBox())!;
+    await page.mouse.click(box.x + x, box.y + box.height / 2);
+    await expect(input).toHaveValue('5551234567');
+    await expect.poll(() => input.evaluate((el: HTMLInputElement) => el.selectionStart)).toBe(5);
+    await page.keyboard.type('9');
+    await expect(input).toHaveValue('55512934567');
+  });
+
   test('tap Delete removes one character; hold 0 types +', async ({ page }) => {
     const input = page.locator(ADDRESS_INPUT);
     await input.fill('5551234567');
@@ -401,6 +433,8 @@ test.describe('in a call', () => {
     await page.click('button[aria-label="Keypad"]');
     const key5 = page.locator('button:has(.dial-button-number:text-is("5"))');
     await expect(key5).toBeDisabled();
+    // Hold-for-plus belongs to the idle dialer, so the in-call 0 doesn't show it.
+    await expect(page.locator('button:has(.dial-button-number:text-is("0"))')).not.toContainText('+');
     await expect(page.locator('text=Keypad available once connected')).toHaveCount(1);
     await setState(page, { callStatus: 'connected', connectedAt: Date.now() });
     await expect(key5).toBeEnabled();

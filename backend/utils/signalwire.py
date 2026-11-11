@@ -91,18 +91,17 @@ class SignalWireClient:
                 logger.error(f"Response: {e.response.text}")
             raise Exception(f"Failed to create subscriber token: {str(e)}")
 
-    def refresh_token(self, old_token: str = None, reference: str = "swdialer") -> Dict:
+    def refresh_token(self, reference: str = "swdialer") -> Dict:
         """
-        Refresh an existing subscriber token
+        Refresh a subscriber's token by minting a fresh one for the same
+        reference; the previous token isn't needed.
 
         Args:
-            old_token: Unused; kept for signature compatibility
             reference: Reference identifier for the token
 
         Returns:
             Dict containing new token and expiry information
         """
-        # Refresh mints a fresh token for the same reference.
         return self.create_subscriber_token(reference=reference, expires_in=3600)
 
     def _get_all_pages(self, url: str) -> list:

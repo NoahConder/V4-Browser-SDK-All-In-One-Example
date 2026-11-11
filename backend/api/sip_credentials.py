@@ -27,13 +27,30 @@ def _get_credentials_meta():
     return credentials
 
 
+def _public_address(address):
+    return {
+        "id": address.get('id'),
+        "name": address.get('name'),
+        "display_name": address.get('display_name'),
+        "channels": address.get('channels') or {},
+    }
+
+
 def _fetch_with_addresses(credential):
+    """One credential with its dialable addresses, trimmed to what the picker
+    shows: the name, the dial username and the addresses. The raw record's
+    caller ID, call handler and encryption settings stay on the server."""
     try:
-        addresses = get_client().list_sip_credential_addresses(credential['id'])
+        addresses = [_public_address(a) for a in get_client().list_sip_credential_addresses(credential['id'])]
     except Exception as e:
         logger.warning(f"Failed to load addresses for credential {credential.get('id')}: {e}")
         addresses = []
-    return {**credential, "addresses": addresses}
+    return {
+        "id": credential.get('id'),
+        "display_name": credential.get('display_name'),
+        "sip_endpoint": {"username": (credential.get('sip_endpoint') or {}).get('username')},
+        "addresses": addresses,
+    }
 
 
 def _matches(credential, needle):

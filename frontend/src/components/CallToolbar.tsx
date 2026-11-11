@@ -72,6 +72,9 @@ interface CallToolbarProps {
   isKeypadOpen: boolean;
   onToggleKeypad: () => void;
   isCameraOn: boolean;
+  // The call was placed or answered with video. An audio-only call has no
+  // video line for a camera to be added to, so Camera is disabled on it.
+  canUseCamera: boolean;
   onToggleCamera: () => void;
   isOnHold: boolean;
   onToggleHold: () => void;
@@ -101,6 +104,7 @@ const CallToolbar: React.FC<CallToolbarProps> = ({
   isKeypadOpen,
   onToggleKeypad,
   isCameraOn,
+  canUseCamera,
   onToggleCamera,
   isOnHold,
   onToggleHold,
@@ -120,7 +124,15 @@ const CallToolbar: React.FC<CallToolbarProps> = ({
     <div className={`grid gap-2 ${onOpenTransfer ? 'grid-cols-5 short:grid-cols-9' : 'grid-cols-4 short:grid-cols-8'}`}>
       <ControlButton icon={MicOff} label="Mute" active={isMuted} onClick={onToggleMute} />
       <ControlButton icon={Keyboard} label="Keypad" active={isKeypadOpen} onClick={onToggleKeypad} />
-      <ControlButton icon={Video} label="Camera" active={isCameraOn} onClick={onToggleCamera} className={secondary} />
+      <ControlButton
+        icon={Video}
+        label="Camera"
+        active={isCameraOn}
+        onClick={onToggleCamera}
+        disabled={!canUseCamera}
+        title={canUseCamera ? undefined : 'The camera works on calls placed or answered with Video on'}
+        className={secondary}
+      />
       <ControlButton
         icon={isOnHold ? Play : Pause}
         label={isOnHold ? 'Resume' : 'Hold'}

@@ -9,7 +9,9 @@ import { log } from './utils/log';
 
 function App() {
   const { isInitialized, error } = useSignalWire();
-  const [permissionsGranted, setPermissionsGranted] = useState(false);
+  // 'checking' until the first getUserMedia settles, so the permission card
+  // only appears when access really is missing, not for a moment on every load.
+  const [micAccess, setMicAccess] = useState<'checking' | 'granted' | 'denied'>('checking');
   const [permissionError, setPermissionError] = useState<string | null>(null);
   // Wide screens get the workbench (Destinations | call stage | Inspector);
   // phones, tablets and short windows get the phone column with its header
@@ -52,10 +54,10 @@ function App() {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         // Stop the stream immediately after getting permission
         stream.getTracks().forEach(track => track.stop());
-        setPermissionsGranted(true);
+        setMicAccess('granted');
       } catch (err) {
         log.error('Failed to get microphone permissions:', err);
-        setPermissionsGranted(false);
+        setMicAccess('denied');
       }
     };
 
@@ -66,7 +68,18 @@ function App() {
     };
   }, []);
 
-  if (!permissionsGranted) {
+  if (micAccess === 'checking') {
+    return (
+      <div className="app-shell flex flex-col h-dvh items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-accent mb-4 mx-auto"></div>
+          <p className="text-muted">Checking microphone access…</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (micAccess === 'denied') {
     return (
       <div className="app-shell flex flex-col h-dvh items-center justify-center p-8">
         <div className="glass-panel w-full max-w-sm rounded-xl p-8 text-center">
@@ -80,7 +93,7 @@ function App() {
               try {
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 stream.getTracks().forEach(track => track.stop());
-                setPermissionsGranted(true);
+                setMicAccess('granted');
               } catch {
                 setPermissionError('Microphone access was not granted. Allow it in your browser settings, then try again.');
               }

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Mic, Video, Volume2, Check, Loader2, X } from 'lucide-react';
 import { signalWireService } from '../services/signalwire';
+import { useCallStore } from '../hooks/useCallStore';
 import { useDialog } from '../hooks/useDialog';
 
 interface DevicePickerProps {
@@ -14,14 +15,28 @@ interface DeviceSectionProps {
   devices: MediaDeviceInfo[];
   selected: MediaDeviceInfo | null;
   onSelect: (device: MediaDeviceInfo | null) => void;
+  // A line under the heading, for a section whose choice isn't applied at once.
+  hint?: string;
 }
 
-const DeviceSection: React.FC<DeviceSectionProps> = ({ icon: Icon, label, devices, selected, onSelect }) => (
+// Populates the device labels (blank until permission is granted) and
+// re-enumerates. Microphone and camera are asked for separately: one combined
+// request fails as a whole when either is missing or blocked, which would
+// leave the microphones unlabeled too.
+const requestDeviceAccess = async (includeCamera: boolean) => {
+  await signalWireService.requestMediaPermissions({ audio: true }).catch(() => {});
+  if (includeCamera) await signalWireService.requestMediaPermissions({ video: true }).catch(() => {});
+  // Denied, or no hardware: this lists whatever there is.
+  await signalWireService.refreshDevices().catch(() => {});
+};
+
+const DeviceSection: React.FC<DeviceSectionProps> = ({ icon: Icon, label, devices, selected, onSelect, hint }) => (
   <div className="mb-2">
     <div className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium uppercase tracking-wider text-faint">
       <Icon size={13} />
       {label}
     </div>
+    {hint && <p className="px-3 pb-1 text-xs text-faint">{hint}</p>}
     {devices.length === 0 ? (
       <div className="px-3 py-2 text-sm text-faint">No devices found</div>
     ) : (
@@ -32,12 +47,13 @@ const DeviceSection: React.FC<DeviceSectionProps> = ({ icon: Icon, label, device
             key={device.deviceId}
             type="button"
             onClick={() => onSelect(device)}
+            aria-pressed={isSelected}
             className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors hover:bg-surface-hover"
           >
             <span className="flex-1 truncate text-sm text-ink">
               {device.label || `${label} (${device.deviceId.slice(0, 8)})`}
             </span>
-            {isSelected && <Check size={16} className="shrink-0 text-accent-text" />}
+            {isSelected && <Check size={16} className="shrink-0 text-accent-text" aria-hidden />}
           </button>
         );
       })
@@ -60,10 +76,11 @@ export function DeviceSections() {
   const [isRequesting, setIsRequesting] = useState(false);
 
   useEffect(() => {
-    // Populates device labels (blank until permission is granted) and
-    // re-enumerates for anything plugged in since this was last shown.
-    signalWireService.requestMediaPermissions({ audio: true, video: true }).catch(() => {});
-    signalWireService.refreshDevices().catch(() => {});
+    // Also picks up anything plugged in since this was last shown. The camera
+    // is left alone during an audio call, where switching it on just to read
+    // its name would be a surprise; "Grant access" below still asks for it.
+    const { isInCall, isVideoCall } = useCallStore.getState();
+    void requestDeviceAccess(!isInCall || isVideoCall);
 
     const subs = [
       signalWireService.getAudioInputDevices$().subscribe(setAudioInputs),
@@ -82,22 +99,14 @@ export function DeviceSections() {
   const noneFound = audioInputs.length === 0 && videoInputs.length === 0 && audioOutputs.length === 0;
   const grantAccess = async () => {
     setIsRequesting(true);
-    try {
-      await signalWireService.requestMediaPermissions({ audio: true, video: true });
-    } catch {
-      // Denied, or no hardware: refreshDevices() below lists whatever there is.
-    }
-    try {
-      await signalWireService.refreshDevices();
-    } catch {
-      // Same: the lists simply stay as they are.
-    }
+    await requestDeviceAccess(true);
     setIsRequesting(false);
   };
 
   const handleSelectAudioOutput = (device: MediaDeviceInfo | null) => {
     // Feeds toggleSpeaker() -- selecting an output device here is what makes
-    // the in-call speaker toggle actually switch something.
+    // the in-call speaker toggle actually switch something. With Speaker
+    // already on, the service moves the audio to the new device at once.
     signalWireService.setPreferredAudioOutputDevice(device);
   };
 
@@ -123,6 +132,7 @@ export function DeviceSections() {
         devices={audioOutputs}
         selected={selectedAudioOutput}
         onSelect={handleSelectAudioOutput}
+        hint="Used while Speaker is on in a call; otherwise audio plays on the default output."
       />
 
       {noneFound && (

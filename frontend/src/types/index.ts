@@ -9,6 +9,9 @@ export interface CallState {
   // Disturb. Session state, preserved across resets like isClientReady.
   isRegistered: boolean;
   callError: string | null;
+  // The session can't carry on without a reload (token refresh failed). Kept
+  // until dismissed: unlike callError, the next dial doesn't replace it.
+  sessionError: string | null;
   // Informational banner (device switched by the SDK, etc.), shown with an
   // info tone. Preserved across resets like callError; dismissed explicitly.
   clientNotice: string | null;
@@ -114,8 +117,7 @@ export interface DialableAddress {
 
 export interface SwmlScript {
   id: string;
-  script_type?: string;
-  version?: string;
+  display_name: string;
   addresses: DialableAddress[];
 }
 

@@ -59,6 +59,36 @@ test.describe('Desktop workbench', () => {
     await expect(destinations.getByText('bob.test')).toBeVisible();
   });
 
+  test('Switch and the connection test wait for the call to end', async ({ page }) => {
+    await page.route('**/api/subscribers*', (route) => route.fulfill({ json: SUBSCRIBERS }));
+    await page.click('button[title^="Signed in as"]');
+    const switchButton = page.getByRole('region', { name: 'Destinations' }).getByRole('button', { name: 'Switch' });
+    const inspector = page.getByRole('region', { name: 'Inspector' });
+    await inspector.getByLabel('Number or address to test').fill('/public/echo');
+    const run = inspector.getByRole('button', { name: 'Run' });
+    await expect(switchButton).toBeEnabled();
+    await expect(run).toBeEnabled();
+
+    await setState(page, { isInCall: true, callStatus: 'connected', connectedAt: Date.now(), remoteNumber: '+15551234567' });
+    await expect(switchButton).toBeDisabled();
+    await inspector.getByRole('tab', { name: 'Diagnostics' }).click();
+    await expect(run).toBeDisabled();
+    await expect(inspector.getByText('End the call to run the connection test.')).toBeVisible();
+
+    await setState(page, { isInCall: false, callStatus: 'idle', connectedAt: null });
+    await expect(switchButton).toBeEnabled();
+    await expect(run).toBeEnabled();
+  });
+
+  test('the Appearance setting follows the theme button in the bar', async ({ page }) => {
+    const theme = page.getByRole('region', { name: 'Inspector' }).locator('label:has-text("Theme") select');
+    await expect(theme).toHaveValue('dark');
+    await page.click('button[aria-label="Switch to light theme"]');
+    await expect(theme).toHaveValue('light');
+    await page.click('button[aria-label="Switch to dark theme"]');
+    await expect(theme).toHaveValue('dark');
+  });
+
   test('a call switches the Inspector to Quality, whose numbers stay after hangup', async ({ page }) => {
     await evalInApp(page, STATS_STUBS);
     await setState(page, {
@@ -140,6 +170,14 @@ test.describe('Desktop workbench', () => {
     await sheet.locator('button:has-text("+1 (555) 000-0001")').click();
     await expect(page.locator('button[aria-label="Caller ID: +1 (555) 000-0001"]')).toBeVisible();
     await expect(page.locator(ADDRESS_INPUT)).toBeFocused();
+  });
+
+  test('the audio-processing switches read on before any call, as the browser defaults are', async ({ page }) => {
+    const inspector = page.getByRole('region', { name: 'Inspector' });
+    await inspector.getByRole('tab', { name: 'Devices' }).click();
+    for (const label of ['Echo Cancellation', 'Noise Suppression', 'Auto Gain Control']) {
+      await expect(inspector.locator(`button[role="switch"]:has-text("${label}")`)).toHaveAttribute('aria-checked', 'true');
+    }
   });
 
   test('the Devices tab enables audio processing once a call is up', async ({ page }) => {

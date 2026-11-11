@@ -1,13 +1,21 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Loader2, CheckCircle2, XCircle, Download, X, ChevronUp, ChevronDown } from 'lucide-react';
 import type { LogLevel, PreflightResult } from '@signalwire/js';
 import { SheetSection, SheetStat, SheetSwitch } from './SheetPrimitives';
 import EventLog from './EventLog';
 import { signalWireService } from '../services/signalwire';
+import { useCallStore } from '../hooks/useCallStore';
 import { downloadDiagnostics } from '../services/diagnostics';
 import { describeCallError } from '../hooks/useSignalWire';
 import { useDialog } from '../hooks/useDialog';
-import { LOG_LEVELS, loadSettings, saveSettings, type AudioCodec, type DialerSettings } from '../services/settings';
+import {
+  LOG_LEVELS,
+  loadSettings,
+  onSettingsChange,
+  saveSettings,
+  type AudioCodec,
+  type DialerSettings,
+} from '../services/settings';
 import { THEME_PREFERENCES, applyTheme, type ThemePreference } from '../services/theme';
 import { countDigits, getDialAddressType } from '../utils/address';
 
@@ -30,6 +38,8 @@ const deviceLine = (label: string, ok: boolean, okText: string, badText: string,
 // parent supplies the section's horizontal margins.
 export function SettingsBody() {
   const [settings, setSettings] = useState<DialerSettings>(() => loadSettings());
+  // The top bar's theme button saves the Appearance setting too.
+  useEffect(() => onSettingsChange(setSettings), []);
 
   const updateSettings = (partial: Partial<DialerSettings>) => {
     const next = saveSettings(partial);
@@ -166,6 +176,10 @@ export function ConnectionTestBody() {
   const [isRunning, setIsRunning] = useState(false);
   const [result, setResult] = useState<PreflightResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // The test places its own call and takes the client's attention while it
+  // runs, so it is for an idle dialer. The workbench shows this panel beside
+  // a live call, hence the check here as well as in the service.
+  const isCallUp = useCallStore((s) => s.isInCall || s.isIncoming);
 
   // The codec order can't influence a call to a phone number (see the note
   // under the codec list), so say so when the test would place one. The digit
@@ -212,12 +226,15 @@ export function ConnectionTestBody() {
         <button
           type="button"
           onClick={handleRunTest}
-          disabled={!destination.trim() || isRunning}
+          disabled={!destination.trim() || isRunning || isCallUp}
           className="shrink-0 rounded-lg bg-accent px-3 py-2 text-sm font-medium text-on-accent hover:bg-accent-hover disabled:opacity-50"
         >
           {isRunning ? <Loader2 size={16} className="animate-spin" /> : 'Run'}
         </button>
       </div>
+      {isCallUp && !isRunning && (
+        <p className="mt-1.5 text-xs text-faint">End the call to run the connection test.</p>
+      )}
       {testsPhoneNumber && (
         <p className="mt-1.5 text-xs text-faint">
           Phone number: the test call uses G.711 (PCMU/PCMA), so the codec order above has no effect on it.

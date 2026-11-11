@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { ADDRESS_INPUT, FAKE_DIRECTORY, drainLog, evalInApp, openDialer, stubCallMethods } from './helpers';
+import { ADDRESS_INPUT, FAKE_CALL, FAKE_DIRECTORY, drainLog, evalInApp, openDialer, stubCallMethods } from './helpers';
 
 const row = (page: import('@playwright/test').Page, label: string) =>
   page.locator(`#resources-tabpanel div:has(> div > span > span:text-is("${label}"))`);
@@ -47,6 +47,31 @@ test.describe('Directory tab', () => {
     await page.click('button:has-text("All")');
     await expect(row(page, 'IVR App')).toBeVisible();
     await expect(page.locator('button:has-text("Load more")')).toHaveCount(0);
+  });
+
+  test('a filter stops loading when pages stop arriving, and offers Retry', async ({ page }) => {
+    await expect(row(page, 'Alice')).toBeVisible();
+    await drainLog(page); // the init entries
+    // The next page fails: loading starts and ends, nothing is added and more
+    // is still expected, which is what the SDK reports for a failed fetch.
+    await evalInApp(
+      page,
+      `const { directory, loading } = window.__directory;
+      directory.loadMore = () => { log('loadMore'); loading.next(true); setTimeout(() => loading.next(false), 30); };`,
+    );
+    await page.click('button:has-text("Rooms")');
+    const notice = page.getByText("Couldn't load the rest of the directory.");
+    await expect(notice).toBeVisible();
+    expect(await drainLog(page)).toEqual([['loadMore'], ['loadMore']]);
+    await page.waitForTimeout(300);
+    expect(await drainLog(page)).toEqual([]);
+    // What did load is still listed.
+    await expect(row(page, 'Team Room')).toBeVisible();
+
+    // Retry asks again, the same bounded number of times.
+    await page.click('#resources-tabpanel button:has-text("Retry")');
+    await expect.poll(() => page.evaluate(() => window.__log.length)).toBe(2);
+    await expect(notice).toBeVisible();
   });
 
   test('search loads the whole directory, narrows rows, combines with the type filter and clears', async ({ page }) => {
@@ -105,6 +130,53 @@ test.describe('Directory tab', () => {
     await expect(row(page, 'Main IVR').locator('button:has-text("Video")')).toBeDisabled();
   });
 
+  test('a failed Load more keeps the loaded rows and retries that page; a page with nothing dialable still pages on', async ({ page }) => {
+    const script = (id: string, name: string, dialable = true) => ({
+      id,
+      addresses: dialable ? [{ id: `${id}-a`, name: name.toLowerCase(), display_name: name, channels: { audio: `/public/${id}?channel=audio` } }] : [],
+    });
+    // Flipped by the test rather than counted: StrictMode fetches page 1 twice in dev.
+    let failNextPage = true;
+    await page.route('**/api/swml/scripts*', (route) => {
+      const offset = Number(new URL(route.request().url()).searchParams.get('offset') ?? 0);
+      if (offset === 0) {
+        return route.fulfill({ json: { success: true, data: [script('s1', 'Main IVR')], total: 3, offset: 0, limit: 10, has_more: true } });
+      }
+      if (failNextPage) return route.fulfill({ status: 429, json: { success: false, error: 'Rate limit exceeded' } });
+      if (offset === 1) {
+        // A page whose only item has no address: nothing to show, more to come.
+        return route.fulfill({ json: { success: true, data: [script('s2', 'No Address', false)], total: 3, offset: 1, limit: 10, has_more: true } });
+      }
+      return route.fulfill({ json: { success: true, data: [script('s3', 'Last Script')], total: 3, offset, limit: 10, has_more: false } });
+    });
+    await page.click('[role="tab"]:has-text("SWML")');
+    await expect(row(page, 'Main IVR')).toBeVisible();
+
+    const panel = page.locator('#resources-tabpanel');
+    await panel.getByRole('button', { name: 'Load 10 more' }).click();
+    await expect(panel.getByText('Too many requests')).toBeVisible();
+    await expect(row(page, 'Main IVR')).toBeVisible();
+
+    failNextPage = false;
+    await panel.getByRole('button', { name: 'Retry' }).click();
+    await expect(panel.getByText('Too many requests')).toHaveCount(0);
+    await expect(row(page, 'Main IVR')).toBeVisible();
+    // The second page added no rows, and the way forward is still there.
+    await panel.getByRole('button', { name: 'Load 10 more' }).click();
+    await expect(row(page, 'Last Script')).toBeVisible();
+    await expect(panel.getByRole('button', { name: 'Load 10 more' })).toHaveCount(0);
+  });
+
+  test('a first page with nothing dialable says so and still offers the next page', async ({ page }) => {
+    await page.route('**/api/swml/scripts*', (route) =>
+      route.fulfill({ json: { success: true, data: [{ id: 's1', addresses: [] }], total: 2, offset: 0, limit: 10, has_more: true } }),
+    );
+    await page.click('[role="tab"]:has-text("SWML")');
+    const panel = page.locator('#resources-tabpanel');
+    await expect(panel.getByText('Nothing dialable on this page.')).toBeVisible();
+    await expect(panel.getByRole('button', { name: 'Load 10 more' })).toBeVisible();
+  });
+
   test('the REST tabs send the search as q and render the filtered page', async ({ page }) => {
     const seen: Array<string | null> = [];
     const script = (id: string, name: string) => ({
@@ -160,7 +232,16 @@ test.describe('Recents', () => {
     await page.click('button[aria-label="End call"]');
     await expect.poll(() => entries(page)).toMatchObject([{ outcome: 'cancelled', destination: '/public/room-a' }, {}]);
 
-    await evalInApp(page, `s.onIncomingCall('Alice', true, '/private/alice', 'sdk-call-2'); s.onCallEnded(true);`);
+    // A call that rings and is abandoned by the caller, through the service's
+    // own incoming-call handling: it reports the end with wasIncoming false,
+    // since that is only set once a call is answered.
+    await evalInApp(
+      page,
+      `${FAKE_CALL}
+      const ringing = window.__mkCall('sdk-call-2', { status: 'ringing', direction: 'inbound', fromName: 'Alice', from: '/private/alice', mediaDirections: { audio: 'sendrecv', video: 'sendrecv' } });
+      s.handleRingingCall(ringing);
+      ringing.setStatus('destroyed');`,
+    );
     await expect.poll(() => entries(page)).toMatchObject([
       { direction: 'inbound', outcome: 'missed', video: true, destination: '/private/alice', label: 'Alice' },
       {},

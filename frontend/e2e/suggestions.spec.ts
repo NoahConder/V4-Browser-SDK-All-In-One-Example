@@ -42,6 +42,28 @@ test.describe('address suggestions', () => {
     await expect.poll(() => drainLog(page)).toEqual([['makeCall', '/private/alice?channel=video', true]]);
   });
 
+  test('Down keeps the highlighted row in view when the list is taller than its box', async ({ page }) => {
+    await evalInApp(
+      page,
+      `recents.setState({ entries: Array.from({ length: 6 }, (_, i) => ({
+         id: 'room-' + i, destination: '/public/room-' + i, label: 'Room ' + i, direction: 'outbound', outcome: 'answered',
+         startedAt: Date.now() - i * 1000, video: false,
+       })) });`,
+    );
+    await page.locator(ADDRESS_INPUT).fill('room');
+    const listbox = page.getByRole('listbox', { name: 'Suggested destinations' });
+    await expect(listbox.getByRole('option')).toHaveCount(6);
+    for (let i = 0; i < 6; i++) await page.keyboard.press('ArrowDown');
+    const last = listbox.getByRole('option').last();
+    await expect(last).toHaveAttribute('aria-selected', 'true');
+    const within = await last.evaluate((option) => {
+      const box = option.parentElement!.getBoundingClientRect();
+      const row = option.getBoundingClientRect();
+      return row.top >= box.top - 1 && row.bottom <= box.bottom + 1;
+    });
+    expect(within).toBe(true);
+  });
+
   test('digits match a recent number; Escape closes the list; a click picks', async ({ page }) => {
     const input = page.locator(ADDRESS_INPUT);
     const listbox = page.getByRole('listbox', { name: 'Suggested destinations' });

@@ -77,6 +77,7 @@ export function DialButtons({ audioPath, videoPath, label, disabled, disabledRea
         onClick={() => onSelectAddress(audioPath, false, label)}
         disabled={disabled}
         title={disabled ? disabledReason : undefined}
+        aria-label={`Audio call to ${label}`}
         className={DIAL_BUTTON_CLASS}
       >
         <Phone size={13} /> Audio
@@ -86,7 +87,7 @@ export function DialButtons({ audioPath, videoPath, label, disabled, disabledRea
         onClick={() => videoPath && onSelectAddress(videoPath, true, label)}
         disabled={!videoPath || disabled}
         title={disabled ? disabledReason : undefined}
-        aria-label="Dial with video"
+        aria-label={`Video call to ${label}`}
         className={DIAL_BUTTON_CLASS}
       >
         <Video size={13} /> Video
@@ -138,7 +139,10 @@ export function AddressRowList({
     );
   }
 
-  if (error) {
+  // Nothing loaded: the error stands alone, and Retry starts over. With rows
+  // on screen (a later page failed) the rows stay and the error takes the
+  // Load more button's place below.
+  if (error && rows.length === 0) {
     return (
       <div className="flex items-center justify-between gap-3 py-4 text-sm text-danger-text">
         <span>{error}</span>
@@ -155,12 +159,15 @@ export function AddressRowList({
     );
   }
 
-  if (rows.length === 0) {
-    return <div className="py-4 text-sm text-muted">{emptyMessage}</div>;
-  }
-
   return (
     <div className="space-y-1">
+      {rows.length === 0 && (
+        // With more pages to come this page just had nothing dialable on it;
+        // the list isn't empty until the last page says so.
+        <div className="py-4 text-sm text-muted">
+          {hasMore ? 'Nothing dialable on this page.' : emptyMessage}
+        </div>
+      )}
       {rows.map((row) => (
         <div key={row.key} className="rounded-lg px-2 py-2 transition-colors hover:bg-surface-hover">
           <div className="mb-1.5 flex flex-col">
@@ -188,7 +195,14 @@ export function AddressRowList({
         </div>
       ))}
 
-      {hasMore ? (
+      {error ? (
+        <div className="mt-2 flex items-center justify-between gap-3 py-2 text-xs text-danger-text">
+          <span>{error}</span>
+          <button type="button" onClick={onLoadMore} className="shrink-0 rounded-full border border-edge-strong bg-surface-2 px-3 py-1 text-xs font-medium text-ink transition-colors hover:bg-surface-hover">
+            Retry
+          </button>
+        </div>
+      ) : hasMore ? (
         <button
           type="button"
           onClick={onLoadMore}

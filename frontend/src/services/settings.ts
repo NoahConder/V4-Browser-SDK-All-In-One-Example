@@ -68,6 +68,18 @@ export function loadSettings(): DialerSettings {
   }
 }
 
+const listeners = new Set<(settings: DialerSettings) => void>();
+
+// Called with the full settings after every save, so a control that shows a
+// setting stays right when another control changes it (the top bar's theme
+// button and the Appearance select). Returns the unsubscribe function.
+export function onSettingsChange(listener: (settings: DialerSettings) => void): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
 export function saveSettings(partial: Partial<DialerSettings>): DialerSettings {
   const next = { ...loadSettings(), ...partial };
   try {
@@ -76,5 +88,6 @@ export function saveSettings(partial: Partial<DialerSettings>): DialerSettings {
     // Storage unavailable (private mode / quota) -- settings still apply for
     // this session.
   }
+  listeners.forEach((listener) => listener(next));
   return next;
 }

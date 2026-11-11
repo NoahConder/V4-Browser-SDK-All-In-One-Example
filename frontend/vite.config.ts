@@ -3,8 +3,9 @@ import react from '@vitejs/plugin-react'
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
-  // backend/.env is the only env file: FRONTEND_URL feeds allowedHosts below and
-  // DIALER_API_KEY is baked into the bundle via `define` (there is no frontend/.env).
+  // backend/.env is the only env file: FRONTEND_URL feeds allowedHosts below,
+  // PORT is where the /api proxy finds the backend, and DIALER_API_KEY is baked
+  // into the bundle via `define` (there is no frontend/.env).
   const env = loadEnv(mode, '../backend', '')
 
   // Parse the hostname from FRONTEND_URL if it exists
@@ -48,7 +49,7 @@ export default defineConfig(({ mode }) => {
       allowedHosts, // localhost plus FRONTEND_URL's host (e.g. an ngrok tunnel)
       proxy: {
         '/api': {
-          target: 'http://localhost:5001',
+          target: `http://localhost:${env.PORT || 5001}`,
           changeOrigin: true,
         },
       },

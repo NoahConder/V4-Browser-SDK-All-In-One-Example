@@ -14,7 +14,7 @@ type SelectAddress = (path: string, video: boolean, label?: string) => void;
 const PAGE_SIZE = 10;
 
 // Do Not Disturb = unregistered. The switch reflects the SDK's isRegistered$
-// (via the store), not an optimistic flag; inert while toggling or
+// (via the store), not an optimistic flag; disabled while toggling or
 // disconnected. Shown at the top of the phone's Subscriber panel and in the
 // Session section of the workbench's Diagnostics tab.
 export function DoNotDisturbSwitch() {
@@ -35,14 +35,13 @@ export function DoNotDisturbSwitch() {
   };
 
   return (
-    <div className={isToggling || !isClientReady ? 'pointer-events-none opacity-50' : ''}>
-      <SheetSwitch
-        label="Do Not Disturb"
-        hint={isRegistered ? 'Stay connected but stop receiving calls' : 'Not receiving calls (this session only)'}
-        checked={!isRegistered}
-        onChange={toggle}
-      />
-    </div>
+    <SheetSwitch
+      label="Do Not Disturb"
+      hint={isRegistered ? 'Stay connected but stop receiving calls' : 'Not receiving calls (this session only)'}
+      checked={!isRegistered}
+      onChange={toggle}
+      disabled={isToggling || !isClientReady}
+    />
   );
 }
 
@@ -63,6 +62,9 @@ export function SubscriberList({ onSelectAddress }: { onSelectAddress: SelectAdd
   const [reloadKey, setReloadKey] = useState(0);
 
   const activeId = signalWireService.getActiveSubscriberId();
+  // Switching reloads the page under another identity, which would leave a
+  // live or ringing call behind, so it waits for the call to end.
+  const isCallUp = useCallStore((s) => s.isInCall || s.isIncoming);
 
   useEffect(() => {
     let cancelled = false;
@@ -116,7 +118,10 @@ export function SubscriberList({ onSelectAddress }: { onSelectAddress: SelectAdd
     );
   }
 
-  if (error) {
+  // Nothing loaded: the error stands alone and Retry starts over. With
+  // subscribers on screen (a later page failed) they stay, and the error
+  // takes the Load more button's place below.
+  if (error && subscribers.length === 0) {
     return (
       <div className="flex items-center justify-between gap-3 px-3 py-4 text-sm text-danger-text">
         <span>{error}</span>
@@ -161,8 +166,13 @@ export function SubscriberList({ onSelectAddress }: { onSelectAddress: SelectAdd
                 <button
                   type="button"
                   onClick={() => switchSubscriber(subscriber.id)}
-                  title="Reload the dialer signed in as this subscriber"
-                  className="shrink-0 rounded-md px-2.5 py-1 text-xs font-medium text-muted transition-colors hover:bg-surface-hover hover:text-ink"
+                  disabled={isCallUp}
+                  title={
+                    isCallUp
+                      ? 'End the call before switching subscriber'
+                      : 'Reload the dialer signed in as this subscriber'
+                  }
+                  className="shrink-0 rounded-md px-2.5 py-1 text-xs font-medium text-muted transition-colors hover:bg-surface-hover hover:text-ink disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted"
                 >
                   Switch
                 </button>
@@ -184,7 +194,14 @@ export function SubscriberList({ onSelectAddress }: { onSelectAddress: SelectAdd
         );
       })}
 
-      {hasMore && (
+      {error ? (
+        <div className="mt-1 flex items-center justify-between gap-3 px-3 py-2 text-xs text-danger-text">
+          <span>{error}</span>
+          <button type="button" onClick={handleLoadMore} className="shrink-0 rounded-full border border-edge-strong bg-surface-2 px-3 py-1 text-xs font-medium text-ink transition-colors hover:bg-surface-hover">
+            Retry
+          </button>
+        </div>
+      ) : hasMore && (
         <button
           type="button"
           onClick={handleLoadMore}

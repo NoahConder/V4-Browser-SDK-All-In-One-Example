@@ -41,7 +41,7 @@ class FakeSignalWire:
             'subscriber_id': 'token-namespace-id',
         }
 
-    def refresh_token(self, reference='swdialer', old_token=None):
+    def refresh_token(self, reference='swdialer'):
         return self.create_subscriber_token(reference=reference)
 
 

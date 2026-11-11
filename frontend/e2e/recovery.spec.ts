@@ -3,7 +3,7 @@ import { callStatusText, evalInApp, openDialer } from './helpers';
 
 // Drives the service's peer-connection monitor with a fake RTCPeerConnection
 // (an EventTarget with settable states) attached to a fake current call, and
-// a fake client whose recovery preferences shrink the grace window to ~5.5 s.
+// a fake client whose recovery preferences shrink the grace window to 5 s.
 const HARNESS = `
   class FakePc extends EventTarget {
     iceConnectionState = 'new'; connectionState = 'new';
@@ -33,7 +33,7 @@ const HARNESS = `
       const pc = new FakePc();
       const call = { id: 'fake', status: 'connected', rtcPeerConnection: pc, hangups: 0, hangup: async () => { call.hangups++; }, localStream: null, self: null };
       window.__hc = call;
-      s.currentCall = call; s.wasIncomingCall = false; s.lastRecoveryState = 'idle';
+      s.currentCall = call; s.connectedCall = call; s.wasIncomingCall = false; s.lastRecoveryState = 'idle';
       store.getState().setCallState({ isInCall: true, callStatus: 'connected', remoteNumber: '+15551234567', connectedAt: Date.now() });
       s.monitorPeerConnection(pc, call);
       return pc;
@@ -61,6 +61,24 @@ test.describe('media loss vs. call end', () => {
     await evalInApp(page, HARNESS);
   });
 
+  test('a call whose media fails before it ever connected ends at once and hangs up', async ({ page }) => {
+    await page.evaluate(() => {
+      window.__pc = window.__h.begin() as Window['__pc'];
+    });
+    // Still "Calling…": the call has not reached connected.
+    await evalInApp(page, `s.connectedCall = null; store.getState().setCallState({ callStatus: 'connecting', connectedAt: null });`);
+    await page.evaluate(() => window.__pc.setIce('failed'));
+    await expect.poll(() => state(page)).toMatchObject({ inCall: false, hasCall: false, timer: false, listeners: 0, hangups: 1 });
+    await expect(page.getByText("The call couldn't connect")).toBeVisible();
+    // ICE disconnected alone is not a failure yet, connected or not.
+    await page.evaluate(() => {
+      window.__pc = window.__h.begin() as Window['__pc'];
+    });
+    await evalInApp(page, `s.connectedCall = null;`);
+    await page.evaluate(() => window.__pc.setIce('disconnected'));
+    await expect.poll(() => state(page)).toMatchObject({ inCall: true, hasCall: true, disrupted: true, timer: true });
+  });
+
   test('ICE failed shows Reconnecting… and keeps the call; recovery clears it', async ({ page }) => {
     await page.evaluate(() => {
       window.__pc = window.__h.begin() as Window['__pc'];
@@ -83,6 +101,7 @@ test.describe('media loss vs. call end', () => {
     expect(await state(page)).toMatchObject({ inCall: true, hasCall: true, disrupted: true, hangups: 0 });
     // Giving up also hangs up, so the platform doesn't hold the far end on a dead call.
     await expect.poll(() => state(page), { timeout: 10_000 }).toMatchObject({ inCall: false, hasCall: false, listeners: 0, hangups: 1 });
+    await expect(page.getByText("its media connection was lost and didn't come back")).toBeVisible();
 
     // Events from the dead connection are ignored once it's over.
     await page.evaluate(() => window.__pc.setIce('closed'));

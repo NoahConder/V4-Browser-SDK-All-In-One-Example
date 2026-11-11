@@ -68,10 +68,13 @@ function EventLog({ className = 'max-h-56', fill = false }: EventLogProps) {
 
   const visible = events.filter((event) => event.at > clearedAt && matchesFilter(event, filter));
 
+  // Keyed on the newest line, not the count: at the row cap each new line
+  // replaces the oldest and the count stays the same.
+  const newest = visible[visible.length - 1];
   useEffect(() => {
     const list = listRef.current;
     if (list && isPinnedRef.current) list.scrollTop = list.scrollHeight;
-  }, [visible.length]);
+  }, [newest]);
 
   const handleScroll = () => {
     const list = listRef.current;

@@ -52,6 +52,35 @@ export const stubCallMethods = (page: Page) =>
   `,
   );
 
+// A fake SDK Call built from real rxjs Observables (borrowed from one the
+// service returns, since bare specifiers don't resolve from page.evaluate):
+// window.__mkCall(id, fields) has a status$ driven by setStatus() and an
+// errors$ driven by emitError(), counts hangup() and reject() calls, and
+// never emits on anything else.
+export const FAKE_CALL = `
+  window.__mkCall = (id, fields = {}) => {
+    const Observable = s.getNetworkMetrics$().constructor;
+    const never = new Observable(() => {});
+    const subs = new Set();
+    const errorSubs = new Set();
+    const call = {
+      id, status: 'trying', direction: 'outbound', to: id, toName: id,
+      mediaDirections: { audio: 'sendrecv' }, rtcPeerConnection: undefined, localStream: null, self: null,
+      hangups: 0, rejects: 0,
+      hangup: async () => { call.hangups++; call.setStatus('destroyed'); },
+      reject: () => { call.rejects++; },
+      status$: new Observable((sub) => { sub.next(call.status); subs.add(sub); return () => subs.delete(sub); }),
+      errors$: new Observable((sub) => { errorSubs.add(sub); return () => errorSubs.delete(sub); }),
+      remoteStream$: never, localStream$: never, self$: never,
+      qualityLevel$: never, qualityScore$: never, networkIssues$: never, recoveryState$: never, recoveryEvent$: never,
+      setStatus(next) { call.status = next; [...subs].forEach((sub) => sub.next(next)); },
+      emitError(callError) { [...errorSubs].forEach((sub) => sub.next(callError)); },
+      ...fields,
+    };
+    return call;
+  };
+`;
+
 // The visible status line on the call screen ("Calling…", "Connected", …).
 export const callStatusText = (page: Page) => page.locator('[aria-live="polite"]').first().innerText();
 
@@ -78,6 +107,7 @@ export const FAKE_DIRECTORY = `
     loadMore() { log('loadMore'); loading.next(true); setTimeout(() => { addresses.next([...page1, ...page2]); hasMore.next(false); loading.next(false); }, 50); },
   };
   s.getDirectory$ = () => new Observable((sub) => { sub.next(directory); });
+  window.__directory = { directory, loading };
   s.getOwnAddressIds = () => new Set(['a-me']);
 `;
 

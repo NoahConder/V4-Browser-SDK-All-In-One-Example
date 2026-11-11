@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { Phone, PhoneOff, Video } from 'lucide-react';
 import AppBar from './AppBar';
 import { useWorkbench } from '../hooks/useWorkbench';
@@ -20,6 +20,13 @@ const IncomingCall: React.FC<IncomingCallProps> = ({
   onReject,
 }) => {
   const workbench = useWorkbench();
+  // The dialer's focused address field is gone, so take the focus here: on
+  // the caller line, not on Accept or Decline, so a key already on its way to
+  // the field can't answer or decline the call. Tab goes on to the buttons.
+  const callerRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    callerRef.current?.focus();
+  }, []);
 
   return (
     <div className={`app-shell flex flex-col ${workbench ? 'h-full min-h-0' : 'h-dvh'}`}>
@@ -27,13 +34,16 @@ const IncomingCall: React.FC<IncomingCallProps> = ({
 
       <div className="flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto px-4 py-6">
         <div className={`w-full max-w-xl ${workbench ? 'glass-panel rounded-xl p-6' : 'px-2'}`}>
-          <div className="inline-flex items-center gap-2 text-sm text-muted">
-            <span className="h-1.5 w-1.5 rounded-full bg-success motion-safe:animate-pulse" />
-            {isVideoCall ? 'Incoming video call' : 'Incoming call'}
-            {isVideoCall && <Video size={14} className="text-faint" />}
-          </div>
-          <div className="mt-2 font-display text-3xl font-medium tracking-tight wrap-anywhere select-text sm:text-4xl">
-            {phoneNumber}
+          {/* role="alert": announced as soon as the card appears. */}
+          <div ref={callerRef} tabIndex={-1} role="alert" className="outline-hidden">
+            <div className="inline-flex items-center gap-2 text-sm text-muted">
+              <span className="h-1.5 w-1.5 rounded-full bg-success motion-safe:animate-pulse" />
+              {isVideoCall ? 'Incoming video call' : 'Incoming call'}
+              {isVideoCall && <Video size={14} className="text-faint" />}
+            </div>
+            <div className="mt-2 font-display text-3xl font-medium tracking-tight wrap-anywhere select-text sm:text-4xl">
+              {phoneNumber}
+            </div>
           </div>
 
           <div className="mt-8 grid grid-cols-2 gap-3">

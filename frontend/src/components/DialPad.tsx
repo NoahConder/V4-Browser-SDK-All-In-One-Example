@@ -165,7 +165,9 @@ const DialPad: React.FC<DialPadProps> = ({
                   <span className="dial-button-number">{key.number}</span>
                   {key.letters && (
                     <span className="dial-button-letters">
-                      {key.letters.trim() || '\u00A0'} {/* Non-breaking space for alignment */}
+                      {/* The '+' under 0 is the hold action, which only the idle
+                          dialer has. A non-breaking space keeps the alignment. */}
+                      {(key.number === '0' && !isDial ? '' : key.letters.trim()) || '\u00A0'}
                     </span>
                   )}
                 </>

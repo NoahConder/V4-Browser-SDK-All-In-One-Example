@@ -72,7 +72,9 @@ const CallScreen: React.FC<CallScreenProps> = ({
   } = useSignalWire();
   const callStatus = useCallStore((s) => s.callStatus);
   const callError = useCallStore((s) => s.callError);
+  const sessionError = useCallStore((s) => s.sessionError);
   const clientNotice = useCallStore((s) => s.clientNotice);
+  const callDirection = useCallStore((s) => s.callDirection);
   const isOnHold = useCallStore((s) => s.isOnHold);
   const canScreenShare = useCallStore((s) => s.canScreenShare);
   const screenShareStatus = useCallStore((s) => s.screenShareStatus);
@@ -160,7 +162,9 @@ const CallScreen: React.FC<CallScreenProps> = ({
         ? 'Connected'
         : callStatus === 'ringing'
           ? 'Ringing…'
-          : 'Calling…';
+          : callDirection === 'inbound'
+            ? 'Connecting…'
+            : 'Calling…';
 
   return (
     <div className={`app-shell flex flex-col ${workbench ? 'h-full min-h-0' : 'h-dvh'}`}>
@@ -168,6 +172,9 @@ const CallScreen: React.FC<CallScreenProps> = ({
       {!workbench && <AppBar />}
 
       <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+        {sessionError && (
+          <ErrorBanner message={sessionError} onDismiss={() => setCallState({ sessionError: null })} />
+        )}
         {callError && (
           <ErrorBanner message={callError} onDismiss={() => setCallState({ callError: null })} />
         )}
@@ -329,6 +336,7 @@ const CallScreen: React.FC<CallScreenProps> = ({
                 isKeypadOpen={showDialPad}
                 onToggleKeypad={() => setShowDialPad((prev) => !prev)}
                 isCameraOn={isCameraOn}
+                canUseCamera={isVideoCall}
                 onToggleCamera={onToggleCamera}
                 isOnHold={isOnHold}
                 onToggleHold={toggleHold}

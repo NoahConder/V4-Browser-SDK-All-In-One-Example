@@ -41,15 +41,21 @@ class FakeSignalWire:
         self.address_calls = []
 
     def list_swml_scripts(self):
-        return [{'id': f's{i}', 'display_name': name, 'script_type': 'swml'} for i, name in enumerate(SCRIPT_NAMES)]
+        return [{'id': f's{i}', 'display_name': name, 'type': 'swml_script', 'project_id': 'proj-1',
+                 'swml_script': {'id': f'inner-{i}', 'contents': {'sections': {'main': []}},
+                                 'request_url': 'https://example.com/swml'}}
+                for i, name in enumerate(SCRIPT_NAMES)]
 
     def list_swml_script_addresses(self, script_id):
         self.address_calls.append(script_id)
         return [{'id': f'{script_id}-addr', 'name': script_id, 'display_name': script_id.upper(),
+                 'resource_id': script_id, 'type': 'app',
                  'channels': {'audio': f'/public/{script_id}?channel=audio'}}]
 
     def list_sip_credentials(self):
-        return [{'id': 'cred-1', 'display_name': 'Alice Desk', 'sip_endpoint': {'username': 'alice-sip'}},
+        return [{'id': 'cred-1', 'display_name': 'Alice Desk', 'project_id': 'proj-1',
+                 'sip_endpoint': {'username': 'alice-sip', 'caller_id': '+15550100', 'send_as': '+15550100',
+                                  'call_handler': 'default', 'encryption': 'optional'}},
                 {'id': 'cred-2', 'display_name': 'Bob Desk', 'sip_endpoint': {'username': 'bob-sip'}}]
 
     def list_sip_credential_addresses(self, credential_id):
@@ -74,7 +80,7 @@ class FakeSignalWire:
     def create_subscriber_token(self, reference, expires_in=3600):
         return {'token': 't', 'expires_at': '2026-01-01T00:00:00+00:00', 'subscriber_id': 'x'}
 
-    def refresh_token(self, reference='swdialer', old_token=None):
+    def refresh_token(self, reference='swdialer'):
         return self.create_subscriber_token(reference)
 
 
@@ -139,6 +145,16 @@ def test_page_parameters_are_clamped(api):
     assert body['limit'] == 1
     body = client.get('/api/swml/scripts?offset=100', headers=KEY).get_json()
     assert body['data'] == [] and body['has_more'] is False
+
+
+def test_swml_scripts_are_trimmed_to_what_the_picker_shows(api):
+    client, _ = api
+    body = client.get('/api/swml/scripts?limit=1', headers=KEY).get_json()
+    assert body['data'] == [{
+        'id': 's0', 'display_name': SCRIPT_NAMES[0],
+        'addresses': [{'id': 's0-addr', 'name': 's0', 'display_name': 'S0',
+                       'channels': {'audio': '/public/s0?channel=audio'}}],
+    }]
 
 
 def test_sip_credentials_keep_the_dial_username(api):

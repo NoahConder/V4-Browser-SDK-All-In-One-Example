@@ -31,7 +31,7 @@ import { ReplaySubject, combineLatest, distinctUntilChanged, map, of, switchMap 
 import type { Observable, Subscription } from 'rxjs';
 import type { TokenData } from '../types';
 import axios from 'axios';
-import { authAPI } from './api';
+import { authAPI, describeFetchError, isTransientFetchError } from './api';
 import { toneService } from './tones';
 import { RemoteAudioMeter } from './remoteAudioMeter';
 import { loadSettings, type DialerSettings } from './settings';
@@ -75,6 +75,16 @@ export function switchSubscriber(subscriberId: string | null) {
   }
   window.location.reload();
 }
+
+// How long refresh() keeps asking the backend for a new token before it gives
+// the SDK a failure. The SDK asks a second or so before the current token
+// expires and disconnects the client after five failures in a row, which
+// ends any live call. A session whose token has lapsed carries on meanwhile,
+// and a refresh that arrives late is still accepted, so a backend that is
+// restarting, unreachable or rate limiting is waited out rather than
+// reported at once.
+const REFRESH_RETRY_WINDOW_MS = 120_000;
+const REFRESH_RETRY_DELAYS_MS = [1000, 2000, 4000, 8000, 15_000];
 
 // A Call in one of these is over -- used when deciding whether a call the SDK
 // put in session.calls$ is still worth adopting.
@@ -186,6 +196,10 @@ export interface SignalWireCallbacks {
   // don't happen inside any user-initiated action's try/catch, so they'd
   // otherwise only ever reach the log (log.error/log.warn).
   onClientError?: (message: string) => void;
+  // The session itself is in trouble (the token can't be refreshed) and only
+  // a reload fixes it. Separate from onClientError, whose message the next
+  // dial replaces: this one has to stay up until it is dismissed.
+  onSessionError?: (message: string) => void;
   // Per the SDK's screen-sharing guide: browser support
   // (screenShareApiSupported) AND the server's `screenshare` capability for
   // this call (call.self.capabilities.screenshare$), fired per-call from
@@ -257,8 +271,16 @@ class SignalWireService {
   private client: InstanceType<typeof SignalWire> | null = null;
   private currentCall: Call | null = null;
   private pendingCall: Call | null = null;
-  private currentToken: TokenData | null = null;
+  // Who the last token was minted for (the backend's resolved subscriber id
+  // and display name). The token itself is handed to the SDK and not kept.
+  private activeSubscriber: { id?: string; displayName?: string } | null = null;
   private wasIncomingCall: boolean = false;
+  // The current call was adopted after a reload rather than dialed or
+  // answered here; only used to word why it ended.
+  private wasReattachedCall = false;
+  // The last fatal error the current call reported on errors$, which the SDK
+  // follows with status 'failed'; says why the call ended.
+  private fatalCallError: string | null = null;
   // The call that has reached 'connected' at least once. After early media,
   // status$ can move from 'connected' back to 'connecting' when the far end
   // answers and stay there while the call is up, so once a call has been
@@ -271,26 +293,37 @@ class SignalWireService {
   private isInitialized: boolean = false;
   private isInitializing: boolean = false;
   private isReady: boolean = false;
-  // Set for the duration of client.dial(). createOutboundCall() pushes the new
-  // Call into session.calls$ before dial() resolves, so without this the
-  // reattach-adoption subscription would see our own outbound call as an
-  // untracked one and adopt it a moment before makeCall() assigns currentCall.
-  private isDialing: boolean = false;
+  // makeCall() attempts whose client.dial() hasn't settled yet. More than one
+  // can be in flight: dial() can't be cancelled, so End abandons an attempt
+  // without waiting for it and Call can start the next straight away.
+  // createOutboundCall() pushes the new Call into session.calls$ before dial()
+  // resolves, so while any attempt is in flight (isDialing) the
+  // reattach-adoption subscription leaves calls$ alone; it would otherwise
+  // adopt our own outbound call a moment before makeCall() assigns currentCall.
+  private dialsInFlight = 0;
   // Set for the duration of client.preflight(). Its media test places a real
   // call through client.dial() -- not makeCall(), so isDialing isn't set --
   // and that call lands in session.calls$ too. This flag keeps
   // adoptUntrackedCall() from treating the test call as the user's call.
   private preflightInProgress: boolean = false;
-  // Set when endCall() runs while client.dial() is still pending. dial() can't
-  // be cancelled and can stay pending for a long time (the docs call local
-  // media acquisition "unbounded" -- e.g. a permission prompt), so the UI may
-  // already have reset to the dialer by the time it resolves. makeCall()
-  // checks this and hangs up instead of adopting a call no screen owns.
-  private dialCancelled: boolean = false;
+  // Each makeCall() takes the next attempt number, and endCall() while
+  // dialing cancels every attempt up to the latest. dial() can stay pending
+  // for a long time (the docs call local media acquisition "unbounded" --
+  // e.g. a permission prompt), so by the time it settles the UI may be back
+  // on the dialer or already showing a newer call. An attempt adopts its call
+  // only if it is still the latest and wasn't cancelled; otherwise makeCall()
+  // hangs the call up, so no call is ever live without a screen that owns it.
+  private dialAttempt = 0;
+  private cancelledDialAttempt = 0;
   // Mirrors the local mic's processing state for the controls sheet. Read
   // from the audio track's getSettings() when the local stream arrives, then
   // updated from each successful call.set*() (see toggleEchoCancellation).
   private audioProcessing: AudioProcessingState = { ...DEFAULT_AUDIO_PROCESSING };
+  // Whether Speaker is on for the current call: the chosen output device is
+  // applied to whichever element plays the remote audio, re-applied when
+  // that moves to the remote <video>, and dropped when the call ends (the
+  // store's isSpeakerOn resets with every call).
+  private isSpeakerOn = false;
   // Set via setPreferredAudioOutputDevice() (called by the device picker);
   // toggleSpeaker() applies it to the remote media sink. Speaker toggling has
   // no effect until a device has been explicitly selected here.
@@ -365,6 +398,7 @@ class SignalWireService {
   private onRemoteVideoChange: ((hasVideo: boolean) => void) | null = null;
   private onReadyChange: ((ready: boolean) => void) | null = null;
   private onClientError: ((message: string) => void) | null = null;
+  private onSessionError: ((message: string) => void) | null = null;
   private onCanScreenShareChange: ((canScreenShare: boolean) => void) | null = null;
   private onScreenShareStatusChange: ((status: ScreenShareStatus) => void) | null = null;
   private onAudioProcessingChange: ((state: AudioProcessingState) => void) | null = null;
@@ -389,6 +423,7 @@ class SignalWireService {
     this.onRemoteVideoChange = callbacks.onRemoteVideoChange || null;
     this.onReadyChange = callbacks.onReadyChange || null;
     this.onClientError = callbacks.onClientError || null;
+    this.onSessionError = callbacks.onSessionError || null;
     this.onCanScreenShareChange = callbacks.onCanScreenShareChange || null;
     this.onScreenShareStatusChange = callbacks.onScreenShareStatusChange || null;
     this.onAudioProcessingChange = callbacks.onAudioProcessingChange || null;
@@ -422,7 +457,7 @@ class SignalWireService {
           // `context.fingerprint` (DPoP) is available here but unused: this
           // app mints a plain SAT, so the SDK renews it through refresh().
           const tokenData = await this.fetchTokenForSelectedSubscriber();
-          this.currentToken = tokenData;
+          this.rememberSubscriber(tokenData);
           this.logEvent('client', 'Token minted', tokenData.subscriber_display_name);
           return {
             token: tokenData.token,
@@ -435,8 +470,8 @@ class SignalWireService {
         refresh: async () => {
           // Same selected id as authenticate() -- otherwise refresh would
           // silently fall back to the default subscriber mid-session.
-          const tokenData = await authAPI.refreshToken(this.currentToken?.token, getSelectedSubscriberId());
-          this.currentToken = tokenData;
+          const tokenData = await this.refreshTokenPatiently();
+          this.rememberSubscriber(tokenData);
           this.logEvent('client', 'Token refreshed', tokenData.subscriber_display_name);
           return {
             token: tokenData.token,
@@ -484,12 +519,12 @@ class SignalWireService {
       // Subscribe to errors. Most errors here are transient/best-effort (e.g.
       // the RPCTimeoutError noted in disconnect() below) and already handled
       // where they're thrown, so only session-ending ones are escalated to
-      // the UI via onClientError — everything else is only logged.
+      // the UI via onSessionError — everything else is only logged.
       this.errorSub = this.client.errors$.subscribe((error) => {
         log.error('SignalWire error:', error);
         this.logEvent('error', 'Client error', errorText(error));
         if (error instanceof TokenRefreshError || error instanceof InvalidCredentialsError) {
-          this.onClientError?.('Your session could not be refreshed. Please reload the page to reconnect.');
+          this.onSessionError?.('Your session could not be refreshed. Please reload the page to reconnect.');
         }
       });
 
@@ -502,7 +537,7 @@ class SignalWireService {
         log.warn('SignalWire warning:', warning.code, warning.message);
         this.logEvent('warning', warning.code, warning.message);
         if (warning.code === 'credential_no_refresh_handler') {
-          this.onClientError?.('Your session will expire soon and cannot auto-refresh. Reload the page before it does to stay connected.');
+          this.onSessionError?.('Your session will expire soon and cannot auto-refresh. Reload the page before it does to stay connected.');
         }
       });
 
@@ -547,74 +582,11 @@ class SignalWireService {
       await this.client.register();
       log.debug('Client registered and ready for incoming calls');
 
-      // Subscribe to incoming calls
+      // Subscribe to incoming calls. The SDK lists the newest call first;
+      // take the oldest first so the call that rang first keeps the screen.
       this.incomingCallSub = this.client.session.incomingCalls$.subscribe((calls) => {
-        const ringingCall = calls.find(c => c.status === 'ringing' || c.status === 'new');
-        if (!ringingCall) return;
-
-        // fromName/from are public on the v4 Call type (4.0.0-rc.0)
-        const rawName = ringingCall.fromName;
-        const callerId = (rawName && rawName !== '_undef_') ? rawName : ringingCall.from || 'Unknown';
-
-        // Auto-reject if already in a call -- or still placing one: while
-        // dial() is in flight currentCall isn't set yet, but the UI is already
-        // on the call screen, so a ringing pendingCall would be unreachable.
-        if (this.currentCall || this.isDialing) {
-          if (!this.autoRejectedCallIds.has(ringingCall.id)) {
-            this.autoRejectedCallIds.add(ringingCall.id);
-            log.debug('Already in a call - auto-rejecting incoming call from', callerId);
-            this.logEvent('call', 'Auto-rejected a second incoming call', callerId);
-            this.onIncomingCallAutoRejected?.(callerId, ringingCall.from);
-            ringingCall.reject();
-          }
-          return;
-        }
-
-        // Don't re-notify for the same pending call
-        if (this.pendingCall && this.pendingCall.id === ringingCall.id) return;
-
-        this.pendingCall = ringingCall;
-        log.debug('Incoming call from:', callerId);
-        this.logEvent('call', 'Incoming call', `${callerId} · ${ringingCall.id}`);
-
-        // Best-effort: mediaDirections reflects the inbound SDP offer, so a
-        // video-enabled offer should show as something other than 'inactive'
-        // even before we answer. Defaults to false if the SDK hasn't parsed
-        // the offer yet -- worst case we just don't show the video badge.
-        const hasVideo = ringingCall.mediaDirections?.video != null
-          && ringingCall.mediaDirections.video !== 'inactive';
-
-        toneService.playIncomingCallTone();
-        this.onIncomingCall?.(callerId, hasVideo, ringingCall.from, ringingCall.id);
-
-        // Watch for the caller hanging up before we answer. This also fires
-        // when an answered or declined call ends later; by then it is no
-        // longer the pending call, so only the unsubscribe applies.
-        const cleanupCanceled = () => {
-          if (this.pendingCall?.id === ringingCall.id) {
-            log.debug('Incoming call canceled by caller');
-            this.logEvent('call', 'Caller hung up before answer', callerId);
-            toneService.stopIncomingCallTone();
-            this.pendingCall = null;
-            this.handleCallEnded();
-          }
-          pendingSub.unsubscribe();
-        };
-
-        const pendingSub = ringingCall.status$.subscribe({
-          next: (status) => {
-            if (status === 'disconnected' || status === 'failed' || status === 'destroyed') {
-              cleanupCanceled();
-            }
-          },
-          // The SDK completes all subjects on destroy() without emitting a
-          // terminal status, so we must also handle completion.
-          complete: () => {
-            if (this.pendingCall?.id === ringingCall.id) {
-              cleanupCanceled();
-            }
-          },
-        });
+        const ringing = calls.filter((c) => c.status === 'ringing' || c.status === 'new');
+        for (const ringingCall of ringing.reverse()) this.handleRingingCall(ringingCall);
       });
 
       // Adopt a call the SDK reattached to (see reconnectAttachedCalls above).
@@ -650,14 +622,47 @@ class SignalWireService {
   // Create Subscriber Token response field of the same name (that one lives
   // in a different, unrelated id namespace -- see auth.py's _resolve_reference).
   getActiveSubscriberId(): string | undefined {
-    return this.currentToken?.subscriber_id;
+    return this.activeSubscriber?.id;
   }
 
   // Resolved server-side from the reference actually used to mint this
   // token -- avoids a separate lookup round-trip for the header's
   // permanent "who am I" indicator.
   getActiveSubscriberDisplayName(): string | undefined {
-    return this.currentToken?.subscriber_display_name;
+    return this.activeSubscriber?.displayName;
+  }
+
+  // The refresh request, retried while the failure looks temporary (see
+  // REFRESH_RETRY_WINDOW_MS). Same selected id as authenticate(), so a refresh
+  // can't fall back to the default subscriber mid-session. A method so the
+  // e2e suite can drive it.
+  private async refreshTokenPatiently(): Promise<TokenData> {
+    const startedAt = Date.now();
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        const tokenData = await authAPI.refreshToken(getSelectedSubscriberId());
+        if (attempt > 0) {
+          this.logEvent('client', 'Token refresh went through', `after ${attempt + 1} attempts`);
+          // Replaces the "retrying" notice below.
+          this.onClientNotice?.('The session refresh went through after the backend came back.');
+        }
+        return tokenData;
+      } catch (error) {
+        const delay = REFRESH_RETRY_DELAYS_MS[Math.min(attempt, REFRESH_RETRY_DELAYS_MS.length - 1)];
+        if (!isTransientFetchError(error) || Date.now() - startedAt + delay > REFRESH_RETRY_WINDOW_MS) throw error;
+        this.logEvent('warning', 'Token refresh failed — retrying', describeFetchError(error, 'No answer from the backend'));
+        if (attempt === 0) {
+          this.onClientNotice?.(
+            "The backend didn't answer the session refresh. Retrying for a couple of minutes; the session and any call carry on meanwhile.",
+          );
+        }
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+    }
+  }
+
+  private rememberSubscriber(tokenData: TokenData) {
+    this.activeSubscriber = { id: tokenData.subscriber_id, displayName: tokenData.subscriber_display_name };
   }
 
   // Whether this browser can route audio to a chosen output device at all
@@ -689,11 +694,86 @@ class SignalWireService {
     }
   }
 
+  // One ringing inbound call from incomingCalls$ -- a method so the e2e suite
+  // can drive it with fake calls. This app handles one call at a time: the
+  // first ringing call gets the incoming-call screen, and any other that
+  // arrives while a call is up, being dialed or already ringing is rejected
+  // and reported as missed.
+  private handleRingingCall(ringingCall: Call) {
+    // Already on screen, or already rejected below: incomingCalls$ re-emits
+    // the whole list on every change, and a rejected call stays in it until
+    // the SDK has torn it down.
+    if (this.pendingCall?.id === ringingCall.id || this.autoRejectedCallIds.has(ringingCall.id)) return;
+
+    // fromName/from are public on the v4 Call type (4.0.0-rc.0)
+    const rawName = ringingCall.fromName;
+    const callerId = (rawName && rawName !== '_undef_') ? rawName : ringingCall.from || 'Unknown';
+
+    // While dial() is in flight currentCall isn't set yet, but the UI is
+    // already on the call screen, so a ringing call would be unreachable. A
+    // second ringing call would take the incoming-call screen from the first.
+    if (this.currentCall || this.isDialing || this.pendingCall) {
+      this.autoRejectedCallIds.add(ringingCall.id);
+      log.debug('Busy - auto-rejecting incoming call from', callerId);
+      this.logEvent('call', 'Auto-rejected a second incoming call', callerId);
+      this.onIncomingCallAutoRejected?.(callerId, ringingCall.from);
+      ringingCall.reject();
+      return;
+    }
+
+    this.pendingCall = ringingCall;
+    log.debug('Incoming call from:', callerId);
+    this.logEvent('call', 'Incoming call', `${callerId} · ${ringingCall.id}`);
+
+    // Best-effort: mediaDirections reflects the inbound SDP offer, so a
+    // video-enabled offer should show as something other than 'inactive'
+    // even before we answer. Defaults to false if the SDK hasn't parsed
+    // the offer yet -- worst case we just don't show the video badge.
+    const hasVideo = ringingCall.mediaDirections?.video != null
+      && ringingCall.mediaDirections.video !== 'inactive';
+
+    toneService.playIncomingCallTone();
+    this.onIncomingCall?.(callerId, hasVideo, ringingCall.from, ringingCall.id);
+
+    // Watch for the caller hanging up before we answer. This also fires
+    // when an answered or declined call ends later; by then it is no
+    // longer the pending call, so only the unsubscribe applies.
+    const cleanupCanceled = () => {
+      if (this.pendingCall?.id === ringingCall.id) {
+        log.debug('Incoming call canceled by caller');
+        this.logEvent('call', 'Caller hung up before answer', callerId);
+        toneService.stopIncomingCallTone();
+        this.pendingCall = null;
+        this.handleCallEnded();
+      }
+      pendingSub.unsubscribe();
+    };
+
+    const pendingSub = ringingCall.status$.subscribe({
+      next: (status) => {
+        if (status === 'disconnected' || status === 'failed' || status === 'destroyed') {
+          cleanupCanceled();
+        }
+      },
+      // The SDK completes all subjects on destroy() without emitting a
+      // terminal status, so we must also handle completion.
+      complete: () => {
+        if (this.pendingCall?.id === ringingCall.id) {
+          cleanupCanceled();
+        }
+      },
+    });
+  }
+
   // The calls$ handler from initialize() -- a method so the e2e suite can
   // drive it with fake calls. This app handles one call at a time: never
   // adopt while a call is already tracked, never mid-dial (see isDialing's
   // declaration), and never while a connection test is running (see
   // preflightInProgress's).
+  private get isDialing(): boolean {
+    return this.dialsInFlight > 0;
+  }
+
   private adoptUntrackedCall(calls: Call[]) {
     if (this.currentCall || this.pendingCall || this.isDialing || this.preflightInProgress) return;
 
@@ -712,6 +792,7 @@ class SignalWireService {
     this.remoteHasVideo = false;
     this.currentCall = restored;
     this.wasIncomingCall = false;
+    this.wasReattachedCall = true;
     this.setupCallSubscriptions(restored);
     this.setupRemoteAudioFallback(restored);
 
@@ -760,13 +841,16 @@ class SignalWireService {
         // hangup()/destroy() emits 'destroyed' (after 'disconnecting'), and the
         // far end's bye emits 'disconnected' while the connection is still up.
         if (status !== 'destroyed' && peerConnectionOf(call)?.connectionState === status) {
+          if (status === 'failed' && this.endIfNeverConnected(call, 'peer connection failed')) return;
           log.debug(`Call status ${status} comes from the peer connection - treating it as media loss`);
           return;
         }
         toneService.playDisconnectTone();
         // Only clean up if this is still the active call (endCall may have already cleared it)
         if (this.currentCall === call) {
+          const reason = this.unexpectedEndReason(call);
           this.handleCallEnded();
+          if (reason) this.onClientError?.(reason);
         }
       }
     });
@@ -818,8 +902,11 @@ class SignalWireService {
         })`,
         errorText(callError.error),
       );
-      if (callError.fatal) return;
       if (callError.leg && callError.leg !== 'main') return;
+      if (callError.fatal) {
+        this.fatalCallError = errorText(callError.error);
+        return;
+      }
       const { error } = callError;
       if (error instanceof MediaAccessError || error instanceof MediaTrackError) {
         this.onCallMediaError?.(error);
@@ -905,6 +992,7 @@ class SignalWireService {
         // The SDK follows this with a fatal network error and status$
         // 'failed'; ending here too keeps call-end detection redundant.
         this.handleCallEnded();
+        this.onClientError?.("The call was ended: its connection was lost and couldn't be recovered.");
       } else if (event.action === 'reinvite_succeeded') {
         // New transceivers/tracks after an ICE restart or re-invite: re-pick
         // up remote media and re-apply a local mute to the new sender track.
@@ -1142,12 +1230,20 @@ class SignalWireService {
     this.remoteHasVideo = hasVideo;
 
     if (hasVideo && this.remoteVideoEl) {
-      this.remoteVideoEl.srcObject = stream;
+      // remoteStream$ and the receiver check (which runs on every ICE and
+      // connection state change) deliver the same tracks in fresh MediaStream
+      // wrappers. A new srcObject makes the element load again from nothing,
+      // so only assign one that brings a track it isn't already playing.
+      const current = this.remoteVideoEl.srcObject as MediaStream | null;
+      const alreadyPlaying = !!current && stream.getTracks().every((track) => current.getTrackById(track.id));
+      if (!alreadyPlaying) this.remoteVideoEl.srcObject = stream;
+      // The audio now plays from the <video>; carry the Speaker choice over.
+      if (!this.remoteAudioRoutedToVideo && this.isSpeakerOn) this.applySpeakerTo(this.remoteVideoEl);
       this.remoteAudioRoutedToVideo = true;
       this.clearAudioSink();
       // The autoplay attribute fails silently under the autoplay policy; an
       // explicit play() lets the refusal be detected and surfaced.
-      this.playSink(this.remoteVideoEl);
+      if (!alreadyPlaying) this.playSink(this.remoteVideoEl);
     } else if (!this.remoteAudioRoutedToVideo) {
       this.playRemoteStream(stream);
     }
@@ -1158,6 +1254,24 @@ class SignalWireService {
   private clearAudioSink() {
     const audioEl = document.getElementById('sw-remote-audio') as HTMLAudioElement | null;
     if (audioEl) audioEl.srcObject = null;
+  }
+
+  private applySpeakerTo(el: HTMLMediaElement) {
+    this.client?.applySelectedAudioOutputDevice(el).catch((error) => {
+      log.error('Error applying audio output device:', error);
+    });
+  }
+
+  // Speaker ends with the call. The <audio> sink lives on document.body
+  // across calls and keeps its sinkId, so put it back on the default output.
+  private resetSpeaker() {
+    if (!this.isSpeakerOn) return;
+    this.isSpeakerOn = false;
+    this.client?.selectAudioOutputDevice(null);
+    const audioEl = document.getElementById('sw-remote-audio') as HTMLAudioElement | null;
+    if (audioEl && typeof audioEl.setSinkId === 'function' && audioEl.sinkId) {
+      audioEl.setSinkId('').catch((error) => log.warn('Resetting the audio output failed:', error));
+    }
   }
 
   // Second path for remote media, alongside remoteStream$: read the peer
@@ -1240,7 +1354,9 @@ class SignalWireService {
         log.debug('Peer connection closed - ending call as fallback');
         this.logEvent('call', 'Peer connection closed — ending the call');
         this.handleCallEnded();
+        this.onClientError?.('The call ended: its media connection closed.');
       } else if (ice === 'disconnected' || ice === 'failed' || conn === 'failed') {
+        if ((ice === 'failed' || conn === 'failed') && this.endIfNeverConnected(call, `ICE ${ice}, peer connection ${conn}`)) return;
         this.setMediaDisrupted(true);
         this.armMediaDisruptionTimer(pc, call);
       } else if (ice === 'connected' || ice === 'completed') {
@@ -1251,6 +1367,33 @@ class SignalWireService {
     };
     listen('iceconnectionstatechange', onMediaStateChange);
     listen('connectionstatechange', onMediaStateChange);
+  }
+
+  // Why a call that reached a terminal status ended, when that needs saying:
+  // it never connected, or it ended on an error. A connected call the far end
+  // hung up needs no explanation, and a hang-up from here never gets this far
+  // (endCall() has already dropped the call). Read before handleCallEnded()
+  // clears the call's state; the caller shows it on the dialer's banner.
+  private unexpectedEndReason(call: Call): string | null {
+    if (this.fatalCallError) return `The call ended on an error: ${this.fatalCallError}`;
+    if (this.connectedCall === call) return null;
+    if (this.wasReattachedCall) return "The call couldn't be restored after the reload.";
+    return this.wasIncomingCall ? 'The call ended before it connected.' : 'The call ended before it was answered.';
+  }
+
+  // The grace timer below is for a call that had media and lost it. A call
+  // whose connection fails before it ever reached 'connected' has nothing to
+  // recover: end it now, hang up so the far end isn't left on it, and say why
+  // on the dialer. Returns whether it ended the call.
+  private endIfNeverConnected(call: Call, detail: string): boolean {
+    if (this.currentCall !== call || this.connectedCall === call) return false;
+    log.warn(`Media connection failed before the call connected (${detail}) - ending the call`);
+    this.logEvent('error', 'Media connection failed before the call connected — ending the call', detail);
+    toneService.playDisconnectTone();
+    this.handleCallEnded();
+    this.hangUpAbandonedCall(call);
+    this.onClientError?.("The call couldn't connect: no media path to the other side could be set up.");
+    return true;
   }
 
   // How long media may stay down before the call is given up on: the SDK's
@@ -1280,6 +1423,7 @@ class SignalWireService {
       this.logEvent('error', 'Media did not recover — ending the call', `ICE ${ice}, recovery ${this.lastRecoveryState}`);
       this.handleCallEnded();
       this.hangUpAbandonedCall(call);
+      this.onClientError?.("The call was ended: its media connection was lost and didn't come back.");
     };
     this.mediaDisruptionTimer = setTimeout(onExpiry, graceMs);
   }
@@ -1375,8 +1519,9 @@ class SignalWireService {
     return '+' + digits;
   }
 
-  // Resolves null if the user hung up before dial() completed (the call is
-  // hung up instead of adopted).
+  // Resolves null if the user hung up before dial() settled: the call is hung
+  // up instead of adopted, and a failure of a dial nobody is waiting for is
+  // not reported (see dialAttempt).
   async makeCall(phoneNumber: string, video: boolean = false, from?: string, cameraOff: boolean = false): Promise<Call | null> {
     if (!this.client) {
       throw new Error('SignalWire client not initialized');
@@ -1391,9 +1536,10 @@ class SignalWireService {
     this.isMicMuted = false;
     this.remoteHasVideo = false;
 
+    const attempt = ++this.dialAttempt;
+    const isAbandoned = () => attempt <= this.cancelledDialAttempt || attempt !== this.dialAttempt;
+    this.dialsInFlight += 1;
     try {
-      this.isDialing = true;
-      this.dialCancelled = false;
       // The field is the dial string: a Fabric address already carries the
       // `?channel=` the Video toggle chose (useDialFieldStore keeps the two in
       // step), and phone numbers and SIP URIs never carry one. receiveVideo is
@@ -1422,9 +1568,9 @@ class SignalWireService {
       };
       const call = await this.client.dial(to, options);
 
-      // The user hung up while dial() was pending (see dialCancelled). The UI
-      // has already reset, so don't adopt the call -- end it.
-      if (this.dialCancelled) {
+      // The user hung up while dial() was pending (see dialAttempt). The UI
+      // has already moved on, so don't adopt the call -- end it.
+      if (isAbandoned()) {
         log.debug('Dial resolved after the user hung up - ending the call');
         this.logEvent('call', 'Dial cancelled before it connected', call.id);
         call.hangup().catch((error) => {
@@ -1442,11 +1588,18 @@ class SignalWireService {
       this.logEvent('call', 'Call created', call.id);
       return call;
     } catch (error) {
+      if (isAbandoned()) {
+        // Nobody is waiting on this attempt any more, and the screen may
+        // belong to a newer call: its failure must not reset that.
+        log.debug('Cancelled dial failed (ignored):', error);
+        this.logEvent('call', 'Cancelled dial did not go through', errorText(error));
+        return null;
+      }
       log.error('Failed to make call:', error);
       this.logEvent('error', 'Dial failed', errorText(error));
       throw error;
     } finally {
-      this.isDialing = false;
+      this.dialsInFlight -= 1;
     }
   }
 
@@ -1456,7 +1609,7 @@ class SignalWireService {
       // No Call object yet, but dial() may still be in flight -- make
       // makeCall() hang it up when it resolves instead of adopting it.
       if (this.isDialing) {
-        this.dialCancelled = true;
+        this.cancelledDialAttempt = this.dialAttempt;
         this.logEvent('user', 'Hang up while still dialing');
       }
       return;
@@ -1592,18 +1745,23 @@ class SignalWireService {
   // on is unmuteVideo(): it re-acquires the camera and sends call.unmute, so
   // the room shows the video again. Otherwise, with no local track (a call
   // that never sent video, or one whose mute the server didn't take),
-  // addVideoInputDevice() adds the camera without a call.unmute.
+  // addVideoInputDevice() adds the camera without a call.unmute. All of it
+  // needs a call that was set up with video.
   async toggleCamera(cameraOn: boolean) {
-    if (!this.currentCall) {
-      log.warn('No active call to toggle camera');
-      return;
+    // Errors propagate: the hook applied the new camera state optimistically
+    // and reverts it (and says why) when this throws. That includes the
+    // "Calling…" screen, where dial() hasn't produced the Call yet.
+    const self = this.currentCall?.self;
+    if (!this.currentCall || !self) {
+      throw new Error('The call is still being set up - try the camera again in a moment.');
     }
 
-    // Errors propagate: the hook applied the new camera state optimistically
-    // and reverts it (and says why) when this throws.
-    const self = this.currentCall.self;
-    if (!self) {
-      throw new Error('The call is still being set up - try the camera again in a moment.');
+    // A call negotiated without video has no video transceiver for a camera
+    // to be added to. The toolbar disables Camera on such a call; this keeps
+    // any other caller from showing a camera that isn't being sent.
+    const pc = peerConnectionOf(this.currentCall);
+    if (cameraOn && pc && !pc.getTransceivers().some((t) => t.receiver.track.kind === 'video')) {
+      throw new Error("This call was set up without video, so the camera can't be added to it.");
     }
 
     const hasLocalVideoTrack = !!this.currentCall.localStream?.getVideoTracks().length;
@@ -1824,12 +1982,16 @@ class SignalWireService {
         this.client.selectAudioOutputDevice(null);
         if (typeof sinkEl.setSinkId !== 'function') return false;
         await sinkEl.setSinkId('');
+        this.isSpeakerOn = false;
         log.debug('Speaker off (default output)');
         return true;
       }
 
       this.client.selectAudioOutputDevice(this.preferredOutputDevice);
       const applied = await this.client.applySelectedAudioOutputDevice(sinkEl);
+      // The call may have ended while the device was being applied.
+      this.isSpeakerOn = applied && this.currentCall !== null;
+      if (applied && !this.isSpeakerOn) await sinkEl.setSinkId('');
       log.debug('Speaker on, applied:', applied);
       return applied;
     } catch (error) {
@@ -1843,6 +2005,9 @@ class SignalWireService {
     this.logEvent('user', 'Speaker selected', device?.label || 'default');
     this.preferredOutputDevice = device;
     this.client?.selectAudioOutputDevice(device);
+    // With Speaker on, the new choice replaces the one in use.
+    const sinkEl = this.getRemoteMediaSinkElement();
+    if (this.isSpeakerOn && device && sinkEl) this.applySpeakerTo(sinkEl);
   }
 
   // Live settings changes. Log settings are SDK globals and take effect at
@@ -1955,11 +2120,15 @@ class SignalWireService {
   }
 
   // Places a real call to `destination` to test signaling/TURN/bandwidth --
-  // idle-only (see DiagnosticsPanel), never prefilled from a live dial-pad
+  // idle-only (refused while a call is up, ringing or being dialed; the panel
+  // disables Run then), never prefilled from a live dial-pad
   // value since it's a genuine, potentially-billable call attempt.
   async runPreflight(destination: string, options?: PreflightOptions): Promise<PreflightResult> {
     if (!this.client) {
       throw new Error('SignalWire client not initialized');
+    }
+    if (this.currentCall || this.pendingCall || this.isDialing) {
+      throw new Error('End the current call before running the connection test.');
     }
     this.preflightInProgress = true;
     this.logEvent('user', 'Connection test started', destination);
@@ -2016,10 +2185,13 @@ class SignalWireService {
     this.pendingCall = null;
     this.connectedCall = null;
     this.wasIncomingCall = false;
+    this.wasReattachedCall = false;
+    this.fatalCallError = null;
     // Not via setAudioProcessing() -- the store's own reset covers the UI.
     this.audioProcessing = { ...DEFAULT_AUDIO_PROCESSING };
 
     // Clean up audio/video sinks and the remote level meter
+    this.resetSpeaker();
     this.clearAudioSink();
     this.remoteAudioMeter.setStream(null);
     if (this.localVideoEl) this.localVideoEl.srcObject = null;

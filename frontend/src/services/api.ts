@@ -24,7 +24,8 @@ const api = axios.create({
 // 429 is the per-IP rate limit, 401/503 mean the key or the backend's
 // configuration is off (the 503 body says which), 500 means a SignalWire REST
 // call failed (details in the backend log, never in the body), and 502/504
-// or no response at all mean Vite's /api proxy found nothing on :5001.
+// or no response at all mean Vite's /api proxy found nothing on the backend's
+// port (backend/.env's PORT, 5001 by default).
 export const describeFetchError = (err: unknown, fallback: string): string => {
   if (axios.isAxiosError(err)) {
     const status = err.response?.status;
@@ -32,11 +33,24 @@ export const describeFetchError = (err: unknown, fallback: string): string => {
     const detail = typeof serverMessage === 'string' ? serverMessage : null;
     if (status === 429) return 'Too many requests — wait a moment and try again.';
     if (status === 401) return 'The backend rejected the API key — restart the dev server after changing DIALER_API_KEY.';
+    // The one 503 that isn't a configuration problem: the subscriber list
+    // couldn't be fetched just now (auth.py's SubscriberLookupUnavailable).
+    if (status === 503 && detail === 'Subscriber lookup unavailable') {
+      return "The subscriber list couldn't be fetched just now — try again in a moment.";
+    }
     if (status === 503) return `${detail ?? 'Backend unavailable'} — check backend/.env and the backend log.`;
     if (status === 500) return "The backend couldn't complete the request — check its log.";
-    if (status === 502 || status === 504 || !err.response) return 'Backend unreachable — is the Flask server running on :5001?';
+    if (status === 502 || status === 504 || !err.response) return 'Backend unreachable — is the Flask server running?';
   }
   return err instanceof Error ? err.message : fallback;
+};
+
+// A failed backend request worth asking again: nothing answered, the rate
+// limit, or a server-side failure. A 400 or 401 will be the same next time.
+export const isTransientFetchError = (err: unknown): boolean => {
+  if (!axios.isAxiosError(err)) return false;
+  const status = err.response?.status;
+  return status === undefined || status === 429 || status >= 500;
 };
 
 export const authAPI = {
@@ -54,9 +68,10 @@ export const authAPI = {
     return response.data.data;
   },
 
-  async refreshToken(oldToken?: string, subscriberId?: string): Promise<TokenData> {
+  // Refresh mints a fresh token for the same subscriber; the backend needs
+  // only the subscriber id, so the previous token is never sent back.
+  async refreshToken(subscriberId?: string): Promise<TokenData> {
     const response = await api.post<{ success: boolean; data: TokenData }>('/auth/refresh', {
-      token: oldToken,
       subscriber_id: subscriberId,
     });
     if (!response.data.success) {

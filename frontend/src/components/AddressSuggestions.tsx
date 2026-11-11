@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { Video } from 'lucide-react';
 import type { AddressSuggestion } from '../hooks/useAddressSuggestions';
 
@@ -24,6 +25,11 @@ interface AddressSuggestionsProps {
 // swallowed so the input keeps focus -- blurring would close the list before
 // the click lands.
 function AddressSuggestions({ id, suggestions, highlighted, onPick, onHover }: AddressSuggestionsProps) {
+  // Up/Down can move the highlight to a row the list has scrolled past.
+  useEffect(() => {
+    if (highlighted >= 0) document.getElementById(`${id}-${highlighted}`)?.scrollIntoView({ block: 'nearest' });
+  }, [id, highlighted]);
+
   if (suggestions.length === 0) return null;
 
   return (

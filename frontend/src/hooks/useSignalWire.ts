@@ -30,6 +30,14 @@ const activeSubscriber = () => ({
 });
 
 // The in-progress Recents entry, if any.
+// A caller as something the dial field can call back. A browser-to-browser
+// call arrives from `subscriber://<name>`, and that subscriber's own address
+// is `/private/<name>`; anything else (a phone number, a SIP URI) is dialable
+// as it came.
+const SUBSCRIBER_SCHEME = 'subscriber://';
+const dialableCaller = (from: string): string =>
+  from.startsWith(SUBSCRIBER_SCHEME) ? `/private/${from.slice(SUBSCRIBER_SCHEME.length)}` : from;
+
 const activeRecent = () => {
   const { entries, activeId } = useRecentsStore.getState();
   return entries.find((entry) => entry.id === activeId);
@@ -127,8 +135,8 @@ export const useSignalWire = () => {
           onIncomingCall: (remoteNumber, hasVideo, from, callId) => {
             useRecentsStore.getState().start({
               direction: 'inbound',
-              destination: from || remoteNumber,
-              label: remoteNumber,
+              destination: dialableCaller(from || remoteNumber),
+              label: formatPhoneNumber(remoteNumber),
               video: hasVideo,
               callId,
               ...activeSubscriber(),
@@ -143,7 +151,7 @@ export const useSignalWire = () => {
           },
           onIncomingCallAutoRejected: (remoteNumber, from) => {
             useRecentsStore.getState().addFinished(
-              { direction: 'inbound', destination: from || remoteNumber, label: remoteNumber, video: false, ...activeSubscriber() },
+              { direction: 'inbound', destination: dialableCaller(from || remoteNumber), label: formatPhoneNumber(remoteNumber), video: false, ...activeSubscriber() },
               'missed',
             );
           },
@@ -181,11 +189,15 @@ export const useSignalWire = () => {
             log.debug('Call ended - returning to idle, wasIncoming:', wasIncoming);
 
             // Answered if it ever connected; otherwise the caller gave up
-            // (missed) or the dial never went through (failed). The hook's
-            // own endCall/rejectCall finish their entries first, so this only
-            // settles whatever is still in progress.
+            // (missed) or the dial never went through (failed). Which of the
+            // two is the entry's own direction: wasIncoming is only true once
+            // a call has been answered, and a missed call never was. The
+            // hook's own endCall/rejectCall finish their entries first, so
+            // this only settles whatever is still in progress.
             const recent = activeRecent();
-            useRecentsStore.getState().finish(recent?.connectedAt ? 'answered' : wasIncoming ? 'missed' : 'failed');
+            useRecentsStore.getState().finish(
+              recent?.connectedAt ? 'answered' : recent?.direction === 'inbound' ? 'missed' : 'failed',
+            );
 
             // Get the current call direction before resetting
             const { callDirection } = useCallStore.getState();
@@ -236,6 +248,9 @@ export const useSignalWire = () => {
           onClientError: (message: string) => {
             setCallState({ callError: message });
           },
+          onSessionError: (message: string) => {
+            setCallState({ sessionError: message });
+          },
           onCanScreenShareChange: (canScreenShare: boolean) => {
             setCallState({ canScreenShare });
           },
@@ -281,8 +296,8 @@ export const useSignalWire = () => {
         setIsInitialized(true);
 
         // The backend resolves this from the reference actually used to mint
-        // the token (see auth.py's _resolve_reference) -- already present on
-        // currentToken by the time initialize() resolves, no extra request needed.
+        // the token (see auth.py's _resolve_reference) -- already known to the
+        // service by the time initialize() resolves, no extra request needed.
         setCallState({
           activeSubscriberName: signalWireService.getActiveSubscriberDisplayName() ?? null,
           canSelectAudioOutput: signalWireService.canSelectAudioOutput(),
@@ -396,11 +411,12 @@ export const useSignalWire = () => {
       const dialField = useDialFieldStore.getState();
       const cameraOff = SHOW_CAMERA_OFF_JOIN && dialField.wantsVideo && dialField.cameraOff;
       await signalWireService.answerCall(isVideoCall, cameraOff);
+      // Answered, not yet connected: the status line says "Connecting…" and
+      // the timer and keypad wait for onCallConnected, as on an outbound call.
       setCallState({
         isInCall: true,
         isIncoming: false,
-        callStatus: 'connected',
-        connectedAt: Date.now(),
+        callStatus: 'connecting',
         isCameraOn: isVideoCall && !cameraOff,
       });
     } catch (err) {

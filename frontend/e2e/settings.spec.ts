@@ -95,6 +95,9 @@ test('Do Not Disturb toggles registration and shows in the status bar', async ({
   await dnd.click();
   await expect.poll(() => drainLog(page)).toEqual([['dnd', false]]);
   await expect(page.locator('[title="Do Not Disturb — not receiving calls"]')).toHaveCount(0);
+  // Disabled for the keyboard too while the client is disconnected.
+  await setState(page, { isClientReady: false });
+  await expect(dnd).toBeDisabled();
 });
 
 test('device-switch notices appear as dismissible info banners', async ({ page }) => {

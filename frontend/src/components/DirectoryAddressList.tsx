@@ -25,6 +25,11 @@ const FILTERS: Array<{ key: TypeFilter; label: string }> = [
   { key: 'app', label: 'Apps' },
 ];
 
+// A page that fails to load leaves the list as it was with more still to
+// come. After this many auto-loads in a row that add nothing, the list stops
+// asking and offers Retry.
+const MAX_EMPTY_AUTO_LOADS = 2;
+
 interface DirectoryAddressListProps {
   onSelectAddress: (path: string, video: boolean, label?: string) => void;
 }
@@ -47,6 +52,8 @@ function DirectoryAddressList({ onSelectAddress }: DirectoryAddressListProps) {
   const [filter, setFilter] = useState<TypeFilter>('all');
   const [query, setQuery] = useState('');
   const directoryRef = useRef<Directory | null>(null);
+  const [isLoadStalled, setIsLoadStalled] = useState(false);
+  const autoLoadRef = useRef({ countAtRequest: -1, emptyLoads: 0 });
   const needle = normalizeQuery(query);
   const isSearching = needle !== '';
   // Anything that hides rows needs the whole directory loaded (see below).
@@ -82,10 +89,32 @@ function DirectoryAddressList({ onSelectAddress }: DirectoryAddressListProps) {
   // search, and a space with many SWML scripts can push subscribers and rooms
   // several pages deep. So while either narrows the list, keep loading until
   // the SDK says there's no more; an unfiltered "All" keeps manual paging.
+  // A new filter or search starts the count again.
   useEffect(() => {
-    if (!isNarrowing || !hasMore || isLoading) return;
+    autoLoadRef.current = { countAtRequest: -1, emptyLoads: 0 };
+    setIsLoadStalled(false);
+  }, [filter, needle]);
+
+  useEffect(() => {
+    if (!isNarrowing || !hasMore || isLoading || isLoadStalled) return;
+    const autoLoad = autoLoadRef.current;
+    if (autoLoad.countAtRequest === addresses.length) {
+      autoLoad.emptyLoads += 1;
+      if (autoLoad.emptyLoads >= MAX_EMPTY_AUTO_LOADS) {
+        setIsLoadStalled(true);
+        return;
+      }
+    } else {
+      autoLoad.emptyLoads = 0;
+    }
+    autoLoad.countAtRequest = addresses.length;
     directoryRef.current?.loadMore();
-  }, [isNarrowing, hasMore, isLoading]);
+  }, [isNarrowing, hasMore, isLoading, isLoadStalled, addresses.length]);
+
+  const retryAutoLoad = () => {
+    autoLoadRef.current = { countAtRequest: -1, emptyLoads: 0 };
+    setIsLoadStalled(false);
+  };
 
   const ownAddressIds = signalWireService.getOwnAddressIds();
   const ownSubscriberId = signalWireService.getActiveSubscriberId();
@@ -161,6 +190,18 @@ function DirectoryAddressList({ onSelectAddress }: DirectoryAddressListProps) {
         loadingMoreMessage={isSearching ? 'Searching…' : 'Loading more…'}
         loadMoreLabel="Load more"
       />
+      {isLoadStalled && (
+        <div className="mt-2 flex items-center justify-between gap-3 text-xs text-danger-text">
+          <span>Couldn't load the rest of the directory.</span>
+          <button
+            type="button"
+            onClick={retryAutoLoad}
+            className="shrink-0 rounded-full border border-edge-strong bg-surface-2 px-3 py-1 text-xs font-medium text-ink transition-colors hover:bg-surface-hover"
+          >
+            Retry
+          </button>
+        </div>
+      )}
     </>
   );
 }

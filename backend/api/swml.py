@@ -27,13 +27,29 @@ def _get_scripts_meta():
     return scripts
 
 
+def _public_address(address):
+    return {
+        "id": address.get('id'),
+        "name": address.get('name'),
+        "display_name": address.get('display_name'),
+        "channels": address.get('channels') or {},
+    }
+
+
 def _fetch_with_addresses(script):
+    """One script with its dialable addresses, trimmed to what the picker
+    shows. The raw record carries the script's contents and its request and
+    status URLs, none of which belongs in the browser."""
     try:
-        addresses = get_client().list_swml_script_addresses(script['id'])
+        addresses = [_public_address(a) for a in get_client().list_swml_script_addresses(script['id'])]
     except Exception as e:
         logger.warning(f"Failed to load addresses for script {script.get('id')}: {e}")
         addresses = []
-    return {**script, "addresses": addresses}
+    return {
+        "id": script.get('id'),
+        "display_name": script.get('display_name'),
+        "addresses": addresses,
+    }
 
 
 def _matches(script, needle):

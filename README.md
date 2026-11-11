@@ -38,7 +38,7 @@ Every SignalWire interaction happens in the browser through the published npm pa
 - ✅ Event log of what the SDK and the dialer did — call status, errors and warnings, recovery and ICE, device changes, your own actions — with filters and copy, in the Diagnostics panel and the Inspector
 - ✅ Outbound audio calls to phone numbers (normalized to E.164), and audio or video calls to SIP URIs and Fabric addresses (the Video toggle picks the address's channel)
 - ✅ Caller ID picker for calls to phone numbers: present one of the space's phone numbers or a verified caller ID (**From** beside Video; remembered across reloads)
-- ✅ Inbound calls with an accept/decline card and ringtone (a second incoming call during an active call is auto-rejected)
+- ✅ Inbound calls with an accept/decline card and ringtone (a call that arrives while another is ringing, being dialed or in progress is declined automatically and listed in Recents as missed)
 - ✅ In-call toolbar with every control in view: mute, keypad, camera, hold/resume, screen share (with optional tab audio) on video room/conference calls, speaker
 - ✅ DTMF from the on-screen keypad (with key tones), once the call is connected
 - ✅ Audio/video device picker and echo cancellation / noise suppression / auto gain toggles
@@ -49,7 +49,7 @@ Every SignalWire interaction happens in the browser through the published npm pa
 - ✅ Subscribers panel: call any subscriber's browser (audio or video), switch the dialer to act as one, and Do Not Disturb
 - ✅ Call reattach: an active call survives a page reload
 - ✅ Installable (PWA manifest and icons), and dialogs that trap and return focus
-- ✅ Automatic token refresh: the SDK calls the backend's refresh endpoint about 80% into each token's lifetime
+- ✅ Automatic token refresh: the SDK asks the backend for a fresh token shortly before the current one expires, and the dialer keeps retrying if the backend doesn't answer
 - ✅ Microphone permission prompt, inline error banners, and an error boundary for unexpected failures
 
 ## Prerequisites
@@ -101,7 +101,8 @@ DIALER_API_KEY=choose-a-long-random-string
 FLASK_DEBUG=False
 ```
 
-- `DIALER_API_KEY` is required: without it every `/api` route returns 503 and the app can't connect. It is **not a secret**. Vite bakes it into the public JS bundle, so anyone who loads the page can read it. Together with the per-IP rate limits it stops automated scanners from minting tokens or listing resources through the backend; it does not protect a deployment that's reachable by people you don't trust.
+- `DIALER_API_KEY` is required: without it every `/api` route returns 503 and the app can't connect. It is **not a secret**. Vite bakes it into the public JS bundle, so anyone who loads the page can read it. Together with the per-IP rate limits it keeps casual automated scanners from minting tokens or listing resources through the backend. A client that sets out to get past them can, so neither protects a deployment that's reachable by people you don't trust.
+- `PORT` is the backend's port. The Vite dev server reads it for its `/api` proxy, so restart `npm run dev` after changing it.
 - `FRONTEND_URL` sets the allowed CORS origin, and its hostname is added to Vite's allowed hosts (useful for ngrok and other tunnels).
 - Leave `FLASK_DEBUG` off. It enables the Werkzeug debugger, which allows code execution from the browser, and the backend listens on all interfaces.
 
@@ -127,7 +128,7 @@ In a second terminal, start the frontend:
 
 ```bash
 cd frontend
-npm run dev                       # http://localhost:5173, proxies /api to :5001
+npm run dev                       # http://localhost:5173, proxies /api to the backend
 ```
 
 ### Which subscriber you are
@@ -144,10 +145,10 @@ On first start the backend mints a subscriber token with the reference `swdialer
    - **SWML** and **SIP**: the space's SWML scripts and SIP credentials, each with Audio and Video buttons.
    - Each tab has a search box at the top. Directory and Recents filter as you type (the Directory keeps loading pages until it has checked the whole address book); SWML and SIP search the space server-side.
 4. Press **Video** under the field for a video call, then **Call** (or Enter in the field). For a Fabric address, Video writes `?channel=video` (or `?channel=audio`) into the field, so what you see is what is dialed, and typing or pasting an address that already names a channel sets the toggle to match; for a SIP URI it turns your camera on; phone numbers can't do video, so it is disabled there. **From** beside Video picks the caller ID for calls to phone numbers: one of the space's phone numbers or a verified caller ID (the two things SignalWire accepts), or Default to let the server choose; it is disabled for SIP URIs and Fabric addresses, remembered across reloads, and the call card shows the number that was sent. With an empty field, Call fills in the last outbound destination; press Call again to dial it. The keypad is always there on a phone; in a desktop window **Show keypad** unfolds it.
-5. Incoming calls show an accept/decline card.
-6. In a call, the card shows the status, the number, the timer, the call id (with copy) and the quality badge, then the toolbar: Mute, Keypad, Camera, Hold, Share (on room calls), Speaker, More and End. The keypad sends DTMF once connected while the status and timer stay in view. Tapping the quality badge opens live call statistics in a panel that leaves Mute and End usable; **More** holds the device picker, the audio-processing toggles and the diagnostics export. In a desktop window the statistics are the Inspector's **Quality** tab (selected automatically when a call starts, and kept after hangup).
-7. The Subscribers list (**Subscriber** in the top bar on a phone; the **Subscribers** tab of the Destinations pane on desktop, also reached by clicking your name in the bar) shows the space's subscribers with their `/private/<name>` addresses: **Audio**/**Video** fill the dial field to call that subscriber's browser and **Switch** reloads the dialer signed in as them. The Do Not Disturb switch (top of the panel; the Inspector's **Diagnostics** tab on desktop) stops this browser from receiving calls while staying connected; the bar shows DND while it is on. Calling a subscriber whose browser is closed or in Do Not Disturb is refused by the server; the dialer says so.
-8. **Diagnostics** in the top bar (the Inspector's **Diagnostics** tab on desktop) holds the SDK settings, a pre-call connection test, the diagnostics export and the **Events** log; **Devices** in the bar (the Inspector's **Devices** tab) picks the microphone, camera and speaker, and on desktop also carries the audio-processing toggles. The settings are the appearance (Dark / Light / System; the bar's sun/moon button flips it too), audio codec order, SDK log level, WebSocket tracing, relay-only media and app debug logs. Appearance and log settings apply at once; codec and relay settings apply to the next call. The codec order ranks what this browser offers and applies to WebRTC and SIP calls; calls to phone numbers use G.711 (PCMU/PCMA) regardless, so it has no effect on them. The media test places a short real call to the destination and hangs up by itself; the destination has to answer within 5 seconds, so an auto-answering SWML script or app is the best target (with "Skip media test" on, no call is placed). The event log lists what the SDK and the dialer did, in order — dialing, call status, errors and warnings, recovery and ICE changes, device switches, settings changes — with filters and a copy button; on desktop it is the Inspector's **Events** tab.
+5. Incoming calls show an accept/decline card. After Accept the call says Connecting… until its media is up. When a call ends without you or the other side hanging up a connected call (it wasn't answered, its media was lost, it hit an error), the dialer says why in a banner.
+6. In a call, the card shows the status, the number, the timer, the call id (with copy) and the quality badge, then the toolbar: Mute, Keypad, Camera (on calls placed or answered with Video on), Hold, Share (on room calls), Speaker, More and End. The keypad sends DTMF once connected while the status and timer stay in view. Tapping the quality badge opens live call statistics in a panel that leaves Mute and End usable; **More** holds the device picker, the audio-processing toggles and the diagnostics export. In a desktop window the statistics are the Inspector's **Quality** tab (selected automatically when a call starts, and kept after hangup).
+7. The Subscribers list (**Subscriber** in the top bar on a phone; the **Subscribers** tab of the Destinations pane on desktop, also reached by clicking your name in the bar) shows the space's subscribers with their `/private/<name>` addresses: **Audio**/**Video** fill the dial field to call that subscriber's browser and **Switch** reloads the dialer signed in as them (not while a call is up or ringing). The Do Not Disturb switch (top of the panel; the Inspector's **Diagnostics** tab on desktop) stops this browser from receiving calls while staying connected; the bar shows DND while it is on. Calling a subscriber whose browser is closed or in Do Not Disturb is refused by the server; the dialer says so.
+8. **Diagnostics** in the top bar (the Inspector's **Diagnostics** tab on desktop) holds the SDK settings, a pre-call connection test, the diagnostics export and the **Events** log; **Devices** in the bar (the Inspector's **Devices** tab) picks the microphone, camera and speaker, and on desktop also carries the audio-processing toggles. The settings are the appearance (Dark / Light / System; the bar's sun/moon button flips it too), audio codec order, SDK log level, WebSocket tracing, relay-only media and app debug logs. Appearance and log settings apply at once; codec and relay settings apply to the next call. The codec order ranks what this browser offers and applies to WebRTC and SIP calls; calls to phone numbers use G.711 (PCMU/PCMA) regardless, so it has no effect on them. The media test places a short real call to the destination and hangs up by itself, and a real call to a phone number is billed like any other. The destination has to answer within 5 seconds, so an auto-answering SWML script or app is the best target (with "Skip media test" on, no call is placed). The test runs only while the dialer is idle. The event log lists what the SDK and the dialer did, in order — dialing, call status, errors and warnings, recovery and ICE changes, device switches, settings changes — with filters and a copy button; on desktop it is the Inspector's **Events** tab.
 
 ## Development
 
@@ -159,7 +160,7 @@ npm test                          # Playwright suite, phone and desktop projects
 npm run test:shots                # screenshots of every screen at six viewports → e2e/screenshots/
 ```
 
-The Playwright suite in `frontend/e2e/` needs no SignalWire credentials: it opens the app with `?e2e=1`, a dev-server-only seam that skips the SignalWire connection, and drives the UI state directly. The `phone` project runs the behavioral specs at a phone viewport; the `desktop` project runs the workbench spec at 1280×800. The first run needs a browser: `npx playwright install chromium` in `frontend/`. Backend tests: `pip install -r backend/requirements-dev.txt` once, then `python -m pytest backend/tests` from the repo root (with the venv active). The two suites share `frontend/e2e/fixtures/dial-normalization.json`, so a change to phone-number normalization on one side fails the other side's test until it's mirrored. `.github/workflows/ci.yml` runs all of this on pushes to `main` and on pull requests.
+The Playwright suite in `frontend/e2e/` needs no SignalWire credentials: it opens the app with `?e2e=1`, a dev-server-only seam that skips the SignalWire connection, and drives the UI state directly. The `phone` project runs the behavioral specs at a phone viewport; the `desktop` project runs the workbench spec at 1280×800. The first run needs a browser: `npx playwright install --with-deps chromium` in `frontend/` (`--with-deps` adds the system libraries Chromium needs on Linux). Backend tests: `pip install -r backend/requirements-dev.txt` once, then `python -m pytest backend/tests` from the repo root (with the venv active). The two suites share `frontend/e2e/fixtures/dial-normalization.json`, so a change to phone-number normalization on one side fails the other side's test until it's mirrored. `.github/workflows/ci.yml` runs all of this on pushes to `main` and on pull requests.
 
 The app's own console logging is off by default; turn on "App debug logs" in Diagnostics & Settings to see call-flow traces (the SDK's log level is a separate setting there).
 
@@ -172,8 +173,8 @@ The app's own console logging is off by default; turn on "App debug logs" in Dia
 | `POST /api/auth/token` | Mint a subscriber token for the browser SDK. Requires `X-API-Key`; rate limited |
 | `POST /api/auth/refresh` | Mint a fresh token (called by the SDK before expiry). Requires `X-API-Key`; rate limited |
 | `GET /api/subscribers` | List the space's subscribers (id, display name, email, dialable addresses). Requires `X-API-Key`; rate limited. `limit` ≤ 50 |
-| `GET /api/swml/scripts` | Paginated SWML scripts with their dialable addresses; `q` filters by name before paging. Requires `X-API-Key`; rate limited. `limit` ≤ 50 |
-| `GET /api/sip/credentials` | Paginated SIP credentials with their dialable addresses; `q` filters by name or SIP username before paging. Requires `X-API-Key`; rate limited. `limit` ≤ 50 |
+| `GET /api/swml/scripts` | Paginated SWML scripts (id, display name, dialable addresses; never the script itself); `q` filters by name before paging. Requires `X-API-Key`; rate limited. `limit` ≤ 50 |
+| `GET /api/sip/credentials` | Paginated SIP credentials (id, display name, SIP username, dialable addresses); `q` filters by name or SIP username before paging. Requires `X-API-Key`; rate limited. `limit` ≤ 50 |
 | `GET /api/caller-ids` | The caller IDs the browser may present on calls to phone numbers: the space's phone numbers plus its verified caller IDs (id, number, name, kind), unpaged; `failed` names a source that couldn't be listed. Requires `X-API-Key`; rate limited |
 | `POST /api/calls/dial` | Validates and logs an outbound dial server-side (the call itself is placed by the browser). Requires `X-API-Key`; rate limited |
 
@@ -280,7 +281,7 @@ A few decisions worth knowing if you adapt this for your own app:
 
 ### Stuck on "Connecting to SignalWire…" or a connection error
 
-1. The error screen names the cause when the backend request failed: "Backend unreachable" means nothing answered on :5001; "rejected the API key" (401) means the frontend was started (or built) before `DIALER_API_KEY` was set or changed in `backend/.env`, so restart `npm run dev`; a 503 means `DIALER_API_KEY` is unset; "Too many requests" (429) means the 10-per-minute rate limit was hit.
+1. The error screen names the cause when the backend request failed: "Backend unreachable" means nothing answered on the backend's port (`PORT`, 5001 by default); "rejected the API key" (401) means the frontend was started (or built) before `DIALER_API_KEY` was set or changed in `backend/.env`, so restart `npm run dev`; a 503 means `DIALER_API_KEY` is unset; "Too many requests" (429) means the 10-per-minute rate limit was hit.
 2. Check `SPACE_NAME`, `PROJECT_ID`, and `AUTH_TOKEN` in `backend/.env`. `GET http://localhost:5001/health` reports whether they and `DIALER_API_KEY` are set. If the backend log shows 401 responses from SignalWire, the API token lacks a scope (see Setup step 1).
 3. Make sure both the backend and the frontend are running.
 4. Check the browser console and the backend logs.
@@ -315,14 +316,14 @@ SignalWire refused the call because the number chosen under **From** is no longe
 
 ### Token refresh
 
-Tokens are minted with a 1-hour lifetime. The SDK calls the backend's refresh endpoint about 80% of the way through (around 48 minutes). If sessions drop around then, check the backend logs for token errors and look for `credential_no_refresh_handler` or token-refresh errors in the browser console.
+Tokens are minted with a 1-hour lifetime, and the SDK asks the backend for a fresh one shortly before the current token expires. If the backend doesn't answer, the dialer keeps retrying for about two minutes while the session and any call carry on, and says so in a banner. If the refresh still can't be made, the session ends and the dialer asks for a reload: check the backend logs for token errors and look for `credential_no_refresh_handler` or token-refresh errors in the browser console.
 
 ## Security and exposure
 
 This app is built for trying out the SignalWire Browser SDK and its features. It isn't intended as a production deployment. Before exposing it beyond your own machine, know that:
 
 - **Both servers listen on all interfaces** (Flask on `0.0.0.0`, Vite with `host: true`), so other machines on your network can reach them without a tunnel. CORS only restricts browsers to `FRONTEND_URL`; it doesn't stop direct requests.
-- **The backend holds your account's API token** and mints call-capable subscriber tokens for anyone who presents `DIALER_API_KEY`, which ships in the frontend bundle. The per-IP rate limits bound the damage from automation; they are not an access control.
+- **The backend holds your account's API token** and mints call-capable subscriber tokens for anyone who presents `DIALER_API_KEY`, which ships in the frontend bundle. The per-IP rate limits slow casual automation down. They key on the address a request reports for itself, so they are not an access control.
 - **To test from a phone or another machine**, expose the dev server through a tunnel such as ngrok: set `FRONTEND_URL` to the tunnel URL and restart both servers. Browsers only allow microphone and camera access over HTTPS (or on `localhost`), which tunnels provide. Share tunnel URLs only with people you trust, and close the tunnel when you're done.
 
 ## Technology Stack

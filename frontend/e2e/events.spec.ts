@@ -42,3 +42,20 @@ test('the Events section lists what the service logged, filters by kind, copies 
   await expect(log.locator('li')).toHaveCount(1);
   await expect(log).toContainText('Connected and ready');
 });
+
+test('the log keeps following the newest line once it holds the maximum number of rows', async ({ page }) => {
+  await openDialer(page);
+  await page.click('button[aria-label="Diagnostics"]');
+  const log = page.locator('[role="dialog"][aria-labelledby="diagnostics-title"] [role="log"]');
+  const distanceFromBottom = () => log.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight);
+
+  await evalInApp(page, `for (let i = 0; i < 200; i++) s.logEvent('call', 'Line ' + i);`);
+  await expect(log.locator('li')).toHaveCount(200);
+  await expect.poll(distanceFromBottom).toBeLessThan(8);
+
+  // At the cap a new line replaces the oldest, so the row count stays the same.
+  await evalInApp(page, `for (let i = 200; i < 205; i++) s.logEvent('call', 'Line ' + i);`);
+  await expect(log.locator('li').last()).toContainText('Line 204');
+  await expect(log.locator('li')).toHaveCount(200);
+  await expect.poll(distanceFromBottom).toBeLessThan(8);
+});
